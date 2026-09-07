@@ -20,7 +20,8 @@
     "build:ext": "npm --prefix extension install --silent && npm --prefix extension run build",
     "typecheck": "tsc -b --noEmit",
     "test": "npm run build && node --test \"tests/*.test.js\"",
-    "dev": "tsc -b --watch"
+    "dev": "tsc -b --watch",
+    "test:sql": "bash supabase/run-tests.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",

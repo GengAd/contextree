@@ -87,10 +87,19 @@ export type AiWrite = {
   why?: string;
 };
 
-/** Surchargeable — surtout pour les tests, qui n'ont pas à écrire dans le home
- *  de qui lance la suite. */
+/**
+ * Où vit l'état de contextree : journaux, session, configuration du backend.
+ * Hors du repo — c'est de l'état, jamais du contenu.
+ *
+ * Surchargeable, surtout pour les tests : ils n'ont pas à écrire dans le home de
+ * qui lance la suite.
+ */
+export function stateDir(): string {
+  return process.env['CONTEXTREE_STATE_DIR'] ?? path.join(os.homedir(), '.contextree');
+}
+
 export function journalDir(): string {
-  return process.env['CONTEXTREE_STATE_DIR'] ?? path.join(os.homedir(), '.contextree', 'journal');
+  return path.join(stateDir(), 'journal');
 }
 
 /**

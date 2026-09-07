@@ -180,6 +180,34 @@ Trois mécanismes, tous nécessaires :
 
 `import_pack` n'est pas tracé : c'est une greffe en masse, annoncée par nature, pas une capitalisation au fil de l'eau.
 
+## Backend partagé (`supabase/schema.sql`, `src/core/remote.ts`)
+
+Phase 2, étape 1. **Supabase est un service, pas une dépendance** : son API est du HTTP simple (PostgREST pour les données, GoTrue pour l'auth) et Node 20 a `fetch` en global. On n'a besoin ni du temps réel, ni du storage, ni des edge functions — le projet reste à trois dépendances.
+
+**Rien de tout ça n'est sur le chemin du routage.** Ni `cmdHook` ni `router.ts` n'appellent `remote.ts` : un backend injoignable ne doit pas coûter une milliseconde à un prompt. Mesuré avec un backend configuré et mort : 142 ms par tour, identique à sans.
+
+### Le schéma
+
+Trois idées :
+
+- **Une version est un ensemble de branches, pas un blob.** `versions` porte l'instantané, `branches` ses lignes — colonnes identiques à `Branch`. C'est ce qui permettra à `pull` de dire *quelle* branche a changé et à `push` de refuser un conflit sur une branche précise.
+- **Une version est immuable**, et ça s'entend : un déclencheur `before update` lève une erreur. L'absence de politique RLS suffirait à empêcher l'écriture, mais *silencieusement* — zéro ligne touchée, aucun message, un client qui croit avoir réécrit l'histoire. Le `delete`, lui, reste gouverné par RLS seule : un déclencheur casserait le `on delete cascade` qui permet de supprimer un arbre entier.
+- **L'autorisation est dans la base.** Le client n'a que la clé anon, publique par construction. Les fonctions `is_member` / `can_write` / `is_owner` sont `security definer` — obligatoire, sinon une politique sur `memberships` qui lit `memberships` récurse.
+
+Un trigger fait de l'auteur d'un groupe son `owner` : sans lui, personne ne peut s'ajouter à un groupe qu'il vient de créer.
+
+### Le vérifier
+
+```bash
+npm run test:sql      # Docker requis, donc hors de `npm test`
+```
+
+`supabase/rls.test.sql` rejoue le schéma sur un Postgres nu et déroule un scénario à deux comptes : création de groupe, filiation des versions, immuabilité, cloisonnement (un non-membre ne voit même pas l'`id` du groupe), lecture sans écriture, promotion en `writer`, et refus de signer une version au nom d'un autre. Le test bascule sur un rôle non privilégié — RLS ne s'applique pas au propriétaire des tables, et l'oublier ne testerait rien.
+
+### L'état local
+
+`~/.contextree/` (surchargeable par `CONTEXTREE_STATE_DIR`) porte maintenant `journal/`, `config.json` (url + clé anon) et `session.json` (jetons, en 0600). Rien de tout ça dans le repo.
+
 ## Pièges connus
 
 - **`process.exit` tue le serveur MCP.** La CLI sort en `process.exit(code)` ; la branche `mcp` ne rend donc jamais la main (`await new Promise(() => {})`). Sans ça, le serveur se coupe juste après le `connect()`.

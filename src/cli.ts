@@ -9,6 +9,15 @@ import { route } from './core/router.js';
 import { encodePack, extractPack, applyPack } from './core/pack.js';
 import { readSelection, writeSelection } from './core/session.js';
 import { appendTurn } from './core/journal.js';
+import {
+  RemoteError,
+  createGroup,
+  me,
+  myGroups,
+  setRemoteConfig,
+  signIn,
+  signOut,
+} from './core/remote.js';
 import { isBranchType, type BranchType } from './core/types.js';
 import { installHook, installMcp, type InstallReport } from './install.js';
 import { resolvePack, runStdio } from './mcp/server.js';
@@ -27,6 +36,13 @@ const HELP = `contextree — un arbre de contexte partageable, routé, injecté 
   contextree import <source>         greffe un pack (jeton, JSON, ou fichier) [--prefix p]
   contextree mcp                     lance le serveur MCP (stdio)
   contextree hook                    point d'entrée du hook UserPromptSubmit
+
+Contexte partagé (phase 2) :
+  contextree remote <url> <clé>      pointe le backend Supabase
+  contextree login <email>           se connecte (mot de passe sur stdin ou --password)
+  contextree logout                  ferme la session
+  contextree whoami                  qui est connecté, et sur quels groupes
+  contextree group new <slug> <nom>  crée un groupe (on en devient propriétaire)
 
 Variables : ANTHROPIC_API_KEY (routage), CONTEXTREE_ROUTER_MODEL, CONTEXTREE_ROUTER_TIMEOUT_MS,
             CONTEXTREE_STATE_DIR (où vit le journal des tours)
@@ -71,6 +87,16 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     case 'hook':
       return cmdHook();
+    case 'remote':
+      return cmdRemote(flags._[0], flags._[1]);
+    case 'login':
+      return cmdLogin(flags._[0], str(flags.password));
+    case 'logout':
+      return cmdLogout();
+    case 'whoami':
+      return cmdWhoami();
+    case 'group':
+      return cmdGroup(flags._);
     default:
       process.stderr.write(`Commande inconnue : ${command}\n\n${HELP}`);
       return 1;
@@ -274,6 +300,91 @@ async function cmdImport(flags: Flags): Promise<number> {
  * Contrat non négociable : ne jamais bloquer un prompt. Toute erreur sort en
  * code 0 et silence.
  */
+// ── contexte partagé (phase 2) ───────────────────────────────────────────────
+//
+// Ces commandes-là sont les seules à toucher le réseau. Le routage, lui, n'en
+// dépend jamais : un backend injoignable ne doit pas coûter une milliseconde à
+// un prompt.
+
+async function cmdRemote(url: string | undefined, anonKey: string | undefined): Promise<number> {
+  if (!url || !anonKey) {
+    process.stderr.write('Usage : contextree remote <url> <clé anon>\n');
+    return 1;
+  }
+  const stored = await setRemoteConfig({ url, anonKey });
+  process.stdout.write(`Backend : ${stored.config.url}\n${stored.file}\n`);
+  return 0;
+}
+
+async function cmdLogin(email: string | undefined, password: string | undefined): Promise<number> {
+  if (!email) {
+    process.stderr.write('Usage : contextree login <email> [--password <mdp>]\n');
+    return 1;
+  }
+  // Un mot de passe sur la ligne de commande finit dans l'historique du shell :
+  // stdin est le chemin par défaut, `--password` reste possible pour un script.
+  const secret = password ?? (await readStdin())?.trim();
+  if (!secret) {
+    process.stderr.write('Mot de passe attendu sur stdin, ou via --password.\n');
+    return 1;
+  }
+  return remote(async () => {
+    const session = await signIn(email, secret);
+    process.stdout.write(`Connecté : ${session.email ?? session.userId}\n`);
+  });
+}
+
+async function cmdLogout(): Promise<number> {
+  await signOut();
+  process.stdout.write('Session fermée.\n');
+  return 0;
+}
+
+async function cmdWhoami(): Promise<number> {
+  return remote(async () => {
+    const account = await me();
+    if (!account) {
+      process.stdout.write('Personne n\'est connecté. Lance : contextree login <email>\n');
+      return;
+    }
+    process.stdout.write(`${account.email ?? account.id}\n`);
+    const groups = await myGroups();
+    if (!groups.length) {
+      process.stdout.write('Aucun groupe. Lance : contextree group new <slug> <nom>\n');
+      return;
+    }
+    for (const g of groups) process.stdout.write(`  ${g.slug} — ${g.name} (${g.role})\n`);
+  });
+}
+
+async function cmdGroup(args: string[]): Promise<number> {
+  const [sub, slug, ...rest] = args;
+  if (sub !== 'new' || !slug) {
+    process.stderr.write('Usage : contextree group new <slug> <nom>\n');
+    return 1;
+  }
+  const name = rest.join(' ') || slug;
+  return remote(async () => {
+    const group = await createGroup(slug, name);
+    process.stdout.write(`Groupe créé : ${group.slug} — ${group.name} (${group.role})\n`);
+  });
+}
+
+/** Une erreur réseau est une erreur d'utilisation, pas un plantage : on affiche
+ *  le message et on sort en 1, sans pile d'appels. */
+async function remote(run: () => Promise<void>): Promise<number> {
+  try {
+    await run();
+    return 0;
+  } catch (err) {
+    if (err instanceof RemoteError) {
+      process.stderr.write(`${err.message}\n`);
+      return 1;
+    }
+    throw err;
+  }
+}
+
 async function cmdHook(): Promise<number> {
   try {
     const raw = (await readStdin()) ?? '';

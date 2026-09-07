@@ -5,4 +5,5 @@ export * from './core/render.js';
 export * from './core/router.js';
 export * from './core/journal.js';
 export * from './core/pack.js';
+export * from './core/remote.js';
 export { createServer, runStdio } from './mcp/server.js';

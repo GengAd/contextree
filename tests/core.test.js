@@ -10,6 +10,10 @@ import { withAncestors, guaranteedBranches, allBranches } from '../dist/core/tre
 import { renderContext } from '../dist/core/render.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
 import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites } from '../dist/core/journal.js';
+import {
+  RemoteError, clearSession, createGroup, currentSession, me, myGroups,
+  readSession, remoteConfig, setRemoteConfig, signIn, signOut,
+} from '../dist/core/remote.js';
 
 process.env.CONTEXTREE_STATE_DIR = await fs.mkdtemp(
   path.join(os.tmpdir(), 'contextree-journal-'),
@@ -346,4 +350,140 @@ test('journal : une écriture mal formée est écartée, le fichier reste lisibl
   const kept = JSON.parse(await fs.readFile(file, 'utf8'));
   await fs.writeFile(file, JSON.stringify([...kept, { op: 'upsert' }, { at: 1, op: 'inconnu', path: 'x' }]), 'utf8');
   assert.deepEqual((await readAiWrites(dir)).map(w => w.path), ['bon']);
+});
+
+// ── Backend partagé ─────────────────────────────────────────────────────────
+//
+// Aucun projet Supabase n'est joignable d'ici : on bouchonne `fetch` et on
+// vérifie ce que le client envoie, et ce qu'il fait de ce qu'il reçoit.
+
+function stubFetch(routes) {
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const route = String(url);
+    calls.push({
+      url: route,
+      method: init.method ?? 'GET',
+      headers: init.headers ?? {},
+      body: init.body ? JSON.parse(init.body) : undefined,
+    });
+    const match = Object.keys(routes).find(k => route.includes(k));
+    if (!match) return new Response('{"message":"route inconnue"}', { status: 404 });
+    const r = routes[match];
+    const { status = 200, json = null } = typeof r === 'function' ? r(calls.at(-1)) : r;
+    return new Response(json === null ? '' : JSON.stringify(json), { status });
+  };
+  return calls;
+}
+
+const token = (over = {}) => ({
+  access_token: 'jeton-acces', refresh_token: 'jeton-refresh', expires_in: 3600,
+  user: { id: 'u-1', email: 'adrien@example.com' }, ...over,
+});
+
+test('remote : sans configuration, le message dit quoi faire', async () => {
+  delete process.env.CONTEXTREE_SUPABASE_URL;
+  delete process.env.CONTEXTREE_SUPABASE_ANON_KEY;
+  await clearSession();
+  await assert.rejects(remoteConfig(), e => e instanceof RemoteError && /contextree remote/.test(e.message));
+});
+
+test('remote : l\'environnement l\'emporte sur le fichier, et la barre finale saute', async () => {
+  const stored = await setRemoteConfig({ url: 'https://du-fichier.supabase.co/', anonKey: 'cle-fichier' });
+  assert.equal(stored.config.url, 'https://du-fichier.supabase.co');
+  assert.deepEqual(await remoteConfig(), { url: 'https://du-fichier.supabase.co', anonKey: 'cle-fichier' });
+
+  process.env.CONTEXTREE_SUPABASE_URL = 'https://de-lenv.supabase.co/';
+  process.env.CONTEXTREE_SUPABASE_ANON_KEY = 'cle-env';
+  assert.deepEqual(await remoteConfig(), { url: 'https://de-lenv.supabase.co', anonKey: 'cle-env' });
+});
+
+test('remote : login stocke la session, et le jeton part en Bearer', async () => {
+  process.env.CONTEXTREE_SUPABASE_URL = 'https://x.supabase.co';
+  process.env.CONTEXTREE_SUPABASE_ANON_KEY = 'anon';
+  await clearSession();
+  const calls = stubFetch({ '/auth/v1/token': { json: token() } });
+
+  const session = await signIn('adrien@example.com', 'motdepasse');
+  assert.equal(session.userId, 'u-1');
+  assert.equal(session.email, 'adrien@example.com');
+  assert.ok(session.expiresAt > Math.floor(Date.now() / 1000));
+
+  assert.match(calls[0].url, /grant_type=password$/);
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(calls[0].headers.apikey, 'anon');
+  assert.deepEqual(calls[0].body, { email: 'adrien@example.com', password: 'motdepasse' });
+  // et la session survit au processus
+  assert.equal((await readSession()).refreshToken, 'jeton-refresh');
+});
+
+test('remote : une session expirée est rafraîchie sans qu\'on le demande', async () => {
+  const calls = stubFetch({
+    '/auth/v1/token': c => ({
+      json: c.body.refresh_token ? token({ access_token: 'jeton-neuf' }) : token({ expires_in: -10 }),
+    }),
+  });
+  await signIn('a@b.c', 'x');           // renvoie un jeton déjà expiré
+  const fresh = await currentSession();
+  assert.equal(fresh.accessToken, 'jeton-neuf');
+  assert.match(calls.at(-1).url, /grant_type=refresh_token$/);
+});
+
+test('remote : un refresh refusé efface la session au lieu de la laisser fantôme', async () => {
+  stubFetch({
+    '/auth/v1/token': c => (c.body.refresh_token
+      ? { status: 400, json: { error_description: 'Invalid Refresh Token' } }
+      : { json: token({ expires_in: -10 }) }),
+  });
+  await signIn('a@b.c', 'x');
+  assert.equal(await currentSession(), null);
+  assert.equal(await readSession(), null);
+});
+
+test('remote : les groupes viennent de memberships, avec le rôle', async () => {
+  stubFetch({
+    '/auth/v1/token': { json: token() },
+    '/rest/v1/memberships': { json: [
+      { role: 'owner', groups: { id: 'g-1', slug: 'gengad', name: 'GengAd' } },
+      { role: 'reader', groups: { id: 'g-2', slug: 'client', name: 'Client' } },
+      { role: 'reader', groups: null },
+    ] },
+  });
+  await signIn('a@b.c', 'x');
+  const groups = await myGroups();
+  assert.deepEqual(groups.map(g => `${g.slug}:${g.role}`), ['gengad:owner', 'client:reader']);
+});
+
+test('remote : créer un groupe rend propriétaire, et demande la ligne en retour', async () => {
+  const calls = stubFetch({
+    '/auth/v1/token': { json: token() },
+    '/rest/v1/groups': { json: [{ id: 'g-9', slug: 'neuf', name: 'Neuf' }] },
+  });
+  await signIn('a@b.c', 'x');
+  const group = await createGroup('neuf', 'Neuf');
+  assert.equal(group.role, 'owner');
+  assert.equal(calls.at(-1).headers.Prefer, 'return=representation');
+  assert.deepEqual(calls.at(-1).body, { slug: 'neuf', name: 'Neuf' });
+});
+
+test('remote : une erreur du serveur devient un message lisible', async () => {
+  await clearSession();
+  stubFetch({ '/auth/v1/token': { status: 400, json: { error_description: 'Invalid login credentials' } } });
+  await assert.rejects(
+    signIn('a@b.c', 'faux'),
+    e => e instanceof RemoteError && e.status === 400 && /Invalid login credentials \(HTTP 400\)/.test(e.message),
+  );
+});
+
+test('remote : sans session, on le dit — on n\'échoue pas bizarrement', async () => {
+  await clearSession();
+  assert.equal(await me(), null);
+  await assert.rejects(myGroups(), e => /contextree login/.test(e.message));
+});
+
+test('remote : logout efface la session même si le serveur refuse', async () => {
+  stubFetch({ '/auth/v1/token': { json: token() }, '/auth/v1/logout': { status: 500, json: {} } });
+  await signIn('a@b.c', 'x');
+  await signOut();
+  assert.equal(await readSession(), null);
 });
