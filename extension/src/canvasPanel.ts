@@ -60,10 +60,13 @@ export class CanvasPanel {
     panel.onDidDispose(() => {
       CanvasPanel.current = undefined;
     });
-    panel.webview.onDidReceiveMessage(async (msg: { type: string; path?: string }) => {
-      if (msg.type === 'ready') return void this.update();
-      if (msg.type === 'open') return void this.open(msg.path);
-    });
+    panel.webview.onDidReceiveMessage(
+      async (msg: { type: string; path?: string; prompt?: string }) => {
+        if (msg.type === 'ready') return void this.update();
+        if (msg.type === 'open') return void this.open(msg.path);
+        if (msg.type === 'route') return void this.route(msg.prompt ?? '');
+      },
+    );
   }
 
   private async open(branchPath: string | undefined): Promise<void> {
@@ -75,6 +78,31 @@ export class CanvasPanel {
         ? vscode.Uri.joinPath(vscode.Uri.file(dir), ROOT_FILE)
         : vscode.Uri.file(branchFile(dir, branchPath));
     await vscode.commands.executeCommand('vscode.open', file, { viewColumn: vscode.ViewColumn.Beside });
+  }
+
+  /** Ce que le routeur retiendrait pour ce prompt — le `●` / `○` de
+   *  `contextree route`, mais sur la toile. C'est la seule façon de vérifier un
+   *  `load_when` sans lancer une vraie conversation. */
+  private async route(prompt: string): Promise<void> {
+    const post = (payload: Record<string, unknown>) =>
+      this.panel.webview.postMessage({ type: 'routed', ...payload });
+    if (!prompt.trim()) return void post({ selected: null });
+
+    const started = Date.now();
+    try {
+      const { findTreeDir, loadTree, route } = await this.core();
+      const dir = await findTreeDir(this.searchFrom);
+      if (!dir) return void post({ selected: null, error: 'aucun arbre' });
+      const tree = await loadTree(dir);
+      const { selected, reason, error } = await route(tree, prompt);
+      post({ selected: [...selected], reason, error, ms: Date.now() - started });
+    } catch (err) {
+      post({
+        selected: null,
+        error: err instanceof Error ? err.message : String(err),
+        ms: Date.now() - started,
+      });
+    }
   }
 
   private async update(): Promise<void> {
@@ -113,6 +141,11 @@ export class CanvasPanel {
 <div id="hud">
   <button id="fit" title="Recadrer (double-clic sur le fond)">Recadrer</button>
   <span id="count"></span>
+  <span class="sep"></span>
+  <input id="prompt" type="text" placeholder="Que chargerait le routeur pour…" />
+  <button id="go" title="Router ce prompt (Entrée)">Router</button>
+  <button id="clear" title="Effacer le surlignage (Échap)" hidden>✕</button>
+  <span id="trace"></span>
 </div>
 <div id="legend"></div>
 <script nonce="${nonce}" src="${asset('canvas.js')}"></script>

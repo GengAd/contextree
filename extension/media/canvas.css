@@ -223,3 +223,51 @@ body {
   text-align: center;
   transform: translate(-50%, -50%);
 }
+
+/* Surlignage du routeur : ce qui serait injecté reste lisible, le reste
+   s'efface sans disparaître — on doit voir ce qu'on a raté. */
+.node.dropped {
+  border-color: var(--line);
+  opacity: 0.32;
+}
+
+.node.kept {
+  border-color: var(--ribbon);
+  box-shadow: 0 0 0 1px var(--ribbon);
+}
+
+#edges path.dropped {
+  opacity: 0.25;
+  stroke-dasharray: 4 4;
+}
+
+#hud .sep {
+  width: 1px;
+  height: 18px;
+  background: var(--line);
+}
+
+#hud input {
+  width: 260px;
+  padding: 3px 8px;
+  border: 1px solid var(--vscode-input-border, var(--line));
+  border-radius: 4px;
+  background: var(--vscode-input-background, transparent);
+  color: var(--vscode-input-foreground, var(--card-fg));
+  font: inherit;
+  font-size: 11.5px;
+}
+
+#hud input:focus {
+  border-color: var(--vscode-focusBorder, var(--line));
+  outline: none;
+}
+
+#trace {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+#trace.warn {
+  color: var(--vscode-editorWarning-foreground, #fbbf24);
+}

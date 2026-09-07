@@ -26,9 +26,15 @@
   const count = document.getElementById('count');
   const legend = document.getElementById('legend');
 
+  const promptInput = document.getElementById('prompt');
+  const trace = document.getElementById('trace');
+  const clearBtn = document.getElementById('clear');
+
   let roots = [];
   let all = [];
   let selected = null;
+  // `null` = pas de routage en cours ; sinon l'ensemble des chemins retenus.
+  let routed = null;
   let view = { x: 0, y: 0, k: 1 };
 
   // ── Données ───────────────────────────────────────────────────────────────
@@ -63,6 +69,7 @@
     all = [...byId.values()];
     roots = [root];
     if (selected && !byId.has(selected)) selected = null;
+    if (routed) routed = new Set([...routed].filter(p => byId.has(p)));
     count.textContent = `${tree.branches.length} branche(s)`;
   }
 
@@ -126,9 +133,16 @@
 
   // ── Rendu ─────────────────────────────────────────────────────────────────
 
+  /** La racine est toujours injectée, jamais routée : elle reste allumée. */
+  function kept(id) {
+    return !routed || id === ROOT_ID || routed.has(id);
+  }
+
   function card(n) {
     const el = document.createElement('div');
-    el.className = `node${n.id === selected ? ' selected' : ''}`;
+    el.className = `node${n.id === selected ? ' selected' : ''}${
+      routed ? (kept(n.id) ? ' kept' : ' dropped') : ''
+    }`;
     el.style.left = `${n.x}px`;
     el.style.top = `${n.y}px`;
     el.style.width = `${n.w}px`;
@@ -192,6 +206,7 @@
       for (const c of n.children) {
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('d', edgePath(n, c));
+        if (routed && !kept(c.id)) path.classList.add('dropped');
         if (c.id === selected || n.id === selected) {
           path.classList.add('lit');
           path.style.setProperty('--ribbon', COLORS[selected === n.id ? n.type : c.type]);
@@ -283,7 +298,39 @@
   });
   document.getElementById('fit').addEventListener('click', fit);
   window.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && selected !== null) select(null, null);
+    if (e.key !== 'Escape') return;
+    if (selected !== null) return select(null, null);
+    if (routed) clearRoute();
+  });
+
+  // ── Routage ───────────────────────────────────────────────────────────────
+  //
+  // Un `load_when` ne se vérifie qu'en le confrontant à un vrai prompt. La
+  // toile pose la question au même routeur que le hook, et allume ce qu'il
+  // retiendrait — le `●` / `○` de `contextree route`, mais sur l'arbre.
+
+  function askRoute() {
+    const prompt = promptInput.value.trim();
+    if (!prompt) return clearRoute();
+    trace.textContent = 'routage…';
+    trace.className = '';
+    clearBtn.hidden = false;
+    vscode.postMessage({ type: 'route', prompt });
+  }
+
+  function clearRoute() {
+    routed = null;
+    promptInput.value = '';
+    trace.textContent = '';
+    trace.className = '';
+    clearBtn.hidden = true;
+    render();
+  }
+
+  document.getElementById('go').addEventListener('click', askRoute);
+  clearBtn.addEventListener('click', clearRoute);
+  promptInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') askRoute();
   });
 
   // ── Cycle de vie ──────────────────────────────────────────────────────────
@@ -299,6 +346,17 @@
 
   window.addEventListener('message', e => {
     const msg = e.data;
+    if (msg.type === 'routed') {
+      routed = msg.selected ? new Set(msg.selected) : null;
+      clearBtn.hidden = !promptInput.value.trim();
+      const kind = { routed: 'routé', all: 'arbre entier', fallback: 'repli' }[msg.reason] || '';
+      trace.textContent = msg.error
+        ? msg.error
+        : `${routed ? routed.size : 0}/${all.length - 1} — ${kind}${msg.ms ? ` — ${msg.ms} ms` : ''}`;
+      trace.className = msg.error || msg.reason === 'fallback' ? 'warn' : '';
+      render();
+      return;
+    }
     if (msg.type !== 'tree') return;
     if (!msg.tree) {
       all = [];
