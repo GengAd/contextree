@@ -49,6 +49,17 @@ Le parseur de frontmatter (`src/core/frontmatter.ts`) n'accepte que des scalaire
 
 **`findTreeDir` remonte l'arborescence** comme `.git` : on peut lancer la CLI depuis n'importe quel sous-dossier.
 
+### Déplacer et renommer (`moveBranch`)
+
+Renommer et reparenter sont la même opération : changer le `path`. Il vit à deux endroits sur le disque — le `.md` et le dossier homonyme qui porte les enfants — et les deux bougent ensemble.
+
+- **Refusé** : une arrivée déjà occupée, un déplacement sous son propre descendant, un chemin qui sort du dossier (`..`, absolu, segment vide, antislash).
+- **Deux renommages ne sont pas atomiques ensemble** : si le dossier des enfants échoue à bouger, le `.md` est remis en place. Mieux vaut un arbre inchangé qu'une branche séparée de ses enfants.
+- **Le dossier de départ vidé est supprimé** : sinon il resterait un hub implicite — une branche fantôme, sans contenu ni enfants.
+- **Un parent inconnu est refusé côté CLI et MCP**, pas côté cœur : la même règle que `add` / `upsert_branch`. Un hub fabriqué au passage aurait un `load_when` qui ne veut rien dire, et le routeur routerait dessus.
+
+Ce que ça invalide : le cache de session et le journal des tours référencent des `path`, et filtrent déjà ceux qu'ils ne retrouvent pas — un chemin périmé disparaît, il ne casse rien. Un pack déjà exporté est un instantané : il garde les anciens chemins, c'est le comportement attendu.
+
 ## Routage (`src/core/router.ts`)
 
 Un appel IA léger reçoit le catalogue des branches — index, type, titre, `load_when` — plus le message de l'utilisateur, et renvoie les indices retenus. Les indices 0-based évitent au modèle de recopier des chemins, source classique d'échec.

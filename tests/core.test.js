@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
-import { loadTree, writeBranch, writeRoot, deleteBranch, slugify, findTreeDir } from '../dist/core/store.js';
+import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir } from '../dist/core/store.js';
 import { withAncestors, guaranteedBranches, allBranches } from '../dist/core/tree.js';
 import { renderContext } from '../dist/core/render.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
@@ -223,4 +223,104 @@ test('journal : un arbre, un journal — deux arbres ne se mélangent pas', asyn
   await appendTurn(b, turn({ prompt: 'chez B' }));
   assert.deepEqual((await readJournal(a)).map(t => t.prompt), ['chez A']);
   assert.deepEqual((await readJournal(b)).map(t => t.prompt), ['chez B']);
+});
+
+const branch = (p, over = {}) => ({
+  path: p, type: 'context', title: p, loadWhen: `quand ${p}`, content: `corps de ${p}`, ...over,
+});
+
+test('store : déplacer une branche emporte ses enfants', async () => {
+  const dir = await scratch();
+  await writeRoot(dir, 'racine');
+  await writeBranch(dir, branch('archi', { type: 'reference', title: 'Archi' }));
+  await writeBranch(dir, branch('archi/store'));
+  await writeBranch(dir, branch('archi/store/format'));
+  await writeBranch(dir, branch('vues'));
+
+  await moveBranch(dir, 'archi/store', 'vues/store');
+
+  const tree = await loadTree(dir);
+  assert.deepEqual(tree.order.sort(), ['archi', 'vues', 'vues/store', 'vues/store/format']);
+  const moved = tree.branches.get('vues/store');
+  assert.equal(moved.parentPath, 'vues');
+  assert.equal(moved.content.trim(), 'corps de archi/store');
+  assert.equal(tree.branches.get('vues/store/format').parentPath, 'vues/store');
+});
+
+test('store : renommer, c\'est déplacer — le frontmatter suit', async () => {
+  const dir = await scratch();
+  await writeBranch(dir, branch('regles', { type: 'rule', title: 'Règles', loadWhen: 'toujours' }));
+  await moveBranch(dir, 'regles', 'regles-du-projet');
+
+  const tree = await loadTree(dir);
+  assert.deepEqual(tree.order, ['regles-du-projet']);
+  const b = tree.branches.get('regles-du-projet');
+  assert.equal(b.type, 'rule');
+  assert.equal(b.title, 'Règles');
+  assert.equal(b.loadWhen, 'toujours');
+});
+
+test('store : pas de dossier fantôme laissé derrière', async () => {
+  const dir = await scratch();
+  await writeBranch(dir, branch('archi'));
+  await writeBranch(dir, branch('archi/store'));
+  await moveBranch(dir, 'archi/store', 'store');
+
+  // `archi/` vidé deviendrait un hub implicite : il doit avoir disparu.
+  const tree = await loadTree(dir);
+  assert.deepEqual(tree.order.sort(), ['archi', 'store']);
+  assert.deepEqual(tree.branches.get('archi').childPaths, []);
+  await assert.rejects(fs.stat(path.join(dir, 'archi')));
+});
+
+test('store : une arrivée occupée est refusée, rien ne bouge', async () => {
+  const dir = await scratch();
+  await writeBranch(dir, branch('a'));
+  await writeBranch(dir, branch('b'));
+  await assert.rejects(moveBranch(dir, 'a', 'b'), /occupe déjà/);
+
+  const tree = await loadTree(dir);
+  assert.equal(tree.branches.get('a').content.trim(), 'corps de a');
+  assert.equal(tree.branches.get('b').content.trim(), 'corps de b');
+});
+
+test('store : déplacer une branche sous son propre descendant est refusé', async () => {
+  const dir = await scratch();
+  await writeBranch(dir, branch('archi'));
+  await writeBranch(dir, branch('archi/store'));
+  await assert.rejects(moveBranch(dir, 'archi', 'archi/store/archi'), /est sous archi/);
+  assert.deepEqual((await loadTree(dir)).order.sort(), ['archi', 'archi/store']);
+});
+
+test('store : branche introuvable, et chemin qui sort du dossier', async () => {
+  const dir = await scratch();
+  await writeBranch(dir, branch('a'));
+  await assert.rejects(moveBranch(dir, 'absente', 'b'), /introuvable/);
+  await assert.rejects(moveBranch(dir, 'a', '../dehors'), /refusé/);
+  await assert.rejects(moveBranch(dir, 'a', '/etc/passwd'), /refusé/);
+  await assert.rejects(moveBranch(dir, 'a', '  '), /refusé/);
+});
+
+test('store : déplacer un hub implicite (dossier sans .md frère)', async () => {
+  const dir = await scratch();
+  await writeBranch(dir, branch('groupe/enfant'));
+  // `groupe` n'a pas de `.md` : c'est un hub implicite, il doit se déplacer quand même.
+  await moveBranch(dir, 'groupe', 'rangé');
+
+  const tree = await loadTree(dir);
+  assert.deepEqual(tree.order.sort(), ['rangé', 'rangé/enfant']);
+  assert.equal(tree.branches.get('rangé/enfant').content.trim(), 'corps de groupe/enfant');
+});
+
+test('store : un chemin périmé disparaît du fallback sticky, il ne casse rien', async () => {
+  const dir = await scratch();
+  await writeBranch(dir, branch('a', { type: 'context' }));
+  await writeBranch(dir, branch('b', { type: 'context' }));
+  await moveBranch(dir, 'a', 'c');
+
+  const tree = await loadTree(dir);
+  // C'est le filtre que fait le routeur sur la sélection précédente.
+  const previous = ['a', 'b'].filter(p => tree.branches.has(p));
+  assert.deepEqual(previous, ['b']);
+  assert.deepEqual([...withAncestors(tree, previous)], ['b']);
 });

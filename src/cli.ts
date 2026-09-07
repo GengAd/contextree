@@ -2,7 +2,7 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 
-import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch } from './core/store.js';
+import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch } from './core/store.js';
 import { allBranches, formatTree } from './core/tree.js';
 import { renderContext, renderTrace } from './core/render.js';
 import { route } from './core/router.js';
@@ -20,6 +20,7 @@ const HELP = `contextree — un arbre de contexte partageable, routé, injecté 
   contextree list                    affiche l'arbre
   contextree add                     crée une branche (--title --type --load-when [--parent])
   contextree rm <chemin>             supprime une branche et ses enfants
+  contextree mv <de> <vers>          déplace ou renomme une branche (ses enfants suivent)
   contextree route "<prompt>"        montre ce que le routeur chargerait
   contextree render                  affiche tout l'arbre assemblé (sans routage)
   contextree export [--token] [-o f] exporte l'arbre pour le partager
@@ -52,6 +53,8 @@ async function main(argv: string[]): Promise<number> {
       return cmdAdd(flags);
     case 'rm':
       return cmdRemove(flags._[0]);
+    case 'mv':
+      return cmdMove(flags._[0], flags._[1]);
     case 'route':
       return cmdRoute(flags._.join(' '));
     case 'render':
@@ -181,6 +184,37 @@ async function cmdRemove(branchPath: string | undefined): Promise<number> {
   await deleteBranch(dir, branchPath);
   process.stdout.write(`Supprimé : ${branchPath}\n`);
   return 0;
+}
+
+async function cmdMove(from: string | undefined, to: string | undefined): Promise<number> {
+  if (!from || !to) {
+    process.stderr.write('Usage : contextree mv <de> <vers>\n');
+    return 1;
+  }
+  const { dir, tree } = await open();
+  if (!tree.branches.has(from)) {
+    process.stderr.write(`Branche inconnue : ${from}\n`);
+    return 1;
+  }
+  // Même garde que `add` : un parent inconnu se crée à la main. Sinon on
+  // fabrique un hub implicite dont le `load_when` ne veut rien dire, et le
+  // routeur route dessus.
+  const parent = to.includes('/') ? to.slice(0, to.lastIndexOf('/')) : '';
+  if (parent && !tree.branches.has(parent)) {
+    process.stderr.write(`Parent inconnu : ${parent}\n`);
+    return 1;
+  }
+  const kids = tree.branches.get(from)!.childPaths.length;
+  try {
+    const file = await moveBranch(dir, from, to);
+    process.stdout.write(
+      `${from} → ${to}${kids ? ` (+ ${kids} enfant(s))` : ''}\n${path.relative(process.cwd(), file)}\n`,
+    );
+    return 0;
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
 }
 
 async function cmdRoute(prompt: string): Promise<number> {

@@ -4,7 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-import { findTreeDir, loadTree, slugify, writeBranch, deleteBranch } from '../core/store.js';
+import { findTreeDir, loadTree, slugify, writeBranch, deleteBranch, moveBranch } from '../core/store.js';
 import { allBranches, formatTree } from '../core/tree.js';
 import { renderContext, renderTrace } from '../core/render.js';
 import { route } from '../core/router.js';
@@ -168,6 +168,33 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       await deleteBranch(dir, branchPath);
       const kids = branch.childPaths.length;
       return text(`Supprimé : ${branchPath}${kids ? ` (+ ${kids} enfant(s))` : ''}`);
+    },
+  );
+
+  server.registerTool(
+    'move_branch',
+    {
+      title: 'Déplacer ou renommer une branche',
+      description:
+        "Change le chemin d'une branche — renommer et reparenter sont la même opération. " +
+        'Ses branches enfants suivent. Refusé si le chemin d\'arrivée est déjà occupé ou ' +
+        "s'il est sous la branche déplacée.",
+      inputSchema: {
+        from: z.string().describe('Chemin actuel de la branche.'),
+        to: z.string().describe('Nouveau chemin complet (parent inclus).'),
+      },
+      annotations: { destructiveHint: false },
+    },
+    async ({ from, to }) => {
+      const { dir, tree } = await open();
+      const branch = tree.branches.get(from);
+      if (!branch) throw new Error(`Branche inconnue : ${from}`);
+      // Même garde que `upsert_branch` : un parent inconnu se crée à la main.
+      const parent = to.includes('/') ? to.slice(0, to.lastIndexOf('/')) : '';
+      if (parent && !tree.branches.has(parent)) throw new Error(`Parent inconnu : ${parent}`);
+      await moveBranch(dir, from, to);
+      const kids = branch.childPaths.length;
+      return text(`${from} → ${to}${kids ? ` (+ ${kids} enfant(s))` : ''}`);
     },
   );
 

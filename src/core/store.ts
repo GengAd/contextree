@@ -133,6 +133,104 @@ export async function deleteBranch(treeDir: string, branchPath: string): Promise
   await fs.rm(file.slice(0, -3), { recursive: true, force: true });
 }
 
+/**
+ * Déplace ou renomme une branche — c'est la même opération : changer son `path`.
+ *
+ * Le `path` *est* l'identité d'une branche, et il vit à deux endroits sur le
+ * disque : le `.md` et le dossier homonyme qui porte ses enfants. Les deux
+ * bougent ensemble ou pas du tout.
+ *
+ * Ce qu'on refuse, et pourquoi :
+ *  - une arrivée déjà occupée — on n'écrase jamais une branche existante ;
+ *  - un déplacement sous son propre descendant — l'arbre y perdrait la branche
+ *    et tout son sous-arbre d'un coup ;
+ *  - un chemin qui sort du dossier (`..`, chemin absolu, segment vide).
+ *
+ * Ce que ça invalide, et pourquoi ce n'est pas grave : le cache de session et le
+ * journal des tours référencent des `path`. Les deux filtrent déjà ce qu'ils ne
+ * retrouvent pas dans l'arbre — un chemin périmé disparaît, il ne casse rien. Un
+ * pack déjà exporté, lui, est un instantané : il garde les anciens chemins, et
+ * c'est le comportement attendu.
+ */
+export async function moveBranch(treeDir: string, from: string, to: string): Promise<string> {
+  const source = normalizeBranchPath(from);
+  const target = normalizeBranchPath(to);
+  if (source === target) return branchFile(treeDir, target);
+  if (target.startsWith(`${source}/`)) {
+    throw new Error(`Déplacement impossible : ${target} est sous ${source}.`);
+  }
+
+  const srcFile = branchFile(treeDir, source);
+  const srcDir = srcFile.slice(0, -3);
+  const dstFile = branchFile(treeDir, target);
+  const dstDir = dstFile.slice(0, -3);
+
+  const hasFile = await exists(srcFile);
+  const hasChildren = await isDir(srcDir);
+  if (!hasFile && !hasChildren) throw new Error(`Branche introuvable : ${source}`);
+  if ((await exists(dstFile)) || (await isDir(dstDir))) {
+    throw new Error(`Une branche occupe déjà ${target}.`);
+  }
+
+  await fs.mkdir(path.dirname(dstFile), { recursive: true });
+  if (hasFile) await fs.rename(srcFile, dstFile);
+  if (hasChildren) {
+    try {
+      await fs.rename(srcDir, dstDir);
+    } catch (err) {
+      // Deux renommages ne peuvent pas être atomiques ensemble : si le second
+      // échoue, on remet le premier. Mieux vaut un arbre inchangé qu'une branche
+      // séparée de ses enfants.
+      if (hasFile) await fs.rename(dstFile, srcFile).catch(() => {});
+      throw err;
+    }
+  }
+
+  // Un dossier vide laissé derrière deviendrait un hub implicite : une branche
+  // fantôme, sans contenu et sans enfants. On nettoie la trace du départ.
+  await pruneEmpty(treeDir, path.dirname(srcFile));
+  return dstFile;
+}
+
+/** Refuse tout ce qui sortirait de `.contextree/`. Même garde que pour un pack :
+ *  un chemin peut venir d'ailleurs (MCP, vue, pack importé). */
+function normalizeBranchPath(branchPath: string): string {
+  // On refuse un chemin absolu plutôt que de le rendre relatif : réinterpréter
+  // silencieusement ce qu'un appelant a demandé est la pire des réponses.
+  const trimmed = branchPath.trim().replace(/\/+$/, '');
+  const segments = trimmed.split('/');
+  const refused =
+    !trimmed ||
+    path.isAbsolute(trimmed) ||
+    trimmed.includes('\\') ||
+    segments.some(s => !s || s === '.' || s === '..');
+  if (refused) throw new Error(`Chemin de branche refusé : ${branchPath}`);
+  return segments.join('/');
+}
+
+async function pruneEmpty(treeDir: string, dir: string): Promise<void> {
+  let current = path.resolve(dir);
+  const root = path.resolve(treeDir);
+  while (current !== root && current.startsWith(root)) {
+    try {
+      if ((await fs.readdir(current)).length) return;
+      await fs.rmdir(current);
+    } catch {
+      return;
+    }
+    current = path.dirname(current);
+  }
+}
+
+async function exists(p: string): Promise<boolean> {
+  try {
+    await fs.stat(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function writeRoot(treeDir: string, content: string): Promise<void> {
   await fs.mkdir(treeDir, { recursive: true });
   await fs.writeFile(path.join(treeDir, ROOT_FILE), `${content.trim()}\n`, 'utf8');
