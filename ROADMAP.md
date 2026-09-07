@@ -29,7 +29,17 @@ Ce que ça demande, dans l'ordre :
 3. **Superposition (« spécialiser pour tout le monde »).** Un arbre de groupe + un calque local. Une branche locale peut *surcharger* une branche de groupe ; le groupe peut pousser une branche qui s'ajoute chez tout le monde. Le rendu résout la superposition, la branche la plus spécifique gagne.
 4. **Proposition plutôt qu'écriture directe.** L'IA propose (`upsert_branch`), un humain valide. Sur un arbre partagé, ça devient une revue : une proposition, une diff, un merge.
 
-**Décision ouverte** : le calque local est-il un dossier séparé (`.contextree.local/`) ou un champ `overrides:` dans le frontmatter ? Le dossier séparé est plus lisible dans un diff ; le champ garde tout au même endroit.
+**Tranché le 7 septembre 2026 : le calque local est un dossier séparé, `.contextree.local/`.**
+
+L'argument décisif n'est pas le diff, c'est la sync. Avec un champ `overrides:` dans le frontmatter, des données personnelles vivent **dans** des fichiers qui appartiennent au groupe. Trois conséquences, toutes mauvaises :
+
+- `push` devrait filtrer le contenu de chaque fichier avant de l'envoyer — une seule passe ratée pousse des notes personnelles au groupe ;
+- toucher à une surcharge personnelle salit un fichier partagé, qui devient candidat au conflit au `pull` suivant. C'est le modèle Dropbox que le point 2 refuse explicitement ;
+- « la branche la plus spécifique gagne » devient une fusion champ par champ à l'intérieur d'un fichier, au lieu d'une résolution de chemins.
+
+Avec deux dossiers, tout se simplifie : `push` envoie `.contextree/` et rien d'autre, `.contextree.local/` se gitignore, seul l'arbre de groupe peut entrer en conflit, et la superposition est une fusion de deux espaces de chemins que `loadTree` sait déjà parcourir. Même chemin des deux côtés ⇒ le local gagne ; chemin qui n'existe qu'en local ⇒ il s'ajoute.
+
+La contrainte non négociable est tenue des deux côtés : chaque dossier reste du markdown éditable à la main et lisible dans un diff.
 
 ---
 

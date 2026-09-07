@@ -49,6 +49,22 @@ Le parseur de frontmatter (`src/core/frontmatter.ts`) n'accepte que des scalaire
 
 **`findTreeDir` remonte l'arborescence** comme `.git` : on peut lancer la CLI depuis n'importe quel sous-dossier.
 
+### Le calque local (phase 2, tranché le 7 septembre 2026)
+
+Quand un arbre sera partagé, le calque personnel sera un **dossier frère**, `.contextree.local/`, de format identique — pas un champ `overrides:` dans le frontmatter. Rien n'est encore implémenté ; la décision est écrite ici parce qu'elle contraint le format.
+
+```
+.contextree/              # au groupe : versionné, synchronisé
+  archi-store.md
+.contextree.local/        # à moi : jamais poussé, gitignorable
+  archi-store.md          # surcharge la branche du groupe
+  mes-raccourcis.md       # branche purement locale
+```
+
+Résolution : **même chemin des deux côtés ⇒ le local gagne** ; chemin qui n'existe qu'en local ⇒ il s'ajoute.
+
+La raison est la sync, pas le diff. Un champ dans le frontmatter mettrait des données personnelles **dans** des fichiers appartenant au groupe : `push` devrait les filtrer fichier par fichier (une passe ratée pousse des notes personnelles), et le moindre réglage personnel salirait un fichier partagé, candidat au conflit au `pull` suivant. Deux dossiers rendent ces problèmes impossibles par construction — `push` n'envoie que `.contextree/`, et le calque local ne peut pas entrer en conflit. Voir `ROADMAP.md` § Phase 2.
+
 ### Déplacer et renommer (`moveBranch`)
 
 Renommer et reparenter sont la même opération : changer le `path`. Il vit à deux endroits sur le disque — le `.md` et le dossier homonyme qui porte les enfants — et les deux bougent ensemble.
