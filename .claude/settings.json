@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node dist/cli.js hook", "timeout": 15 }
+        ]
+      }
+    ]
+  }
+}

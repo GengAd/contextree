@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "contextree": {
+      "command": "node",
+      "args": ["dist/cli.js", "mcp"]
+    }
+  }
+}

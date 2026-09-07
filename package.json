@@ -1,0 +1,33 @@
+{
+  "name": "@gengad/contextree",
+  "version": "0.1.0",
+  "description": "Un arbre de contexte partageable, rout\u00e9 par IA, inject\u00e9 \u00e0 chaque appel \u2014 via MCP et hook Claude Code.",
+  "type": "module",
+  "bin": {
+    "contextree": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --noEmit",
+    "test": "npm run build && node --test \"tests/*.test.js\"",
+    "dev": "tsc -b --watch"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}
