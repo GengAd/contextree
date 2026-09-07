@@ -15,6 +15,12 @@ Adrien Buot — développeur solo, TypeScript. Repo privé `GengAd/contextree`, 
 - Les **fichiers markdown sont la source de vérité**. Rien ne doit rendre `.contextree/` illisible ou non éditable à la main.
 - Garder la doc vivante : proposer les mises à jour de `CLAUDE.md` / `CONTEXT.md` / `REFERENCES.md` / `ROADMAP.md`, ne jamais réécrire en silence.
 
+## Workflow Trello
+
+- Prendre les tâches dans cet ordre : d'abord la colonne **En cours**, et seulement si elle est vide, la colonne **À faire**.
+- Une tâche terminée se **commit** avant de passer à la suivante : pas de tâche Trello close sans commit correspondant.
+- Déplacer la carte dans la colonne suivante une fois le commit fait.
+
 ## Routing
 
 | Tâche | Aller dans | Lire |
