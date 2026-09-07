@@ -36,6 +36,8 @@ export function activate(context: vscode.ExtensionContext): void {
     void provider.refresh();
     void CanvasPanel.refreshIfOpen();
     void refreshTurn();
+    // Créer ou supprimer `.contextree/` change le dossier à observer.
+    void armWatcher();
   };
 
   /**
@@ -92,7 +94,6 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     status.disposable,
     vscode.window.registerTreeDataProvider('contextree.tree', provider),
-    vscode.commands.registerCommand('contextree.refresh', () => provider.refresh()),
     vscode.commands.registerCommand('contextree.openCanvas', () =>
       CanvasPanel.show(context, loadCore, searchFrom),
     ),
@@ -104,19 +105,51 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('contextree.delete', (item?: string) => runEdit('delete', item)),
   );
 
-  if (folder) {
-    // L'arbre est du markdown édité à la main : la vue suit le disque, pas
-    // l'inverse. Tout `.md` touché sous `.contextree/` recharge les deux vues.
-    const watcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(folder, '**/.contextree/**/*.md'),
-    );
-    context.subscriptions.push(
-      watcher,
-      watcher.onDidCreate(reloadViews),
-      watcher.onDidChange(reloadViews),
-      watcher.onDidDelete(reloadViews),
-    );
-  }
+  /**
+   * L'arbre est du markdown édité à la main : la vue suit le disque, pas
+   * l'inverse. Tout `.md` touché recharge les deux vues.
+   *
+   * On observe le dossier **réellement trouvé**, pas le dossier ouvert :
+   * `findTreeDir` remonte les parents comme `.git`, et un `.contextree/` situé
+   * au-dessus de la racine du workspace n'était jamais rechargé. Le motif reste
+   * complexe (`**\/*.md`), donc l'observateur est récursif même hors du dossier
+   * ouvert.
+   *
+   * Tant qu'il n'y a pas d'arbre, on retombe sur le workspace : c'est ce qui
+   * rattrape un `contextree init` fait après coup.
+   */
+  let watched: { dir: string | null; disposable: vscode.Disposable } | undefined;
+
+  const armWatcher = async (): Promise<void> => {
+    let dir: string | null = null;
+    try {
+      dir = await (await loadCore()).findTreeDir(searchFrom);
+    } catch {
+      dir = null;
+    }
+    if (watched && watched.dir === dir) return;
+
+    const pattern = dir
+      ? new vscode.RelativePattern(vscode.Uri.file(dir), '**/*.md')
+      : folder
+        ? new vscode.RelativePattern(folder, '**/.contextree/**/*.md')
+        : null;
+    watched?.disposable.dispose();
+    if (!pattern) return void (watched = undefined);
+
+    const w = vscode.workspace.createFileSystemWatcher(pattern);
+    watched = {
+      dir,
+      disposable: vscode.Disposable.from(
+        w,
+        w.onDidCreate(reloadViews),
+        w.onDidChange(reloadViews),
+        w.onDidDelete(reloadViews),
+      ),
+    };
+  };
+
+  context.subscriptions.push({ dispose: () => watched?.disposable.dispose() });
 
   // Le journal vit hors du workspace : son observateur est à part, et c'est lui
   // qui fait bouger le badge pendant une conversation — aucun `.md` ne change
@@ -131,6 +164,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   void provider.refresh();
   void refreshTurn();
+  void armWatcher();
 }
 
 export function deactivate(): void {}
