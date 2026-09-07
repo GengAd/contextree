@@ -54,4 +54,8 @@ Une feature est bien faite quand :
 
 ## Origine
 
-Extrait de [`../ai-tree`](../ai-tree) (produit **Lacis**), dont l'arbre de contexte était la vraie valeur mais restait enterré sous une extension VS Code complète : arbre de conversation, webview React, agent repo, coffre chiffré. Ici on ne garde que le cœur — routage, résolution des ancêtres, fallback non bloquant, partage par pack — et on jette le reste.
+**La méthode.** Le point de départ est la structure en trois couches de Jake Van Clief (cours dans [`../workspace-sample`](../workspace-sample)) : une **carte** (`CLAUDE.md`, lue en premier, avec une table « pour telle tâche, lis tels fichiers »), des **pièces** (un fichier de contexte par espace de travail, chargé seulement quand on y entre) et des **outils** (skills et serveurs MCP câblés là où ils servent). L'idée centrale y est déjà : ne pas tout charger, router vers la fraction utile.
+
+contextree en est la version automatisée. La table de routage écrite à la main devient un `load_when` par branche, évalué par un appel IA à chaque prompt ; « entrer dans une pièce » n'est plus un geste de l'utilisateur mais une conséquence de sa demande ; et le résultat est injecté par un hook plutôt que relu par l'agent. Le repo garde par ailleurs ses fichiers `CLAUDE.md` / `CONTEXT.md` / `REFERENCES.md` à la racine : la carte reste humaine et versionnée, l'arbre est ce qu'on donne au modèle.
+
+**Le code.** Extrait de [`../ai-tree`](../ai-tree) (produit **Lacis**), dont l'arbre de contexte était la vraie valeur mais restait enterré sous une extension VS Code complète : arbre de conversation, webview React, agent repo, coffre chiffré. Ici on ne garde que le cœur — routage, résolution des ancêtres, fallback non bloquant, partage par pack — et on jette le reste.

@@ -1,0 +1,69 @@
+{
+  "name": "contextree-vscode",
+  "displayName": "contextree",
+  "description": "Voir son arbre de contexte dans la barre latérale.",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "gengad",
+  "engines": {
+    "vscode": "^1.90.0",
+    "node": ">=20"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onView:contextree.tree",
+    "workspaceContains:**/.contextree/**"
+  ],
+  "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "id": "contextree.tree",
+          "name": "contextree",
+          "when": "contextree.hasTree"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "contextree.refresh",
+        "title": "contextree : recharger l'arbre",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "contextree.openCanvas",
+        "title": "contextree : voir l'arbre (toile)",
+        "icon": "$(type-hierarchy)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "contextree.openCanvas",
+          "when": "view == contextree.tree",
+          "group": "navigation@0"
+        },
+        {
+          "command": "contextree.refresh",
+          "when": "view == contextree.tree",
+          "group": "navigation@1"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -p . --watch"
+  },
+  "dependencies": {
+    "@gengad/contextree": "file:.."
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.7.0"
+  }
+}

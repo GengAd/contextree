@@ -1,7 +1,7 @@
 {
   "name": "@gengad/contextree",
   "version": "0.1.0",
-  "description": "Un arbre de contexte partageable, rout\u00e9 par IA, inject\u00e9 \u00e0 chaque appel \u2014 via MCP et hook Claude Code.",
+  "description": "Un arbre de contexte partageable, routé par IA, injecté à chaque appel — via MCP et hook Claude Code.",
   "type": "module",
   "bin": {
     "contextree": "./dist/cli.js"
@@ -17,6 +17,7 @@
   },
   "scripts": {
     "build": "tsc -b",
+    "build:ext": "npm --prefix extension install --silent && npm --prefix extension run build",
     "typecheck": "tsc -b --noEmit",
     "test": "npm run build && node --test \"tests/*.test.js\"",
     "dev": "tsc -b --watch"

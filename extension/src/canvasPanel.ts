@@ -1,0 +1,143 @@
+import * as vscode from 'vscode';
+import type { ContextTree } from '@gengad/contextree' with { 'resolution-mode': 'import' };
+
+type Core = typeof import('@gengad/contextree', { with: { 'resolution-mode': 'import' } });
+
+/** Ce que la webview reçoit. Plat et sans Map : ça passe par postMessage. */
+type CanvasTree = {
+  rootContent: string;
+  branches: Array<{
+    path: string;
+    parent: string | null;
+    type: string;
+    title: string;
+    loadWhen: string;
+    content: string;
+  }>;
+};
+
+/** La toile 2D : l'arbre entier d'un coup d'œil, comme dans Lacis. Lecture
+ *  seule — un clic ouvre le `.md`, qui reste la source de vérité. */
+export class CanvasPanel {
+  private static current: CanvasPanel | undefined;
+
+  static async show(
+    context: vscode.ExtensionContext,
+    core: () => Promise<Core>,
+    searchFrom: string,
+  ): Promise<void> {
+    if (CanvasPanel.current) {
+      CanvasPanel.current.panel.reveal();
+      await CanvasPanel.current.update();
+      return;
+    }
+    const panel = vscode.window.createWebviewPanel(
+      'contextree.canvas',
+      'contextree — arbre de contexte',
+      vscode.ViewColumn.Active,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')],
+      },
+    );
+    CanvasPanel.current = new CanvasPanel(panel, context, core, searchFrom);
+    await CanvasPanel.current.update();
+  }
+
+  /** Rechargement depuis l'extérieur (watcher, commande) — sans ouvrir de panneau. */
+  static async refreshIfOpen(): Promise<void> {
+    await CanvasPanel.current?.update();
+  }
+
+  private constructor(
+    private readonly panel: vscode.WebviewPanel,
+    private readonly context: vscode.ExtensionContext,
+    private readonly core: () => Promise<Core>,
+    private readonly searchFrom: string,
+  ) {
+    panel.webview.html = this.html();
+    panel.onDidDispose(() => {
+      CanvasPanel.current = undefined;
+    });
+    panel.webview.onDidReceiveMessage(async (msg: { type: string; path?: string }) => {
+      if (msg.type === 'ready') return void this.update();
+      if (msg.type === 'open') return void this.open(msg.path);
+    });
+  }
+
+  private async open(branchPath: string | undefined): Promise<void> {
+    const { findTreeDir, branchFile, ROOT_FILE } = await this.core();
+    const dir = await findTreeDir(this.searchFrom);
+    if (!dir) return;
+    const file =
+      branchPath === undefined || branchPath === ':root'
+        ? vscode.Uri.joinPath(vscode.Uri.file(dir), ROOT_FILE)
+        : vscode.Uri.file(branchFile(dir, branchPath));
+    await vscode.commands.executeCommand('vscode.open', file, { viewColumn: vscode.ViewColumn.Beside });
+  }
+
+  private async update(): Promise<void> {
+    const { findTreeDir, loadTree } = await this.core();
+    let tree: ContextTree | null = null;
+    try {
+      const dir = await findTreeDir(this.searchFrom);
+      tree = dir ? await loadTree(dir) : null;
+    } catch {
+      tree = null;
+    }
+    await this.panel.webview.postMessage({ type: 'tree', tree: tree ? flatten(tree) : null });
+  }
+
+  private html(): string {
+    const asset = (name: string) =>
+      this.panel.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', name));
+    const nonce = String(Math.random()).slice(2);
+    const csp =
+      `default-src 'none'; img-src ${this.panel.webview.cspSource}; ` +
+      `style-src ${this.panel.webview.cspSource}; script-src 'nonce-${nonce}';`;
+    return `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="${csp}" />
+<link rel="stylesheet" href="${asset('canvas.css')}" />
+</head>
+<body>
+<div id="viewport">
+  <div id="scene">
+    <svg id="edges"></svg>
+    <div id="nodes"></div>
+  </div>
+</div>
+<div id="hud">
+  <button id="fit" title="Recadrer (double-clic sur le fond)">Recadrer</button>
+  <span id="count"></span>
+</div>
+<div id="legend"></div>
+<script nonce="${nonce}" src="${asset('canvas.js')}"></script>
+</body>
+</html>`;
+  }
+}
+
+function flatten(tree: ContextTree): CanvasTree {
+  return {
+    rootContent: tree.rootContent,
+    branches: tree.order.flatMap(p => {
+      const b = tree.branches.get(p);
+      return b
+        ? [
+            {
+              path: b.path,
+              parent: b.parentPath,
+              type: b.type,
+              title: b.title,
+              loadWhen: b.loadWhen,
+              content: b.content,
+            },
+          ]
+        : [];
+    }),
+  };
+}

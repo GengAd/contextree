@@ -25,6 +25,8 @@ Adrien Buot — développeur solo, TypeScript. Repo privé `GengAd/contextree`, 
 | Serveur MCP, outils exposés | `src/mcp/server.ts` | `REFERENCES.md` § MCP |
 | CLI, hook Claude Code, installation | `src/cli.ts`, `src/install.ts` | `REFERENCES.md` § Hook |
 | Partage (export/import) | `src/core/pack.ts` | `ROADMAP.md` § Phase 1 |
+| Vue de l'arbre dans VS Code (barre latérale) | `extension/src/treeProvider.ts` | `extension/package.json` § contributes |
+| Toile 2D de l'arbre (webview) | `extension/src/canvasPanel.ts`, `extension/media/` | — |
 | Ce qu'on construit et pourquoi | racine | `CONTEXT.md` |
 | Ce qui vient après (groupes, orgs) | racine | `ROADMAP.md` |
 
@@ -41,4 +43,5 @@ npm run build      # tsc -b
 npm run typecheck  # validation rapide
 npm test           # build + tests unitaires
 node dist/cli.js route "<prompt>"   # voir ce que le routeur chargerait
+npm run build:ext  # compile l'extension VS Code (barre latérale + toile 2D)
 ```
