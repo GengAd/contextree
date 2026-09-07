@@ -34,6 +34,7 @@ Adrien Buot — développeur solo, TypeScript. Repo privé `GengAd/contextree`, 
 | Partage (export/import) | `src/core/pack.ts` | `ROADMAP.md` § Phase 1 |
 | Vue de l'arbre dans VS Code (barre latérale) | `extension/src/treeProvider.ts` | `extension/package.json` § contributes |
 | Badge de barre d'état, dernier tour chargé | `extension/src/statusBar.ts` | `REFERENCES.md` § Journal |
+| Créer / renommer / déplacer une branche depuis la vue | `extension/src/edit.ts` | `REFERENCES.md` § Édition |
 | Toile 2D de l'arbre (webview) | `extension/src/canvasPanel.ts`, `extension/media/` | — |
 | Ce qu'on construit et pourquoi | racine | `CONTEXT.md` |
 | Ce qui vient après (groupes, orgs) | racine | `ROADMAP.md` |

@@ -145,8 +145,17 @@ body {
   white-space: pre-wrap;
 }
 
-.open {
-  align-self: flex-start;
+/* Les boutons de la carte ouverte : la structure s'édite ici, le contenu dans
+   le `.md`. Ils se replient plutôt que de déborder d'une carte de 540px. */
+.actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.act {
   padding: 3px 10px;
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -157,8 +166,13 @@ body {
   font-size: 11.5px;
 }
 
-.open:hover {
+.act:hover {
   border-color: var(--ribbon);
+}
+
+.act.danger:hover {
+  border-color: var(--vscode-errorForeground, #f87171);
+  color: var(--vscode-errorForeground, #f87171);
 }
 
 #hud,

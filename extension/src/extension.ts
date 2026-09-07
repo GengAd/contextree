@@ -1,7 +1,12 @@
 import * as vscode from 'vscode';
 import { CanvasPanel } from './canvasPanel.js';
-import { ContextTreeProvider, loadCore } from './treeProvider.js';
+import { ContextTreeProvider, ROOT_ELEMENT, loadCore } from './treeProvider.js';
 import { StatusBar, lastTurn, watchJournal } from './statusBar.js';
+import * as edit from './edit.js';
+
+/** Les opérations de structure exposées par les deux vues. Une seule liste :
+ *  la barre latérale et la toile appellent le même code. */
+export type EditOp = 'create' | 'child' | 'rename' | 'type' | 'move' | 'delete';
 
 export function activate(context: vscode.ExtensionContext): void {
   const folder = vscode.workspace.workspaceFolders?.[0];
@@ -27,6 +32,63 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
+  const reloadViews = (): void => {
+    void provider.refresh();
+    void CanvasPanel.refreshIfOpen();
+    void refreshTurn();
+  };
+
+  /**
+   * Le point d'entrée unique de l'édition de structure.
+   *
+   * Les commandes de la barre latérale et les messages de la toile passent tous
+   * par ici : l'arbre est relu juste avant l'opération (les `.md` sont la source
+   * de vérité et ont pu changer entre-temps), et les vues sont rechargées après.
+   * C'est aussi la couture où viendra se brancher l'édition du contenu, sans
+   * réécrire l'existant.
+   */
+  const runEdit = async (op: EditOp, target?: string): Promise<void> => {
+    try {
+      const core = await loadCore();
+      const dir = await core.findTreeDir(searchFrom);
+      if (!dir) return;
+      const tree = await core.loadTree(dir);
+
+      // `create` part de la racine, `child` d'une branche : la cible est un
+      // parent dans les deux cas, jamais une branche à modifier.
+      if (op === 'create' || op === 'child') {
+        const parent = op === 'child' && target && target !== ROOT_ELEMENT ? target : null;
+        const created = await edit.createBranch(core, tree, parent);
+        reloadViews();
+        if (created) {
+          await vscode.commands.executeCommand(
+            'vscode.open',
+            vscode.Uri.file(core.branchFile(dir, created)),
+            { viewColumn: vscode.ViewColumn.Beside },
+          );
+        }
+        return;
+      }
+
+      const branch = target ? tree.branches.get(target) : undefined;
+      if (!branch) {
+        vscode.window.showErrorMessage(`Branche inconnue : ${target ?? '(aucune)'}`);
+        return;
+      }
+      if (op === 'rename') await edit.renameBranch(core, tree, branch);
+      else if (op === 'type') await edit.changeType(core, tree, branch);
+      else if (op === 'move') await edit.moveBranch(core, tree, branch);
+      else if (op === 'delete') await edit.deleteBranch(core, tree, branch);
+      reloadViews();
+    } catch (err) {
+      vscode.window.showErrorMessage(
+        `contextree : ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
+
+  CanvasPanel.onEdit(runEdit);
+
   context.subscriptions.push(
     status.disposable,
     vscode.window.registerTreeDataProvider('contextree.tree', provider),
@@ -34,6 +96,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('contextree.openCanvas', () =>
       CanvasPanel.show(context, loadCore, searchFrom),
     ),
+    vscode.commands.registerCommand('contextree.newBranch', () => runEdit('create')),
+    vscode.commands.registerCommand('contextree.newChild', (item?: string) => runEdit('child', item)),
+    vscode.commands.registerCommand('contextree.rename', (item?: string) => runEdit('rename', item)),
+    vscode.commands.registerCommand('contextree.changeType', (item?: string) => runEdit('type', item)),
+    vscode.commands.registerCommand('contextree.move', (item?: string) => runEdit('move', item)),
+    vscode.commands.registerCommand('contextree.delete', (item?: string) => runEdit('delete', item)),
   );
 
   if (folder) {
@@ -42,16 +110,11 @@ export function activate(context: vscode.ExtensionContext): void {
     const watcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(folder, '**/.contextree/**/*.md'),
     );
-    const reload = () => {
-      void provider.refresh();
-      void CanvasPanel.refreshIfOpen();
-      void refreshTurn();
-    };
     context.subscriptions.push(
       watcher,
-      watcher.onDidCreate(reload),
-      watcher.onDidChange(reload),
-      watcher.onDidDelete(reload),
+      watcher.onDidCreate(reloadViews),
+      watcher.onDidChange(reloadViews),
+      watcher.onDidDelete(reloadViews),
     );
   }
 

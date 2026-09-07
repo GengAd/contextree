@@ -96,7 +96,7 @@
     if (n.id !== selected) return NODE_H;
     const body = (n.content || '').trim();
     const lines = body ? Math.max(body.split('\n').length, Math.ceil(body.length / 62)) : 0;
-    return Math.max(190, Math.min(560, 150 + lines * 19));
+    return Math.max(210, Math.min(560, 172 + lines * 19));
   }
 
   function rowWidth(children) {
@@ -262,6 +262,41 @@
     return !o || id === ROOT_ID || o.selected.has(id);
   }
 
+  /** Les boutons de la carte ouverte. La structure s'édite ici ; le contenu
+   *  s'édite dans le `.md`, qui s'ouvre à côté. */
+  function actions(n) {
+    const row = document.createElement('div');
+    row.className = 'actions';
+
+    const button = (label, title, onClick) => {
+      const b = document.createElement('button');
+      b.className = 'act';
+      b.textContent = label;
+      b.title = title;
+      b.addEventListener('click', e => {
+        e.stopPropagation();
+        onClick();
+      });
+      row.append(b);
+      return b;
+    };
+
+    button('ouvrir le .md', "Éditer le contenu dans l'éditeur", () =>
+      vscode.postMessage({ type: 'open', path: n.id }),
+    );
+    const edit = op => vscode.postMessage({ type: 'edit', op, path: n.id });
+    button('+ enfant', 'Créer une branche sous celle-ci', () => edit('child'));
+    if (n.id !== ROOT_ID) {
+      button('renommer', 'Changer le titre', () => edit('rename'));
+      button('type', 'Changer le type de branche', () => edit('type'));
+      button('déplacer', 'Changer de parent', () => edit('move'));
+      button('supprimer', 'Supprimer la branche et ses enfants', () => edit('delete')).classList.add(
+        'danger',
+      );
+    }
+    return row;
+  }
+
   function card(n) {
     const el = document.createElement('div');
     const o = overlay();
@@ -302,14 +337,7 @@
       const md = (n.content || '').trim();
       if (md) markdown(content, md);
       else content.textContent = '(vide)';
-      const open = document.createElement('button');
-      open.className = 'open';
-      open.textContent = 'ouvrir le .md';
-      open.addEventListener('click', e => {
-        e.stopPropagation();
-        vscode.postMessage({ type: 'open', path: n.id });
-      });
-      body.append(content, open);
+      body.append(content, actions(n));
     }
 
     el.append(ribbon, body);

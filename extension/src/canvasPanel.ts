@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { ContextTree } from '@gengad/contextree' with { 'resolution-mode': 'import' };
 import type { LastTurn } from './statusBar.js';
+import type { EditOp } from './extension.js';
 
 type Core = typeof import('@gengad/contextree', { with: { 'resolution-mode': 'import' } });
 
@@ -24,6 +25,18 @@ export class CanvasPanel {
   /** Le dernier tour connu, gardé même panneau fermé : la toile doit pouvoir
    *  s'allumer dès son ouverture, pas au tour suivant. */
   private static turn: LastTurn | null = null;
+
+  /**
+   * Le protocole webview → extension porte des **écritures**, pas seulement des
+   * ouvertures de fichier : la toile envoie `{type:'edit', op, path}` et
+   * l'extension exécute. C'est la couture prévue pour que l'édition du contenu
+   * vienne s'y brancher plus tard sans rien réécrire.
+   */
+  private static edit: ((op: EditOp, target?: string) => Promise<void>) | undefined;
+
+  static onEdit(handler: (op: EditOp, target?: string) => Promise<void>): void {
+    CanvasPanel.edit = handler;
+  }
 
   /** Poussé par l'observateur du journal — même source que la barre d'état. */
   static async setTurn(turn: LastTurn | null): Promise<void> {
@@ -71,10 +84,16 @@ export class CanvasPanel {
       CanvasPanel.current = undefined;
     });
     panel.webview.onDidReceiveMessage(
-      async (msg: { type: string; path?: string; prompt?: string }) => {
+      async (msg: { type: string; path?: string; prompt?: string; op?: EditOp }) => {
         if (msg.type === 'ready') return void this.update();
         if (msg.type === 'open') return void this.open(msg.path);
         if (msg.type === 'route') return void this.route(msg.prompt ?? '');
+        if (msg.type === 'edit' && msg.op) {
+          // La racine n'est pas une branche : elle ne se renomme ni ne se
+          // supprime. Seule « nouvelle branche » a du sens depuis elle.
+          const target = msg.path === ':root' ? undefined : msg.path;
+          return void CanvasPanel.edit?.(msg.op, target);
+        }
       },
     );
   }

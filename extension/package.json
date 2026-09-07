@@ -1,7 +1,7 @@
 {
   "name": "contextree-vscode",
   "displayName": "contextree",
-  "description": "Voir son arbre de contexte dans la barre latérale.",
+  "description": "Voir son arbre de contexte et en éditer la structure, dans l'éditeur.",
   "version": "0.1.0",
   "private": true,
   "publisher": "gengad",
@@ -37,19 +37,111 @@
         "command": "contextree.openCanvas",
         "title": "contextree : voir l'arbre (toile)",
         "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "contextree.newBranch",
+        "title": "contextree : nouvelle branche",
+        "icon": "$(add)"
+      },
+      {
+        "command": "contextree.newChild",
+        "title": "Nouvelle branche enfant",
+        "icon": "$(add)"
+      },
+      {
+        "command": "contextree.rename",
+        "title": "Renommer",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "contextree.changeType",
+        "title": "Changer le type"
+      },
+      {
+        "command": "contextree.move",
+        "title": "Déplacer sous un autre parent"
+      },
+      {
+        "command": "contextree.delete",
+        "title": "Supprimer",
+        "icon": "$(trash)"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "contextree.openCanvas",
+          "command": "contextree.newBranch",
           "when": "view == contextree.tree",
           "group": "navigation@0"
         },
         {
-          "command": "contextree.refresh",
+          "command": "contextree.openCanvas",
           "when": "view == contextree.tree",
           "group": "navigation@1"
+        },
+        {
+          "command": "contextree.refresh",
+          "when": "view == contextree.tree",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "contextree.newChild",
+          "when": "view == contextree.tree && viewItem == contextree.branch",
+          "group": "inline@0"
+        },
+        {
+          "command": "contextree.newChild",
+          "when": "view == contextree.tree && viewItem == contextree.branch",
+          "group": "1_structure@0"
+        },
+        {
+          "command": "contextree.rename",
+          "when": "view == contextree.tree && viewItem == contextree.branch",
+          "group": "1_structure@1"
+        },
+        {
+          "command": "contextree.changeType",
+          "when": "view == contextree.tree && viewItem == contextree.branch",
+          "group": "1_structure@2"
+        },
+        {
+          "command": "contextree.move",
+          "when": "view == contextree.tree && viewItem == contextree.branch",
+          "group": "1_structure@3"
+        },
+        {
+          "command": "contextree.delete",
+          "when": "view == contextree.tree && viewItem == contextree.branch",
+          "group": "2_danger@0"
+        },
+        {
+          "command": "contextree.newBranch",
+          "when": "view == contextree.tree && viewItem == contextree.root",
+          "group": "1_structure@0"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "contextree.newChild",
+          "when": "false"
+        },
+        {
+          "command": "contextree.rename",
+          "when": "false"
+        },
+        {
+          "command": "contextree.changeType",
+          "when": "false"
+        },
+        {
+          "command": "contextree.move",
+          "when": "false"
+        },
+        {
+          "command": "contextree.delete",
+          "when": "false"
         }
       ]
     }

@@ -138,6 +138,18 @@ La toile porte deux surlignages, jamais mélangés : le **dernier tour** (le jou
 
 L'observateur du journal est **non récursif** (`*.json` sur le dossier), seul motif que VS Code supporte hors du dossier ouvert. C'est lui qui fait bouger le badge pendant une conversation : aucun `.md` ne change quand un tour est routé.
 
+## Édition de la structure depuis la vue (`extension/src/edit.ts`)
+
+Créer, renommer, changer le type, déplacer, supprimer. Le **contenu** reste édité dans le `.md` qui s'ouvre à côté — c'est la ligne de `perimetre.md` : ces cinq opérations-là ne se font pas en ouvrant un fichier, ce sont des opérations sur des fichiers et des dossiers.
+
+Une seule implémentation, deux appelants : le menu contextuel de la barre latérale et les boutons de la carte ouverte sur la toile. Tout passe par `runEdit(op, target)` dans `extension.ts`, qui relit l'arbre juste avant (les `.md` sont la source de vérité et ont pu changer) et recharge les vues après.
+
+- **Le protocole webview → extension porte des écritures**, pas seulement des ouvertures : la toile envoie `{type:'edit', op, path}`. C'est la couture prévue pour que l'édition du contenu vienne s'y brancher sans réécrire l'existant.
+- **`load_when` est demandé à la création**, pas plus tard : c'est le seul champ que le modèle ne peut pas deviner, et sans lui la branche ne sera jamais routée.
+- **Renommer change le titre.** Le fichier ne suit que si son nom venait du titre précédent ; un slug choisi à la main n'est pas touché. Le `path` est l'identité d'une branche — on ne le change pas dans le dos de qui l'a écrit.
+- **Supprimer est toujours confirmé**, avec le nombre d'enfants qui partent avec.
+- Les commandes de branche sont masquées de la palette (`commandPalette` / `when: false`) : elles ont besoin d'une branche sélectionnée, que seul le menu contextuel fournit.
+
 ## Pièges connus
 
 - **`process.exit` tue le serveur MCP.** La CLI sort en `process.exit(code)` ; la branche `mcp` ne rend donc jamais la main (`await new Promise(() => {})`). Sans ça, le serveur se coupe juste après le `connect()`.
