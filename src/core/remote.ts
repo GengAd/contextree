@@ -227,6 +227,173 @@ export async function createGroup(slug: string, name: string): Promise<Group> {
   return { ...row, role: 'owner' };
 }
 
+// ── Arbres, versions, branches (PostgREST) ───────────────────────────────────
+
+export type RemoteTree = { id: string; groupId: string; slug: string; name: string };
+export type RemoteVersion = {
+  id: string;
+  parentId: string | null;
+  message: string | null;
+  rootContent: string;
+  createdAt: string;
+};
+export type RemoteBranch = {
+  path: string;
+  parentPath: string | null;
+  type: string;
+  title: string;
+  loadWhen: string;
+  content: string;
+};
+
+/** L'arbre `<groupe>/<arbre>`, ou `null`. RLS ne renvoie que ceux qu'on peut voir. */
+export async function findTree(groupSlug: string, treeSlug: string): Promise<RemoteTree | null> {
+  const session = await requireSession();
+  const config = await remoteConfig();
+  const rows = await request<{ id: string; group_id: string; slug: string; name: string }[]>(
+    config,
+    `/rest/v1/trees?select=id,group_id,slug,name,groups!inner(slug)` +
+      `&slug=eq.${encodeURIComponent(treeSlug)}&groups.slug=eq.${encodeURIComponent(groupSlug)}`,
+    { token: session.accessToken },
+  );
+  const row = rows[0];
+  return row ? { id: row.id, groupId: row.group_id, slug: row.slug, name: row.name } : null;
+}
+
+export async function createTree(groupId: string, slug: string, name: string): Promise<RemoteTree> {
+  const session = await requireSession();
+  const config = await remoteConfig();
+  const [row] = await request<{ id: string; group_id: string; slug: string; name: string }[]>(
+    config,
+    '/rest/v1/trees?select=id,group_id,slug,name',
+    {
+      method: 'POST',
+      token: session.accessToken,
+      body: { group_id: groupId, slug, name },
+      headers: { Prefer: 'return=representation' },
+    },
+  );
+  if (!row) throw new RemoteError("L'arbre a été créé mais le serveur n'a rien renvoyé.");
+  return { id: row.id, groupId: row.group_id, slug: row.slug, name: row.name };
+}
+
+/** La version la plus récente d'un arbre, ou `null` s'il est vierge. */
+export async function headVersion(treeId: string): Promise<RemoteVersion | null> {
+  const session = await requireSession();
+  const config = await remoteConfig();
+  const rows = await request<RawVersion[]>(
+    config,
+    `/rest/v1/versions?select=id,parent_id,message,root_content,created_at` +
+      `&tree_id=eq.${treeId}&order=created_at.desc&limit=1`,
+    { token: session.accessToken },
+  );
+  return rows[0] ? toVersion(rows[0]) : null;
+}
+
+export async function getVersion(versionId: string): Promise<RemoteVersion | null> {
+  const session = await requireSession();
+  const config = await remoteConfig();
+  const rows = await request<RawVersion[]>(
+    config,
+    `/rest/v1/versions?select=id,parent_id,message,root_content,created_at&id=eq.${versionId}`,
+    { token: session.accessToken },
+  );
+  return rows[0] ? toVersion(rows[0]) : null;
+}
+
+export async function versionBranches(versionId: string): Promise<RemoteBranch[]> {
+  const session = await requireSession();
+  const config = await remoteConfig();
+  const rows = await request<
+    { path: string; parent_path: string | null; type: string; title: string; load_when: string; content: string }[]
+  >(
+    config,
+    `/rest/v1/branches?select=path,parent_path,type,title,load_when,content` +
+      `&version_id=eq.${versionId}&order=path.asc`,
+    { token: session.accessToken },
+  );
+  return rows.map(r => ({
+    path: r.path,
+    parentPath: r.parent_path,
+    type: r.type,
+    title: r.title,
+    loadWhen: r.load_when,
+    content: r.content,
+  }));
+}
+
+/**
+ * Crée une version et ses branches.
+ *
+ * Deux appels, pas un : PostgREST n'a pas de transaction multi-tables. Si le
+ * second échoue, la version reste sans branches — visible comme telle, et sans
+ * conséquence puisqu'elle n'a écrasé personne (les versions sont immuables et
+ * ne se suppriment pas). L'appelant doit le dire, pas le cacher.
+ */
+export async function pushVersion(input: {
+  treeId: string;
+  parentId: string | null;
+  message: string;
+  rootContent: string;
+  branches: RemoteBranch[];
+}): Promise<RemoteVersion> {
+  const session = await requireSession();
+  const config = await remoteConfig();
+  const [row] = await request<RawVersion[]>(
+    config,
+    '/rest/v1/versions?select=id,parent_id,message,root_content,created_at',
+    {
+      method: 'POST',
+      token: session.accessToken,
+      body: {
+        tree_id: input.treeId,
+        parent_id: input.parentId,
+        author_id: session.userId,
+        message: input.message,
+        root_content: input.rootContent,
+      },
+      headers: { Prefer: 'return=representation' },
+    },
+  );
+  if (!row) throw new RemoteError("La version a été créée mais le serveur n'a rien renvoyé.");
+
+  if (input.branches.length) {
+    await request(config, '/rest/v1/branches', {
+      method: 'POST',
+      token: session.accessToken,
+      body: input.branches.map(b => ({
+        version_id: row.id,
+        path: b.path,
+        parent_path: b.parentPath,
+        type: b.type,
+        title: b.title,
+        load_when: b.loadWhen,
+        content: b.content,
+      })),
+      headers: { Prefer: 'return=minimal' },
+    });
+  }
+  return toVersion(row);
+}
+
+type RawVersion = {
+  id: string;
+  parent_id: string | null;
+  message: string | null;
+  root_content: string;
+  created_at: string;
+};
+
+function toVersion(r: RawVersion): RemoteVersion {
+  return {
+    id: r.id,
+    parentId: r.parent_id,
+    message: r.message,
+    rootContent: r.root_content,
+    createdAt: r.created_at,
+  };
+}
+
 export async function requireSession(): Promise<Session> {
   const session = await currentSession();
   if (!session) throw new RemoteError('Personne n\'est connecté. Lance : contextree login');

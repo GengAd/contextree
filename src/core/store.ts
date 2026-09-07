@@ -54,13 +54,18 @@ export function localDirFor(treeDir: string): string {
  * `load_when` sans recopier le corps, et ce qui fait qu'un simple dossier local
  * porteur d'enfants n'efface pas la branche de groupe qui lui correspond.
  */
-export async function loadTree(dir: string): Promise<ContextTree> {
+export async function loadTree(
+  dir: string,
+  opts: { withLocal?: boolean } = {},
+): Promise<ContextTree> {
   const group = new Map<string, RawBranch>();
   await walk(dir, null, group, dir);
 
+  // `withLocal: false` donne l'arbre du groupe seul. C'est ce que lit la sync :
+  // le calque personnel ne doit jamais quitter la machine.
   const localDir = localDirFor(dir);
   const local = new Map<string, RawBranch>();
-  await walk(localDir, null, local, localDir);
+  if (opts.withLocal !== false) await walk(localDir, null, local, localDir);
 
   const branches = new Map<string, Branch>();
   for (const [branchPath, raw] of group) branches.set(branchPath, materialize(raw, 'group'));
@@ -79,7 +84,8 @@ export async function loadTree(dir: string): Promise<ContextTree> {
     if (branch.parentPath) branches.get(branch.parentPath)?.childPaths.push(branchPath);
   }
 
-  const rootContent = (await readRoot(localDir)) || (await readRoot(dir));
+  const rootContent =
+    (opts.withLocal === false ? '' : await readRoot(localDir)) || (await readRoot(dir));
   return { dir, localDir, rootContent, branches, order };
 }
 
@@ -180,20 +186,29 @@ export function branchFile(treeDir: string, branchPath: string): string {
   return path.join(treeDir, ...parts, `${last}.md`);
 }
 
+/**
+ * Écrit une branche.
+ *
+ * Par fichier temporaire renommé : un `pull` réécrit tout l'arbre, et un hook
+ * peut le lire au même instant. Il doit voir l'ancienne version ou la nouvelle,
+ * jamais un `.md` à moitié écrit.
+ */
 export async function writeBranch(
   treeDir: string,
   input: { path: string; type: BranchType; title: string; loadWhen: string; content: string },
 ): Promise<string> {
   const file = branchFile(treeDir, input.path);
   await fs.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
   await fs.writeFile(
-    file,
+    tmp,
     serializeFrontmatter(
       { type: input.type, title: input.title, load_when: input.loadWhen },
       input.content,
     ),
     'utf8',
   );
+  await fs.rename(tmp, file);
   return file;
 }
 
@@ -304,7 +319,10 @@ async function exists(p: string): Promise<boolean> {
 
 export async function writeRoot(treeDir: string, content: string): Promise<void> {
   await fs.mkdir(treeDir, { recursive: true });
-  await fs.writeFile(path.join(treeDir, ROOT_FILE), `${content.trim()}\n`, 'utf8');
+  const file = path.join(treeDir, ROOT_FILE);
+  const tmp = `${file}.${process.pid}.tmp`;
+  await fs.writeFile(tmp, `${content.trim()}\n`, 'utf8');
+  await fs.rename(tmp, file);
 }
 
 async function isDir(p: string): Promise<boolean> {

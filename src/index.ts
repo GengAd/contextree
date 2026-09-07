@@ -6,4 +6,5 @@ export * from './core/router.js';
 export * from './core/journal.js';
 export * from './core/pack.js';
 export * from './core/remote.js';
+export * from './core/sync.js';
 export { createServer, runStdio } from './mcp/server.js';

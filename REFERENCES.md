@@ -212,9 +212,31 @@ npm run test:sql      # Docker requis, donc hors de `npm test`
 
 `supabase/rls.test.sql` rejoue le schéma sur un Postgres nu et déroule un scénario à deux comptes : création de groupe, filiation des versions, immuabilité, cloisonnement (un non-membre ne voit même pas l'`id` du groupe), lecture sans écriture, promotion en `writer`, et refus de signer une version au nom d'un autre. Le test bascule sur un rôle non privilégié — RLS ne s'applique pas au propriétaire des tables, et l'oublier ne testerait rien.
 
+### Sync (`src/core/sync.ts`)
+
+`contextree link <groupe>/<arbre> [--create]`, `pull`, `push -m "…"`, `status`.
+
+Le modèle est **git, pas Dropbox**. La copie de travail se souvient de la version dont elle descend — la *base* — et c'est ce qui rend un conflit détectable : trois états à comparer, jamais deux. La table de vérité tient en quatre lignes :
+
+| base → distant | base → local | résultat |
+|---|---|---|
+| a bougé | inchangé | on prend le distant |
+| inchangé | a bougé | on garde le local |
+| a bougé | a bougé pareil | rien à faire |
+| a bougé | a bougé autrement | **conflit** |
+
+- **Un conflit n'écrit rien.** `pull` liste les branches concernées et s'arrête ; le disque et la base suivie ne bougent pas.
+- **Il faut pouvoir en sortir.** Une version réglée à la main diffère par construction du distant *et* de la base : un `pull` nu la redétecterait indéfiniment. On règle les `.md`, puis on tranche en une fois — `pull --mine` ou `pull --theirs`. C'est le seul moyen, et l'oublier rendait le conflit insoluble.
+- **`push` refuse une base périmée** (le non-fast-forward de git) : pousser écraserait le travail d'un autre sans que rien ne le dise.
+- **Le calque local ne part jamais** : la sync lit `loadTree(dir, { withLocal: false })`. C'est la propriété qui a fait choisir un dossier séparé.
+- **Le suivi est local**, comme `.git/` : `~/.contextree/tracking/<clé>.json`, clé sur le `realpath`. `.contextree/` ne contient que du markdown.
+- **`pull` écrit par renommage atomique** (`writeBranch`, `writeRoot`) : un hook qui lit pendant un `pull` voit l'ancienne version ou la nouvelle, jamais un `.md` à moitié écrit. C'est la forme concrète de l'invariant « ni `pull` ni `push` ne peuvent casser un prompt en cours ».
+
+Une version et ses branches partent en deux appels — PostgREST n'a pas de transaction multi-tables. Si le second échoue, la version reste sans branches : visible comme telle, et sans conséquence, puisque les versions sont immuables et n'écrasent personne.
+
 ### L'état local
 
-`~/.contextree/` (surchargeable par `CONTEXTREE_STATE_DIR`) porte maintenant `journal/`, `config.json` (url + clé anon) et `session.json` (jetons, en 0600). Rien de tout ça dans le repo.
+`~/.contextree/` (surchargeable par `CONTEXTREE_STATE_DIR`) porte `journal/`, `tracking/` (à quel arbre distant chaque copie de travail se rattache), `config.json` (url + clé anon) et `session.json` (jetons, en 0600). Rien de tout ça dans le repo.
 
 ## Pièges connus
 

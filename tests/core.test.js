@@ -14,6 +14,9 @@ import {
   RemoteError, clearSession, createGroup, currentSession, me, myGroups,
   readSession, remoteConfig, setRemoteConfig, signIn, signOut,
 } from '../dist/core/remote.js';
+import {
+  merge, outgoingDiff, snapshotOf, pull, push, readTracking, writeTracking, localSnapshot,
+} from '../dist/core/sync.js';
 
 process.env.CONTEXTREE_STATE_DIR = await fs.mkdtemp(
   path.join(os.tmpdir(), 'contextree-journal-'),
@@ -601,4 +604,216 @@ test('superposition : l\'ordre reste un parcours en profondeur, pas un tri de ch
   await writeBranch(dir, branch('a-b'));
   await rawBranch(localDirFor(dir), 'a/c', { title: 'C', load_when: 'x' });
   assert.deepEqual((await loadTree(dir)).order, ['a', 'a/b', 'a/c', 'a-b']);
+});
+
+// ── Sync : fusion à trois voies ─────────────────────────────────────────────
+
+const rb = (p, over = {}) => ({
+  path: p, parentPath: null, type: 'context', title: p, loadWhen: `quand ${p}`,
+  content: `corps de ${p}`, ...over,
+});
+
+test('sync : seul le distant a bougé → on prend le distant', () => {
+  const base = snapshotOf([rb('a'), rb('b')]);
+  const remote = snapshotOf([rb('a', { content: 'nouveau' }), rb('b')]);
+  const local = snapshotOf([rb('a'), rb('b')]);
+  const r = merge(base, remote, local);
+  assert.deepEqual(r.conflicts, []);
+  assert.deepEqual(r.incoming.map(d => `${d.kind}:${d.path}`), ['modifiée:a']);
+  assert.equal(r.merged.get('a').content, 'nouveau');
+});
+
+test('sync : seul le local a bougé → on le garde, le distant ne l\'écrase pas', () => {
+  const base = snapshotOf([rb('a')]);
+  const remote = snapshotOf([rb('a')]);
+  const local = snapshotOf([rb('a', { loadWhen: 'à moi' })]);
+  const r = merge(base, remote, local);
+  assert.deepEqual(r.conflicts, []);
+  assert.deepEqual(r.kept, ['a']);
+  assert.equal(r.merged.get('a').loadWhen, 'à moi');
+});
+
+test('sync : les deux ont bougé pareil → pas un conflit', () => {
+  const base = snapshotOf([rb('a')]);
+  const même = rb('a', { title: 'Même titre' });
+  const r = merge(base, snapshotOf([même]), snapshotOf([{ ...même }]));
+  assert.deepEqual(r.conflicts, []);
+  assert.equal(r.merged.get('a').title, 'Même titre');
+});
+
+test('sync : les deux ont bougé différemment → conflit, et le local survit', () => {
+  const base = snapshotOf([rb('a'), rb('b')]);
+  const remote = snapshotOf([rb('a', { content: 'du groupe' }), rb('b')]);
+  const local = snapshotOf([rb('a', { content: 'à moi' }), rb('b')]);
+  const r = merge(base, remote, local);
+  assert.deepEqual(r.conflicts, ['a']);
+  // rien n'est détruit : le local reste dans le résultat
+  assert.equal(r.merged.get('a').content, 'à moi');
+});
+
+test('sync : ajouts et suppressions des deux côtés', () => {
+  const base = snapshotOf([rb('commune'), rb('partie-au-loin'), rb('partie-ici')]);
+  const remote = snapshotOf([rb('commune'), rb('partie-ici'), rb('neuve-au-loin')]);
+  const local = snapshotOf([rb('commune'), rb('partie-au-loin'), rb('neuve-ici')]);
+  const r = merge(base, remote, local);
+  assert.deepEqual(r.conflicts, []);
+  assert.deepEqual([...r.merged.keys()].sort(), ['commune', 'neuve-au-loin', 'neuve-ici']);
+  assert.deepEqual(r.incoming.map(d => `${d.kind}:${d.path}`), ['ajoutée:neuve-au-loin', 'supprimée:partie-au-loin']);
+  assert.deepEqual(r.kept, ['neuve-ici', 'partie-ici']);
+});
+
+test('sync : sans base, tout le distant entre — première récupération', () => {
+  const r = merge(new Map(), snapshotOf([rb('a'), rb('b')]), new Map());
+  assert.deepEqual(r.conflicts, []);
+  assert.deepEqual(r.incoming.map(d => d.path), ['a', 'b']);
+});
+
+test('sync : outgoingDiff dit ce qu\'un push enverrait', () => {
+  const base = snapshotOf([rb('a'), rb('partie')]);
+  const local = snapshotOf([rb('a', { title: 'Changé' }), rb('neuve')]);
+  assert.deepEqual(
+    outgoingDiff(base, local).map(d => `${d.kind}:${d.path}`),
+    ['modifiée:a', 'ajoutée:neuve', 'supprimée:partie'],
+  );
+});
+
+test('sync : le calque local ne part jamais dans un instantané', async () => {
+  const dir = await scratch();
+  await writeRoot(dir, 'racine du groupe');
+  await writeBranch(dir, branch('archi'));
+  await rawBranch(localDirFor(dir), 'archi', { load_when: 'à moi' });
+  await rawBranch(localDirFor(dir), 'perso', { title: 'Perso', load_when: 'à moi' });
+
+  const snap = await localSnapshot(dir);
+  assert.deepEqual(snap.branches.map(b => b.path), ['archi']);
+  assert.equal(snap.branches[0].loadWhen, 'quand archi');   // pas la surcharge locale
+  assert.equal(snap.rootContent.trim(), 'racine du groupe');
+});
+
+test('sync : sans rattachement, pull et push disent quoi faire', async () => {
+  const dir = await scratch();
+  await writeBranch(dir, branch('a'));
+  assert.equal(await readTracking(dir), null);
+  await assert.rejects(pull(dir), e => /contextree link/.test(e.message));
+  await assert.rejects(push(dir, 'm'), e => /contextree link/.test(e.message));
+});
+
+test('sync : push refuse si le distant a avancé sans nous', async () => {
+  process.env.CONTEXTREE_SUPABASE_URL = 'https://x.supabase.co';
+  process.env.CONTEXTREE_SUPABASE_ANON_KEY = 'anon';
+  const dir = await scratch();
+  await writeBranch(dir, branch('a'));
+  await writeTracking(dir, { treeId: 't-1', groupSlug: 'g', treeSlug: 'a', baseVersionId: 'v-1' });
+
+  stubFetch({
+    '/auth/v1/token': { json: token() },
+    '/rest/v1/versions': { json: [{ id: 'v-2', parent_id: 'v-1', message: 'ailleurs', root_content: '', created_at: '2026-09-07' }] },
+  });
+  await signIn('a@b.c', 'x');
+  const report = await push(dir, 'mon message');
+  assert.equal(report.status, 'en retard');
+  assert.equal(report.head.id, 'v-2');
+});
+
+test('sync : un pull en conflit n\'écrit rien sur le disque', async () => {
+  const dir = await scratch();
+  await writeBranch(dir, branch('a', { content: 'à moi' }));
+  await writeTracking(dir, { treeId: 't-1', groupSlug: 'g', treeSlug: 'a', baseVersionId: 'v-1' });
+
+  let n = 0;
+  stubFetch({
+    '/auth/v1/token': { json: token() },
+    '/rest/v1/versions': { json: [{ id: 'v-2', parent_id: 'v-1', message: '', root_content: '', created_at: '2026-09-07' }] },
+    '/rest/v1/branches': c => ({
+      json: /version_id=eq\.v-1/.test(c.url)
+        ? [{ path: 'a', parent_path: null, type: 'context', title: 'a', load_when: 'quand a', content: 'la base' }]
+        : [{ path: 'a', parent_path: null, type: 'context', title: 'a', load_when: 'quand a', content: 'du groupe' }],
+    }),
+  });
+  await signIn('a@b.c', 'x');
+  const report = await pull(dir);
+  assert.equal(report.status, 'conflit');
+  assert.deepEqual(report.conflicts, ['a']);
+  // le disque n'a pas bougé, et la base suivie non plus
+  assert.equal((await loadTree(dir)).branches.get('a').content.trim(), 'à moi');
+  assert.equal((await readTracking(dir)).baseVersionId, 'v-1');
+  void n;
+});
+
+test('sync : un pull propre écrit, supprime, et avance la base suivie', async () => {
+  const dir = await scratch();
+  await writeBranch(dir, branch('garde', { content: 'à moi' }));   // modifiée en local
+  await writeBranch(dir, branch('vieille'));                        // supprimée au loin
+  await writeTracking(dir, { treeId: 't-1', groupSlug: 'g', treeSlug: 'a', baseVersionId: 'v-1' });
+
+  const base = [
+    { path: 'garde', parent_path: null, type: 'context', title: 'garde', load_when: 'quand garde', content: 'corps de garde' },
+    { path: 'vieille', parent_path: null, type: 'context', title: 'vieille', load_when: 'quand vieille', content: 'corps de vieille' },
+  ];
+  stubFetch({
+    '/auth/v1/token': { json: token() },
+    '/rest/v1/versions': { json: [{ id: 'v-2', parent_id: 'v-1', message: '', root_content: '# racine distante', created_at: '2026-09-07' }] },
+    '/rest/v1/branches': c => ({
+      json: /version_id=eq\.v-1/.test(c.url)
+        ? base
+        : [base[0], { path: 'neuve', parent_path: null, type: 'skill', title: 'Neuve', load_when: 'quand neuve', content: 'du groupe' }],
+    }),
+  });
+  await signIn('a@b.c', 'x');
+  const report = await pull(dir);
+  assert.equal(report.status, 'fusionné');
+  assert.deepEqual(report.incoming.map(d => `${d.kind}:${d.path}`), ['ajoutée:neuve', 'supprimée:vieille']);
+  assert.deepEqual(report.kept, ['garde']);
+
+  const tree = await loadTree(dir);
+  assert.deepEqual(tree.order, ['garde', 'neuve']);
+  assert.equal(tree.branches.get('garde').content.trim(), 'à moi');       // le local a survécu
+  assert.equal(tree.branches.get('neuve').type, 'skill');
+  assert.equal(tree.rootContent.trim(), '# racine distante');
+  assert.equal((await readTracking(dir)).baseVersionId, 'v-2');
+});
+
+test('sync : un push envoie l\'arbre du groupe et avance la base', async () => {
+  const dir = await scratch();
+  await writeRoot(dir, '# ma racine');
+  await writeBranch(dir, branch('a'));
+  await rawBranch(localDirFor(dir), 'perso', { title: 'Perso', load_when: 'à moi' });
+  await writeTracking(dir, { treeId: 't-1', groupSlug: 'g', treeSlug: 'a', baseVersionId: null });
+
+  const calls = stubFetch({
+    '/auth/v1/token': { json: token() },
+    '/rest/v1/versions': c => (c.method === 'POST'
+      ? { json: [{ id: 'v-9', parent_id: null, message: c.body.message, root_content: c.body.root_content, created_at: '2026-09-07' }] }
+      : { json: [] }),
+    '/rest/v1/branches': { status: 201, json: null },
+  });
+  await signIn('a@b.c', 'x');
+  const report = await push(dir, 'premier envoi');
+  assert.equal(report.status, 'poussé');
+  assert.deepEqual(report.outgoing.map(d => d.path), ['a']);
+
+  const posted = calls.find(c => c.url.includes('/rest/v1/branches') && c.method === 'POST');
+  assert.deepEqual(posted.body.map(b => b.path), ['a']);   // « perso » n'est pas parti
+  assert.equal(posted.body[0].load_when, 'quand a');
+  assert.equal((await readTracking(dir)).baseVersionId, 'v-9');
+});
+
+test('sync : un conflit se tranche, et ne revient pas', () => {
+  const base = snapshotOf([rb('a')]);
+  const remote = snapshotOf([rb('a', { content: 'du groupe' })]);
+  // La version réglée à la main : différente du distant ET de la base. Sans
+  // résolution explicite, `pull` la redétecterait indéfiniment.
+  const local = snapshotOf([rb('a', { content: 'le compromis' })]);
+
+  assert.deepEqual(merge(base, remote, local).conflicts, ['a']);
+
+  const mine = merge(base, remote, local, 'mine');
+  assert.deepEqual(mine.conflicts, []);
+  assert.deepEqual(mine.kept, ['a']);
+  assert.equal(mine.merged.get('a').content, 'le compromis');
+
+  const theirs = merge(base, remote, local, 'theirs');
+  assert.deepEqual(theirs.conflicts, []);
+  assert.deepEqual(theirs.incoming.map(d => d.path), ['a']);
+  assert.equal(theirs.merged.get('a').content, 'du groupe');
 });

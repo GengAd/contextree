@@ -18,6 +18,7 @@ import {
   signIn,
   signOut,
 } from './core/remote.js';
+import { link, pull, push, readTracking } from './core/sync.js';
 import { isBranchType, type BranchType } from './core/types.js';
 import { installHook, installMcp, type InstallReport } from './install.js';
 import { resolvePack, runStdio } from './mcp/server.js';
@@ -43,6 +44,10 @@ Contexte partagé (phase 2) :
   contextree logout                  ferme la session
   contextree whoami                  qui est connecté, et sur quels groupes
   contextree group new <slug> <nom>  crée un groupe (on en devient propriétaire)
+  contextree link <grp>/<arbre>      rattache cette copie de travail [--create]
+  contextree pull [--mine|--theirs]  récupère l'arbre de groupe (fusion, jamais d'écrasement)
+  contextree push -m "<message>"     pousse ses changements locaux
+  contextree status                  ce que cette copie de travail suit
 
 Variables : ANTHROPIC_API_KEY (routage), CONTEXTREE_ROUTER_MODEL, CONTEXTREE_ROUTER_TIMEOUT_MS,
             CONTEXTREE_STATE_DIR (où vit le journal des tours)
@@ -97,6 +102,14 @@ async function main(argv: string[]): Promise<number> {
       return cmdWhoami();
     case 'group':
       return cmdGroup(flags._);
+    case 'link':
+      return cmdLink(flags._[0], Boolean(flags.create));
+    case 'pull':
+      return cmdPull(flags.mine ? 'mine' : flags.theirs ? 'theirs' : undefined);
+    case 'push':
+      return cmdPush(str(flags.m) ?? str(flags.message));
+    case 'status':
+      return cmdStatus();
     default:
       process.stderr.write(`Commande inconnue : ${command}\n\n${HELP}`);
       return 1;
@@ -370,6 +383,98 @@ async function cmdGroup(args: string[]): Promise<number> {
   });
 }
 
+async function cmdLink(target: string | undefined, create: boolean): Promise<number> {
+  const [groupSlug, treeSlug] = (target ?? '').split('/');
+  if (!groupSlug || !treeSlug) {
+    process.stderr.write('Usage : contextree link <groupe>/<arbre> [--create]\n');
+    return 1;
+  }
+  const { dir } = await open();
+  return remote(async () => {
+    const tracking = await link(dir, groupSlug, treeSlug, { create });
+    process.stdout.write(
+      `Rattaché à ${tracking.groupSlug}/${tracking.treeSlug}\nLance : contextree pull\n`,
+    );
+  });
+}
+
+async function cmdStatus(): Promise<number> {
+  const { dir } = await open();
+  const tracking = await readTracking(dir);
+  if (!tracking) {
+    process.stdout.write(
+      "Copie de travail non rattachée.\nLance : contextree link <groupe>/<arbre> [--create]\n",
+    );
+    return 0;
+  }
+  process.stdout.write(
+    `${tracking.groupSlug}/${tracking.treeSlug}\n` +
+      `base : ${tracking.baseVersionId ?? '(aucune — rien n\'a encore été poussé ni récupéré)'}\n`,
+  );
+  return 0;
+}
+
+async function cmdPull(resolve?: 'mine' | 'theirs'): Promise<number> {
+  const { dir } = await open();
+  let code = 0;
+  const result = await remote(async () => {
+    const report = await pull(dir, resolve ? { resolve } : {});
+    if (report.status === 'vierge') {
+      process.stdout.write("L'arbre distant est vierge. Lance : contextree push -m \"…\"\n");
+      return;
+    }
+    if (report.status === 'à jour') {
+      process.stdout.write('Déjà à jour.\n');
+      return;
+    }
+    // Un conflit se montre, il ne se tranche pas à ta place. Rien n'a été écrit.
+    if (report.status === 'conflit') {
+      process.stderr.write(
+        `${report.conflicts.length} branche(s) modifiée(s) des deux côtés — rien n'a été écrit :\n` +
+          report.conflicts.map(p => `  ✗ ${p}\n`).join('') +
+          '\nRègle chacune à la main en éditant son .md, puis tranche en une fois :\n' +
+          '  contextree pull --mine     garde ta version des branches en conflit\n' +
+          '  contextree pull --theirs   prend celle du groupe\n',
+      );
+      code = 1;
+      return;
+    }
+    for (const d of report.incoming) process.stdout.write(`  ↓ ${d.kind.padEnd(9)} ${d.path}\n`);
+    for (const p of report.kept) process.stdout.write(`  = gardée    ${p}\n`);
+    process.stdout.write(
+      `${report.incoming.length} branche(s) récupérée(s), ${report.kept.length} gardée(s).\n`,
+    );
+  });
+  return result || code;
+}
+
+async function cmdPush(message: string | undefined): Promise<number> {
+  if (!message) {
+    process.stderr.write('Usage : contextree push -m "<message>"\n');
+    return 1;
+  }
+  const { dir } = await open();
+  let code = 0;
+  const result = await remote(async () => {
+    const report = await push(dir, message);
+    if (report.status === 'rien à pousser') {
+      process.stdout.write('Rien à pousser.\n');
+      return;
+    }
+    if (report.status === 'en retard') {
+      process.stderr.write(
+        "Le distant a avancé depuis ta dernière synchronisation.\n" +
+          'Lance `contextree pull` d\'abord — pousser écraserait le travail de quelqu\'un d\'autre.\n',
+      );
+      code = 1;
+      return;
+    }
+    for (const d of report.outgoing) process.stdout.write(`  ↑ ${d.kind.padEnd(9)} ${d.path}\n`);
+    process.stdout.write(`Poussé : ${report.outgoing.length} changement(s).\n`);
+  });
+  return result || code;
+}
+
 /** Une erreur réseau est une erreur d'utilisation, pas un plantage : on affiche
  *  le message et on sort en 1, sans pile d'appels. */
 async function remote(run: () => Promise<void>): Promise<number> {
@@ -446,8 +551,10 @@ function parseFlags(argv: string[]): Flags {
       if (inline !== undefined) flags[key] = inline;
       else if (argv[i + 1] && !argv[i + 1]!.startsWith('--')) flags[key] = argv[++i]!;
       else flags[key] = true;
-    } else if (arg === '-o' && argv[i + 1]) {
-      flags['o'] = argv[++i]!;
+    } else if (/^-[a-zA-Z]$/.test(arg) && argv[i + 1] !== undefined) {
+      // Formes courtes : `-o fichier`, `-m "message"`. La valeur est prise telle
+      // quelle — `--nom` reste là pour un texte qui commencerait par un tiret.
+      flags[arg.slice(1)] = argv[++i]!;
     } else {
       flags._.push(arg);
     }
