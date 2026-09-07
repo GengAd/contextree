@@ -8,6 +8,7 @@ import { findTreeDir, loadTree, slugify, writeBranch, deleteBranch } from '../co
 import { allBranches, formatTree } from '../core/tree.js';
 import { renderContext, renderTrace } from '../core/render.js';
 import { route } from '../core/router.js';
+import { appendTurn } from '../core/journal.js';
 import { decodePack, encodePack, extractPack, applyPack } from '../core/pack.js';
 import { BRANCH_TYPES } from '../core/types.js';
 import type { ContextTree } from '../core/types.js';
@@ -55,8 +56,18 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       annotations: { readOnlyHint: true },
     },
     async ({ query }) => {
-      const { tree } = await open();
+      const { dir, tree } = await open();
       const { selected, reason, error } = await route(tree, query);
+      // Le chat de Cursor et les autres clients MCP passent par ici : sans cette
+      // ligne, le journal ne verrait que les tours de Claude Code.
+      await appendTurn(dir, {
+        at: Date.now(),
+        prompt: query,
+        selected: [...selected],
+        reason,
+        source: 'mcp',
+        ...(error ? { error } : {}),
+      });
       const block = renderContext(tree, selected);
       const trace = renderTrace(tree, selected, reason);
       return text(

@@ -9,6 +9,11 @@ import { loadTree, writeBranch, writeRoot, deleteBranch, slugify, findTreeDir } 
 import { withAncestors, guaranteedBranches, allBranches } from '../dist/core/tree.js';
 import { renderContext } from '../dist/core/render.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
+import { appendTurn, readJournal, journalFile } from '../dist/core/journal.js';
+
+process.env.CONTEXTREE_STATE_DIR = await fs.mkdtemp(
+  path.join(os.tmpdir(), 'contextree-journal-'),
+);
 
 async function scratch() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-test-'));
@@ -150,4 +155,72 @@ test('pack : un chemin qui remonte hors du dossier est refusé', async () => {
 test('slugify : accents, ponctuation, cas vide', () => {
   assert.equal(slugify('Règles du Projet !'), 'regles-du-projet');
   assert.equal(slugify('!!!'), 'branche');
+});
+
+const turn = (over = {}) => ({
+  at: Date.now(),
+  prompt: 'un prompt',
+  selected: ['identite'],
+  reason: 'routed',
+  source: 'hook',
+  ...over,
+});
+
+test('journal : les tours s\'empilent, du plus ancien au plus récent', async () => {
+  const dir = await scratch();
+  assert.deepEqual(await readJournal(dir), []);
+  await appendTurn(dir, turn({ prompt: 'premier' }));
+  await appendTurn(dir, turn({ prompt: 'second', reason: 'fallback', source: 'mcp', error: 'timeout' }));
+  const turns = await readJournal(dir);
+  assert.deepEqual(turns.map(t => t.prompt), ['premier', 'second']);
+  assert.equal(turns[1].reason, 'fallback');
+  assert.equal(turns[1].source, 'mcp');
+  assert.equal(turns[1].error, 'timeout');
+});
+
+test('journal : borné aux 50 derniers tours', async () => {
+  const dir = await scratch();
+  for (let i = 0; i < 55; i++) await appendTurn(dir, turn({ prompt: `tour ${i}` }));
+  const turns = await readJournal(dir);
+  assert.equal(turns.length, 50);
+  assert.equal(turns[0].prompt, 'tour 5');
+  assert.equal(turns.at(-1).prompt, 'tour 54');
+});
+
+test('journal : le prompt est tronqué et mis à plat', async () => {
+  const dir = await scratch();
+  await appendTurn(dir, turn({ prompt: `  deux\n\nlignes  ` }));
+  await appendTurn(dir, turn({ prompt: 'x'.repeat(500) }));
+  const turns = await readJournal(dir);
+  assert.equal(turns[0].prompt, 'deux lignes');
+  assert.equal(turns[1].prompt.length, 200);
+  assert.match(turns[1].prompt, /…$/);
+});
+
+test('journal : un journal illisible est un journal vide, jamais une erreur', async () => {
+  const dir = await scratch();
+  await appendTurn(dir, turn());
+  await fs.writeFile(journalFile(dir), '{ pas du JSON', 'utf8');
+  assert.deepEqual(await readJournal(dir), []);
+  // et on repart proprement : écrire par-dessus ne rejette pas
+  await appendTurn(dir, turn({ prompt: 'après' }));
+  assert.deepEqual((await readJournal(dir)).map(t => t.prompt), ['après']);
+});
+
+test('journal : les entrées mal formées sont écartées à la lecture', async () => {
+  const dir = await scratch();
+  await appendTurn(dir, turn({ prompt: 'bon' }));
+  const file = journalFile(dir);
+  const kept = JSON.parse(await fs.readFile(file, 'utf8'));
+  await fs.writeFile(file, JSON.stringify([...kept, { at: 'hier' }, null, { source: 'ailleurs' }]), 'utf8');
+  assert.deepEqual((await readJournal(dir)).map(t => t.prompt), ['bon']);
+});
+
+test('journal : un arbre, un journal — deux arbres ne se mélangent pas', async () => {
+  const a = await scratch();
+  const b = await scratch();
+  await appendTurn(a, turn({ prompt: 'chez A' }));
+  await appendTurn(b, turn({ prompt: 'chez B' }));
+  assert.deepEqual((await readJournal(a)).map(t => t.prompt), ['chez A']);
+  assert.deepEqual((await readJournal(b)).map(t => t.prompt), ['chez B']);
 });

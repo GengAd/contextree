@@ -106,9 +106,22 @@ Un `ContextPack` est un objet plat autonome (`v: 1`, `rootContent`, `branches[]`
 
 `applyPack` valide chaque chemin (`..` et chemins absolus refusés — un pack vient de quelqu'un d'autre) et accepte un `prefix` pour isoler les branches importées sous un hub.
 
+## Journal des tours (`src/core/journal.ts`)
+
+Ce qui a été chargé, tour après tour — la donnée que `renderTrace` envoyait sur `stderr`, gardée pour que la vue puisse montrer ce qui a **réellement** servi.
+
+Par tour : horodatage, extrait du prompt (200 caractères, mis à plat), branches retenues, `reason` (`routed` / `all` / `fallback` — c'est lui l'indicateur de repli, pas un booléen en double), `source` (`hook` ou `mcp`) et l'erreur du routeur s'il y en a eu une.
+
+- **Séparé du cache sticky.** `session.ts` a un contrat dont dépend le fallback du tour suivant : un journal corrompu ne doit jamais pouvoir abîmer le routage.
+- **Clé par dossier d'arbre, pas par session.** Un arbre, un journal, toutes sessions confondues — la vue ne connaît pas le `session_id` et n'a pas à deviner quel fichier lire.
+- **Les deux chemins écrivent** : `cmdHook` (Claude Code) et `get_context` (chat de Cursor et autres clients MCP). Sans les deux, la vue est aveugle la moitié du temps.
+- **50 derniers tours**, écriture par fichier temporaire renommé — un lecteur ne tombe jamais sur un JSON à moitié écrit.
+- **`appendTurn` ne rejette jamais.** Même invariant que le hook : écrire le journal ne peut pas bloquer un prompt.
+
 ## Pièges connus
 
 - **`process.exit` tue le serveur MCP.** La CLI sort en `process.exit(code)` ; la branche `mcp` ne rend donc jamais la main (`await new Promise(() => {})`). Sans ça, le serveur se coupe juste après le `connect()`.
 - **Un dossier sans `.md` frère** était invisible avant le hub implicite. Si on retouche `walk()`, garder ce comportement.
 - **L'ordre des branches est contractuel** : les indices envoyés au routeur en dépendent. `order` est un parcours en profondeur alphabétique — le rendre instable casserait silencieusement le routage.
 - **Le cache de session vit dans `os.tmpdir()`**, pas dans le repo : c'est de l'état, pas du contenu. Il n'est jamais une dépendance — s'il disparaît, on perd juste la stickiness du fallback.
+- **`os.tmpdir()` n'est pas le même des deux côtés.** Le transport stdio du SDK MCP lance le serveur avec un environnement nettoyé — `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`, mais **pas** `TMPDIR`. Le serveur retombe donc sur `/tmp` pendant que le hook écrit dans le `/var/folders/…` de la session. D'où le journal ancré sur `~/.contextree/journal/` (surchargeable par `CONTEXTREE_STATE_DIR`) : tout état que les deux chemins doivent partager doit l'être aussi. Le cache sticky, lui, n'a qu'un seul écrivain et peut rester dans `tmpdir`.

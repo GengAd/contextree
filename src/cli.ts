@@ -8,6 +8,7 @@ import { renderContext, renderTrace } from './core/render.js';
 import { route } from './core/router.js';
 import { encodePack, extractPack, applyPack } from './core/pack.js';
 import { readSelection, writeSelection } from './core/session.js';
+import { appendTurn } from './core/journal.js';
 import { isBranchType, type BranchType } from './core/types.js';
 import { installHook, installMcp, type InstallReport } from './install.js';
 import { resolvePack, runStdio } from './mcp/server.js';
@@ -26,7 +27,8 @@ const HELP = `contextree — un arbre de contexte partageable, routé, injecté 
   contextree mcp                     lance le serveur MCP (stdio)
   contextree hook                    point d'entrée du hook UserPromptSubmit
 
-Variables : ANTHROPIC_API_KEY (routage), CONTEXTREE_ROUTER_MODEL, CONTEXTREE_ROUTER_TIMEOUT_MS
+Variables : ANTHROPIC_API_KEY (routage), CONTEXTREE_ROUTER_MODEL, CONTEXTREE_ROUTER_TIMEOUT_MS,
+            CONTEXTREE_STATE_DIR (où vit le journal des tours)
 `;
 
 async function main(argv: string[]): Promise<number> {
@@ -253,8 +255,16 @@ async function cmdHook(): Promise<number> {
     if (!tree.order.length && !tree.rootContent.trim()) return 0;
 
     const previous = await readSelection(dir, sessionId);
-    const { selected, reason } = await route(tree, prompt, { previousSelection: previous });
+    const { selected, reason, error } = await route(tree, prompt, { previousSelection: previous });
     await writeSelection(dir, sessionId, selected);
+    await appendTurn(dir, {
+      at: Date.now(),
+      prompt,
+      selected: [...selected],
+      reason,
+      source: 'hook',
+      ...(error ? { error } : {}),
+    });
 
     const block = renderContext(tree, selected);
     if (block) process.stdout.write(`${block}\n`);
