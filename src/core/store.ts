@@ -4,6 +4,8 @@ import { parseFrontmatter, serializeFrontmatter } from './frontmatter.js';
 import { isBranchType, type Branch, type BranchType, type ContextTree } from './types.js';
 
 export const DIR_NAME = '.contextree';
+/** Le calque personnel : même format, dossier frère. Voir `overlay` plus bas. */
+export const LOCAL_DIR_NAME = '.contextree.local';
 export const ROOT_FILE = 'root.md';
 
 /**
@@ -31,17 +33,96 @@ export async function findTreeDir(from: string = process.cwd()): Promise<string 
   }
 }
 
+/** Le calque local d'un arbre : `.contextree.local/`, dossier frère. */
+export function localDirFor(treeDir: string): string {
+  return path.join(path.dirname(treeDir), LOCAL_DIR_NAME);
+}
+
+/**
+ * Charge l'arbre, calque local superposé.
+ *
+ * **La résolution est faite ici, pas au rendu.** Le routeur lit les `load_when`
+ * avant que quoi que ce soit ne soit rendu : s'il voyait celui du groupe pendant
+ * que le rendu injecte le contenu local, il router*ait* sur une branche et
+ * charger*ait* l'autre. Résoudre au chargement donne en plus l'arbre superposé à
+ * tout le reste — `withAncestors`, `formatTree`, la barre latérale, la toile —
+ * sans qu'aucun d'eux n'ait à savoir qu'il y a deux dossiers.
+ *
+ * La règle : **même chemin des deux côtés ⇒ le local gagne**, champ par champ ;
+ * chemin qui n'existe qu'en local ⇒ il s'ajoute. Un champ absent du fichier
+ * local retombe sur celui du groupe — c'est ce qui permet de ne surcharger qu'un
+ * `load_when` sans recopier le corps, et ce qui fait qu'un simple dossier local
+ * porteur d'enfants n'efface pas la branche de groupe qui lui correspond.
+ */
 export async function loadTree(dir: string): Promise<ContextTree> {
+  const group = new Map<string, RawBranch>();
+  await walk(dir, null, group, dir);
+
+  const localDir = localDirFor(dir);
+  const local = new Map<string, RawBranch>();
+  await walk(localDir, null, local, localDir);
+
   const branches = new Map<string, Branch>();
-  const order: string[] = [];
-
-  await walk(dir, null, branches, order, dir);
-
-  for (const branch of branches.values()) {
-    if (branch.parentPath) branches.get(branch.parentPath)!.childPaths.push(branch.path);
+  for (const [branchPath, raw] of group) branches.set(branchPath, materialize(raw, 'group'));
+  for (const [branchPath, raw] of local) {
+    branches.set(branchPath, materialize(raw, 'local', group.get(branchPath)));
   }
 
-  return { dir, rootContent: await readRoot(dir), branches, order };
+  // L'ordre est contractuel : les indices envoyés au routeur en dépendent. Le
+  // parcours en profondeur alphabétique se reconstruit segment par segment — un
+  // tri lexicographique nu se tromperait, `-` passant avant `/` (`a`, `a-b`,
+  // `a/b` au lieu de `a`, `a/b`, `a-b`).
+  const order = [...branches.keys()].sort(compareBranchPaths);
+
+  for (const branchPath of order) {
+    const branch = branches.get(branchPath)!;
+    if (branch.parentPath) branches.get(branch.parentPath)?.childPaths.push(branchPath);
+  }
+
+  const rootContent = (await readRoot(localDir)) || (await readRoot(dir));
+  return { dir, localDir, rootContent, branches, order };
+}
+
+/** Le fichier d'une branche, dans le dossier d'où elle vient. */
+export function fileForBranch(tree: ContextTree, branchPath: string): string {
+  const branch = tree.branches.get(branchPath);
+  return branchFile(branch?.layer === 'local' ? tree.localDir : tree.dir, branchPath);
+}
+
+export function compareBranchPaths(a: string, b: string): number {
+  const as = a.split('/');
+  const bs = b.split('/');
+  for (let i = 0; i < Math.min(as.length, bs.length); i++) {
+    if (as[i] !== bs[i]) return as[i]! < bs[i]! ? -1 : 1;
+  }
+  return as.length - bs.length;
+}
+
+/** Ce qu'on a lu sur le disque, avant tout défaut : `data` dit quels champs le
+ *  fichier portait vraiment, et c'est ce qui rend la superposition possible. */
+type RawBranch = {
+  path: string;
+  parentPath: string | null;
+  slug: string;
+  data: Record<string, string>;
+  body: string;
+};
+
+function materialize(raw: RawBranch, layer: 'group' | 'local', under?: RawBranch): Branch {
+  const field = (key: string): string | undefined =>
+    raw.data[key]?.trim() || under?.data[key]?.trim() || undefined;
+  const type = raw.data['type'] ?? under?.data['type'];
+  const title = field('title');
+  return {
+    path: raw.path,
+    parentPath: raw.parentPath,
+    layer,
+    type: isBranchType(type) ? type : 'context',
+    title: title || raw.slug.replace(/[-_]/g, ' '),
+    loadWhen: field('load_when') || title || raw.slug,
+    content: raw.body.trim() ? raw.body : (under?.body ?? raw.body),
+    childPaths: [],
+  };
 }
 
 async function readRoot(dir: string): Promise<string> {
@@ -56,8 +137,7 @@ async function readRoot(dir: string): Promise<string> {
 async function walk(
   dir: string,
   parentPath: string | null,
-  branches: Map<string, Branch>,
-  order: string[],
+  branches: Map<string, RawBranch>,
   treeDir: string,
 ): Promise<void> {
   let entries;
@@ -86,19 +166,10 @@ async function walk(
       ? parseFrontmatter(await fs.readFile(path.join(dir, `${slug}.md`), 'utf8'))
       : { data: {} as Record<string, string>, body: '' };
 
-    branches.set(branchPath, {
-      path: branchPath,
-      parentPath,
-      type: isBranchType(data['type']) ? data['type'] : 'context',
-      title: data['title']?.trim() || slug.replace(/[-_]/g, ' '),
-      loadWhen: data['load_when']?.trim() || data['title']?.trim() || slug,
-      content: body,
-      childPaths: [],
-    });
-    order.push(branchPath);
+    branches.set(branchPath, { path: branchPath, parentPath, slug, data, body });
 
     const childDir = path.join(dir, slug);
-    if (dirs.includes(slug)) await walk(childDir, branchPath, branches, order, treeDir);
+    if (dirs.includes(slug)) await walk(childDir, branchPath, branches, treeDir);
   }
 }
 

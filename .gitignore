@@ -4,3 +4,6 @@ dist/
 .DS_Store
 .env
 .contextree/.cache/
+
+# Le calque personnel : à moi, jamais poussé (ROADMAP.md § Phase 2).
+.contextree.local/

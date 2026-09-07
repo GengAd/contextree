@@ -49,9 +49,9 @@ Le parseur de frontmatter (`src/core/frontmatter.ts`) n'accepte que des scalaire
 
 **`findTreeDir` remonte l'arborescence** comme `.git` : on peut lancer la CLI depuis n'importe quel sous-dossier.
 
-### Le calque local (phase 2, tranché le 7 septembre 2026)
+### Le calque local
 
-Quand un arbre sera partagé, le calque personnel sera un **dossier frère**, `.contextree.local/`, de format identique — pas un champ `overrides:` dans le frontmatter. Rien n'est encore implémenté ; la décision est écrite ici parce qu'elle contraint le format.
+Le calque personnel est un **dossier frère**, `.contextree.local/`, de format identique — pas un champ `overrides:` dans le frontmatter (tranché le 7 septembre 2026). Il est gitignoré : il n'est à personne d'autre.
 
 ```
 .contextree/              # au groupe : versionné, synchronisé
@@ -62,6 +62,14 @@ Quand un arbre sera partagé, le calque personnel sera un **dossier frère**, `.
 ```
 
 Résolution : **même chemin des deux côtés ⇒ le local gagne** ; chemin qui n'existe qu'en local ⇒ il s'ajoute.
+
+**La résolution est faite au chargement (`loadTree`), pas au rendu.** Le routeur lit les `load_when` avant que quoi que ce soit ne soit rendu : s'il voyait celui du groupe pendant que le rendu injecte le contenu local, il routerait sur une branche et chargerait l'autre. Résoudre au chargement donne en plus l'arbre superposé à tout le reste — `withAncestors`, `formatTree`, la barre latérale, la toile — sans qu'aucun n'ait à savoir qu'il y a deux dossiers.
+
+**La surcharge est champ par champ** : un champ absent du fichier local retombe sur celui du groupe. C'est ce qui permet de ne surcharger qu'un `load_when` sans recopier le corps, et ce qui fait qu'un dossier local simplement porteur d'enfants (hub implicite, donc vide) n'efface pas la branche de groupe correspondante. Un `root.md` local l'emporte entièrement, sinon c'est celui du groupe.
+
+Chaque branche porte son `layer` (`group` ou `local`) : `fileForBranch(tree, path)` ouvre le fichier du bon dossier — une branche surchargée s'édite dans le calque, pas dans l'arbre du groupe — et les vues l'affichent (`[context · local]` dans `contextree list`, `context · local` dans la barre latérale).
+
+**L'ordre reste contractuel.** Fusionner deux dossiers oblige à reconstruire le parcours en profondeur alphabétique : `compareBranchPaths` compare segment par segment, parce qu'un tri lexicographique nu se tromperait — `-` (0x2D) passe avant `/` (0x2F), donnant `a`, `a-b`, `a/b` au lieu de `a`, `a/b`, `a-b`. Les indices envoyés au routeur en dépendent.
 
 La raison est la sync, pas le diff. Un champ dans le frontmatter mettrait des données personnelles **dans** des fichiers appartenant au groupe : `push` devrait les filtrer fichier par fichier (une passe ratée pousse des notes personnelles), et le moindre réglage personnel salirait un fichier partagé, candidat au conflit au `pull` suivant. Deux dossiers rendent ces problèmes impossibles par construction — `push` n'envoie que `.contextree/`, et le calque local ne peut pas entrer en conflit. Voir `ROADMAP.md` § Phase 2.
 

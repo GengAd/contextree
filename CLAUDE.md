@@ -26,7 +26,7 @@ Adrien Buot — développeur solo, TypeScript. Repo privé `GengAd/contextree`, 
 
 | Tâche | Aller dans | Lire |
 |---|---|---|
-| Format de fichier, chargement de l'arbre | `src/core/store.ts` | `REFERENCES.md` § Format |
+| Format de fichier, chargement de l'arbre, calque local | `src/core/store.ts` | `REFERENCES.md` § Format |
 | Moteur de routage, prompt du routeur, fallback | `src/core/router.ts` | `REFERENCES.md` § Routage |
 | Journal des tours (ce qui a été chargé) | `src/core/journal.ts` | `REFERENCES.md` § Journal |
 | Bloc injecté, ordre des sections | `src/core/render.ts` | `REFERENCES.md` § Injection |

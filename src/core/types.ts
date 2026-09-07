@@ -13,6 +13,10 @@ export function isBranchType(v: unknown): v is BranchType {
 export type Branch = {
   path: string;
   parentPath: string | null;
+  /** D'où vient la branche : l'arbre partagé, ou le calque personnel
+   *  `.contextree.local/`. Une branche surchargée est `local` — c'est là qu'on
+   *  l'édite, même si certains de ses champs viennent encore du groupe. */
+  layer: 'group' | 'local';
   type: BranchType;
   /** Titre lisible — sert de `### heading` dans le bloc injecté. */
   title: string;
@@ -25,8 +29,10 @@ export type Branch = {
 
 /** L'arbre complet chargé depuis le disque. */
 export type ContextTree = {
-  /** Racine du dossier `.contextree/`. */
+  /** Racine du dossier `.contextree/` — l'arbre partagé. */
   dir: string;
+  /** Racine du calque personnel `.contextree.local/`, qu'il existe ou non. */
+  localDir: string;
   /** Contenu de `root.md` — toujours injecté en tête, jamais routé. */
   rootContent: string;
   branches: Map<string, Branch>;

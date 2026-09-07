@@ -104,7 +104,7 @@ export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
     const tree = this.tree;
     if (!tree) return new vscode.TreeItem(element);
 
-    const { branchFile, ROOT_FILE } = await loadCore();
+    const { fileForBranch, ROOT_FILE } = await loadCore();
 
     if (element === ROOT_ELEMENT) {
       const item = new vscode.TreeItem('Racine', vscode.TreeItemCollapsibleState.None);
@@ -130,13 +130,18 @@ export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
     // Une écriture de l'IA se voit à l'endroit où elle a eu lieu, tant qu'elle
     // est fraîche : c'est tout l'intérêt de la trace.
     const write = this.writes.get(branch.path);
-    item.description = write ? `${branch.type} · IA ${ago(write.at)}` : branch.type;
+    // Le calque d'où vient la branche se lit d'un coup d'œil : sans ça, on croit
+    // éditer l'arbre du groupe alors qu'on édite sa surcharge personnelle.
+    const bits: string[] = [branch.type];
+    if (branch.layer === 'local') bits.push('local');
+    if (write) bits.push(`IA ${ago(write.at)}`);
+    item.description = bits.join(' · ');
     item.iconPath = new vscode.ThemeIcon(
       ICONS[branch.type] ?? 'circle-outline',
       write ? new vscode.ThemeColor('gitDecoration.modifiedResourceForeground') : undefined,
     );
     item.tooltip = tooltip(branch.title, branch.loadWhen, branch.content, branch, write);
-    item.resourceUri = vscode.Uri.file(branchFile(tree.dir, branch.path));
+    item.resourceUri = vscode.Uri.file(fileForBranch(tree, branch.path));
     item.command = open(item.resourceUri);
     item.contextValue = 'contextree.branch';
     return item;
@@ -157,7 +162,10 @@ function tooltip(
   write?: AiWrite,
 ): vscode.MarkdownString {
   const md = new vscode.MarkdownString();
-  md.appendMarkdown(`**${title}**${branch ? ` · \`${branch.type}\`` : ''}\n\n`);
+  md.appendMarkdown(
+    `**${title}**${branch ? ` · \`${branch.type}\`` : ''}` +
+      `${branch?.layer === 'local' ? ' · _calque local_' : ''}\n\n`,
+  );
   if (write) {
     const verb = { upsert: 'écrite', delete: 'supprimée', move: 'déplacée' }[write.op];
     md.appendMarkdown(`✎ _${verb} par l'IA ${ago(write.at)}_`);

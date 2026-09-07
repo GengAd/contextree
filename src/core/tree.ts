@@ -42,7 +42,8 @@ export function formatTree(tree: ContextTree, highlight?: Set<string>): string {
     for (const p of paths) {
       const b = tree.branches.get(p)!;
       const mark = highlight ? (highlight.has(p) ? '●' : '○') : '·';
-      lines.push(`${'  '.repeat(depth)}${mark} [${b.type}] ${b.title}  — ${b.loadWhen}`);
+      const layer = b.layer === 'local' ? ' · local' : '';
+      lines.push(`${'  '.repeat(depth)}${mark} [${b.type}${layer}] ${b.title}  — ${b.loadWhen}`);
       walk(b.childPaths, depth + 1);
     }
   };

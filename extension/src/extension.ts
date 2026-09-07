@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { CanvasPanel } from './canvasPanel.js';
 import { ContextTreeProvider, ROOT_ELEMENT, freshWrites, loadCore } from './treeProvider.js';
@@ -158,8 +159,14 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     if (watched && watched.dir === dir) return;
 
+    // Les deux calques, d'un seul observateur : la base est le dossier qui les
+    // contient tous les deux, et le motif les nomme. Ça rattrape aussi la
+    // création du calque local après coup.
     const pattern = dir
-      ? new vscode.RelativePattern(vscode.Uri.file(dir), '**/*.md')
+      ? new vscode.RelativePattern(
+          vscode.Uri.file(path.dirname(dir)),
+          '{.contextree,.contextree.local}/**/*.md',
+        )
       : folder
         ? new vscode.RelativePattern(folder, '**/.contextree/**/*.md')
         : null;

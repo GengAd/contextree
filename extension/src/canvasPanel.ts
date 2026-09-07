@@ -16,6 +16,7 @@ type CanvasTree = {
     title: string;
     loadWhen: string;
     content: string;
+    layer: string;
     /** L'écriture de l'IA sur cette branche, si elle est encore fraîche. */
     write?: { at: number; op: string; why?: string };
   }>;
@@ -102,13 +103,15 @@ export class CanvasPanel {
   }
 
   private async open(branchPath: string | undefined): Promise<void> {
-    const { findTreeDir, branchFile, ROOT_FILE } = await this.core();
+    const { findTreeDir, loadTree, fileForBranch, ROOT_FILE } = await this.core();
     const dir = await findTreeDir(this.searchFrom);
     if (!dir) return;
+    // Une branche surchargée s'édite dans le calque local, pas dans l'arbre du
+    // groupe : il faut l'arbre résolu pour savoir de quel dossier elle vient.
     const file =
       branchPath === undefined || branchPath === ':root'
         ? vscode.Uri.joinPath(vscode.Uri.file(dir), ROOT_FILE)
-        : vscode.Uri.file(branchFile(dir, branchPath));
+        : vscode.Uri.file(fileForBranch(await loadTree(dir), branchPath));
     await vscode.commands.executeCommand('vscode.open', file, { viewColumn: vscode.ViewColumn.Beside });
   }
 
@@ -217,6 +220,7 @@ function flatten(tree: ContextTree, writes: Map<string, AiWrite>): CanvasTree {
           title: b.title,
           loadWhen: b.loadWhen,
           content: b.content,
+          layer: b.layer,
           ...(w ? { write: { at: w.at, op: w.op, ...(w.why ? { why: w.why } : {}) } } : {}),
         },
       ];

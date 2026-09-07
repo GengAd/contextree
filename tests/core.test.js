@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
-import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir } from '../dist/core/store.js';
+import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths } from '../dist/core/store.js';
 import { withAncestors, guaranteedBranches, allBranches } from '../dist/core/tree.js';
 import { renderContext } from '../dist/core/render.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
@@ -486,4 +486,119 @@ test('remote : logout efface la session même si le serveur refuse', async () =>
   await signIn('a@b.c', 'x');
   await signOut();
   assert.equal(await readSession(), null);
+});
+
+// ── Superposition : arbre de groupe + calque local ──────────────────────────
+
+/** Écrit un fichier de branche brut, pour contrôler exactement quels champs il
+ *  porte — c'est tout l'enjeu de la superposition. */
+async function rawBranch(dir, branchPath, frontmatter, body = '') {
+  const file = path.join(dir, `${branchPath}.md`);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const head = Object.entries(frontmatter).map(([k, v]) => `${k}: ${v}`).join('\n');
+  await fs.writeFile(file, head ? `---\n${head}\n---\n\n${body}\n` : `${body}\n`, 'utf8');
+}
+
+test('superposition : une branche locale s\'ajoute, une autre surcharge', async () => {
+  const dir = await scratch();
+  const local = localDirFor(dir);
+  await writeRoot(dir, 'racine du groupe');
+  await writeBranch(dir, branch('archi', { type: 'context', title: 'Archi', loadWhen: 'du groupe' }));
+  await writeBranch(dir, branch('regles', { type: 'rule', title: 'Règles', loadWhen: 'toujours' }));
+
+  await rawBranch(local, 'archi', { load_when: 'quand JE touche à l\'archi' });
+  await rawBranch(local, 'mes-raccourcis', { type: 'skill', title: 'Mes raccourcis', load_when: 'quand je bricole' }, 'zsh…');
+
+  const tree = await loadTree(dir);
+  assert.deepEqual(tree.order, ['archi', 'mes-raccourcis', 'regles']);
+
+  const archi = tree.branches.get('archi');
+  assert.equal(archi.layer, 'local');
+  assert.equal(archi.loadWhen, 'quand JE touche à l\'archi');  // surchargé
+  assert.equal(archi.title, 'Archi');                            // hérité du groupe
+  assert.equal(archi.type, 'context');                           // hérité
+  assert.equal(archi.content.trim(), 'corps de archi');          // hérité : pas de corps local
+
+  assert.equal(tree.branches.get('mes-raccourcis').layer, 'local');
+  assert.equal(tree.branches.get('regles').layer, 'group');
+});
+
+test('superposition : la règle des ancêtres tient à cheval sur les deux calques', async () => {
+  const dir = await scratch();
+  const local = localDirFor(dir);
+  // Le parent vient du groupe, l'enfant du calque local.
+  await writeBranch(dir, branch('archi', { type: 'context', title: 'Archi' }));
+  await rawBranch(local, 'archi/mes-notes', { title: 'Mes notes', load_when: 'quand je debug' }, 'notes…');
+
+  const tree = await loadTree(dir);
+  assert.equal(tree.branches.get('archi/mes-notes').parentPath, 'archi');
+  assert.deepEqual(tree.branches.get('archi').childPaths, ['archi/mes-notes']);
+
+  // Sélectionner l'enfant local remonte bien le parent du groupe.
+  assert.deepEqual([...withAncestors(tree, ['archi/mes-notes'])].sort(), ['archi', 'archi/mes-notes']);
+
+  // Et le bloc injecté contient les deux, dans l'ordre.
+  const bloc = renderContext(tree, withAncestors(tree, ['archi/mes-notes']));
+  assert.match(bloc, /### Archi[\s\S]*### Mes notes/);
+});
+
+test('superposition : un dossier local porteur d\'enfants n\'efface pas la branche du groupe', async () => {
+  const dir = await scratch();
+  const local = localDirFor(dir);
+  await writeBranch(dir, branch('archi', { type: 'reference', title: 'Archi', loadWhen: 'structure' }));
+  // `archi/` existe en local sans `archi.md` frère : hub implicite, tout vide.
+  await rawBranch(local, 'archi/perso', { title: 'Perso', load_when: 'quand je bricole' }, 'à moi');
+
+  const tree = await loadTree(dir);
+  const archi = tree.branches.get('archi');
+  assert.equal(archi.type, 'reference');
+  assert.equal(archi.title, 'Archi');
+  assert.equal(archi.loadWhen, 'structure');
+  assert.equal(archi.content.trim(), 'corps de archi');
+});
+
+test('superposition : le fichier ouvert est celui du bon calque', async () => {
+  const dir = await scratch();
+  const local = localDirFor(dir);
+  await writeBranch(dir, branch('archi'));
+  await rawBranch(local, 'archi', { load_when: 'à moi' });
+  await rawBranch(local, 'perso', { title: 'Perso', load_when: 'à moi' });
+
+  const tree = await loadTree(dir);
+  assert.equal(fileForBranch(tree, 'archi'), path.join(local, 'archi.md'));
+  assert.equal(fileForBranch(tree, 'perso'), path.join(local, 'perso.md'));
+  await writeBranch(dir, branch('groupe-seul'));
+  const tree2 = await loadTree(dir);
+  assert.equal(fileForBranch(tree2, 'groupe-seul'), path.join(dir, 'groupe-seul.md'));
+});
+
+test('superposition : le root.md local l\'emporte, sinon celui du groupe', async () => {
+  const dir = await scratch();
+  await writeRoot(dir, 'racine du groupe');
+  assert.equal((await loadTree(dir)).rootContent.trim(), 'racine du groupe');
+  await writeRoot(localDirFor(dir), 'ma racine');
+  assert.equal((await loadTree(dir)).rootContent.trim(), 'ma racine');
+});
+
+test('superposition : sans calque local, rien ne change', async () => {
+  const dir = await scratch();
+  await writeRoot(dir, 'racine');
+  await writeBranch(dir, branch('archi'));
+  await writeBranch(dir, branch('archi/store'));
+  const tree = await loadTree(dir);
+  assert.deepEqual(tree.order, ['archi', 'archi/store']);
+  assert.ok(tree.order.every(p => tree.branches.get(p).layer === 'group'));
+});
+
+test('superposition : l\'ordre reste un parcours en profondeur, pas un tri de chaînes', async () => {
+  // `-` (0x2D) passe avant `/` (0x2F) : un tri lexicographique nu donnerait
+  // a, a-b, a/b — l'ordre est contractuel, les indices du routeur en dépendent.
+  assert.deepEqual(['a-b', 'a/b', 'a'].sort(compareBranchPaths), ['a', 'a/b', 'a-b']);
+
+  const dir = await scratch();
+  await writeBranch(dir, branch('a'));
+  await writeBranch(dir, branch('a/b'));
+  await writeBranch(dir, branch('a-b'));
+  await rawBranch(localDirFor(dir), 'a/c', { title: 'C', load_when: 'x' });
+  assert.deepEqual((await loadTree(dir)).order, ['a', 'a/b', 'a/c', 'a-b']);
 });
