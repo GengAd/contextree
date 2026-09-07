@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import type { ContextTree } from '@gengad/contextree' with { 'resolution-mode': 'import' };
+import type { AiWrite, ContextTree } from '@gengad/contextree' with { 'resolution-mode': 'import' };
+import { freshWrites } from './treeProvider.js';
 import type { LastTurn } from './statusBar.js';
 import type { EditOp } from './extension.js';
 
@@ -15,6 +16,8 @@ type CanvasTree = {
     title: string;
     loadWhen: string;
     content: string;
+    /** L'écriture de l'IA sur cette branche, si elle est encore fraîche. */
+    write?: { at: number; op: string; why?: string };
   }>;
 };
 
@@ -140,14 +143,20 @@ export class CanvasPanel {
 
   private async update(): Promise<void> {
     const { findTreeDir, loadTree } = await this.core();
+
     let tree: ContextTree | null = null;
+    let writes = new Map<string, AiWrite>();
     try {
       const dir = await findTreeDir(this.searchFrom);
       tree = dir ? await loadTree(dir) : null;
+      if (dir) writes = await freshWrites(await this.core(), dir);
     } catch {
       tree = null;
     }
-    await this.panel.webview.postMessage({ type: 'tree', tree: tree ? flatten(tree) : null });
+    await this.panel.webview.postMessage({
+      type: 'tree',
+      tree: tree ? flatten(tree, writes) : null,
+    });
     await this.postTurn();
   }
 
@@ -193,23 +202,24 @@ export class CanvasPanel {
   }
 }
 
-function flatten(tree: ContextTree): CanvasTree {
+function flatten(tree: ContextTree, writes: Map<string, AiWrite>): CanvasTree {
   return {
     rootContent: tree.rootContent,
     branches: tree.order.flatMap(p => {
       const b = tree.branches.get(p);
-      return b
-        ? [
-            {
-              path: b.path,
-              parent: b.parentPath,
-              type: b.type,
-              title: b.title,
-              loadWhen: b.loadWhen,
-              content: b.content,
-            },
-          ]
-        : [];
+      if (!b) return [];
+      const w = writes.get(b.path);
+      return [
+        {
+          path: b.path,
+          parent: b.parentPath,
+          type: b.type,
+          title: b.title,
+          loadWhen: b.loadWhen,
+          content: b.content,
+          ...(w ? { write: { at: w.at, op: w.op, ...(w.why ? { why: w.why } : {}) } } : {}),
+        },
+      ];
     }),
   };
 }

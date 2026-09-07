@@ -69,6 +69,7 @@
         title: b.title,
         loadWhen: b.loadWhen,
         content: b.content || '',
+        write: b.write || null,
         children: [],
       });
     }
@@ -262,6 +263,11 @@
     return !o || id === ROOT_ID || o.selected.has(id);
   }
 
+  function ago(at) {
+    const seconds = Math.max(0, Math.round((Date.now() - at) / 1000));
+    return seconds < 60 ? "à l'instant" : `il y a ${Math.round(seconds / 60)} min`;
+  }
+
   /** Les boutons de la carte ouverte. La structure s'édite ici ; le contenu
    *  s'édite dans le `.md`, qui s'ouvre à côté. */
   function actions(n) {
@@ -330,6 +336,25 @@
     when.textContent = n.loadWhen;
 
     body.append(head, when);
+
+    // La trace d'une écriture de l'IA, tant qu'elle est fraîche. L'arbre lui est
+    // réinjecté ensuite : ce qu'elle y met doit se voir, sinon personne ne peut
+    // corriger le bruit qu'elle produit.
+    if (n.write) {
+      el.classList.add('written');
+      const mark = document.createElement('div');
+      mark.className = 'written-mark';
+      const verb = { upsert: 'écrite', delete: 'supprimée', move: 'déplacée' }[n.write.op] || 'touchée';
+      mark.textContent = `✎ ${verb} par l'IA ${ago(n.write.at)}`;
+      if (n.write.why) mark.title = n.write.why;
+      body.append(mark);
+      if (n.id === selected && n.write.why) {
+        const why = document.createElement('div');
+        why.className = 'written-why';
+        why.textContent = n.write.why;
+        body.append(why);
+      }
+    }
 
     if (n.id === selected) {
       const content = document.createElement('div');

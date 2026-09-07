@@ -152,6 +152,18 @@ Une seule implémentation, deux appelants : le menu contextuel de la barre laté
 
 Il n'y a **pas** de commande « recharger l'arbre » : l'observateur le fait déjà, et un bouton qui refait ce qui se fait tout seul est du bruit. L'observateur porte sur le dossier **réellement trouvé** par `findTreeDir`, pas sur le dossier ouvert — un `.contextree/` au-dessus de la racine du workspace était sinon jamais rechargé. Le motif `**/*.md` reste complexe, donc récursif même hors du dossier ouvert. Tant qu'aucun arbre n'existe, on retombe sur `**/.contextree/**/*.md` dans le workspace : c'est ce qui rattrape un `contextree init` fait après coup, et l'observateur bascule tout seul.
 
+## Écriture de l'IA dans l'arbre (`AiWrite`)
+
+Régime assumé depuis le 7 septembre 2026 : l'IA écrit directement, sans validation préalable. Le garde-fou est la **visibilité**, pas l'interdiction — parce que la boucle est fermée. L'IA écrit dans l'arbre qui lui est ensuite réinjecté ; un arbre qui se remplit de branches approximatives fait charger trop au routeur, et le contexte devient du bruit auto-produit que rien ne signale.
+
+Trois mécanismes, tous nécessaires :
+
+- **`why` est un paramètre obligatoire** de `upsert_branch` et `delete_branch` (optionnel sur `move_branch`, qui est du rangement). Une écriture sans raison énoncée n'est pas possible.
+- **L'annonce** : le texte que renvoie l'outil demande explicitement au modèle de dire ce qu'il vient d'écrire et pourquoi, et les `instructions` du serveur posent la règle — écrire en silence est la seule façon de mal faire.
+- **La trace** : chaque écriture est journalisée (`appendAiWrite`, 100 dernières), et les deux vues la montrent pendant `FRESH_MS` (15 min) — pastille `IA il y a 2 min` et icône colorée dans la barre latérale, liseré et `✎` sur la carte de la toile, le `why` dans l'infobulle. Un battement d'une minute fait vieillir puis disparaître la pastille : rien sur le disque ne change quand une écriture vieillit, et il ne tourne que tant qu'il reste quelque chose à afficher.
+
+`import_pack` n'est pas tracé : c'est une greffe en masse, annoncée par nature, pas une capitalisation au fil de l'eau.
+
 ## Pièges connus
 
 - **`process.exit` tue le serveur MCP.** La CLI sort en `process.exit(code)` ; la branche `mcp` ne rend donc jamais la main (`await new Promise(() => {})`). Sans ça, le serveur se coupe juste après le `connect()`.

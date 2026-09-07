@@ -1,16 +1,18 @@
-import { promises as fs } from 'node:fs';
+import { promises as fs, realpathSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { RouteReason } from './router.js';
 
 /**
- * Journal des tours de routage.
+ * Ce que l'arbre a vécu : les tours de routage, et les écritures de l'IA.
  *
- * La donnée existait déjà et partait sur `stderr`, où personne ne la lit : à
- * chaque tour on sait ce qui a été chargé et pourquoi. On la garde ici pour que
- * la vue puisse montrer ce qui a *réellement* servi, et pas seulement ce que le
- * routeur ferait d'un prompt hypothétique.
+ * Deux journaux bornés, deux fichiers, la même mécanique. Le premier existait
+ * déjà et partait sur `stderr`, où personne ne le lit : à chaque tour on sait ce
+ * qui a été chargé et pourquoi. On le garde pour que la vue montre ce qui a
+ * *réellement* servi, pas seulement ce que le routeur ferait d'un prompt
+ * hypothétique. Le second trace ce que l'IA écrit dans l'arbre — voir
+ * `AiWrite` pour ce qui le justifie.
  *
  * Trois choix qui portent tout le reste :
  *
@@ -21,6 +23,8 @@ import type { RouteReason } from './router.js';
  *   `treeDir:sessionId` ; la vue ne connaît pas le `sessionId` et n'a pas à
  *   deviner quel fichier est le bon. Un arbre, un journal, toutes sessions
  *   confondues — le champ `source` dit d'où vient chaque tour.
+ *   Les deux journaux ne partagent pas non plus leur fichier, pour la même
+ *   raison : ce sont deux histoires, et l'une ne doit pas abîmer l'autre.
  * - **Hors du repo, borné.** C'est de l'état, jamais du contenu : sa disparition
  *   ne coûte rien, et il ne doit pas grossir sans fin.
  *
@@ -37,6 +41,10 @@ import type { RouteReason } from './router.js';
 const MAX_TURNS = 50;
 /** Le prompt est là pour reconnaître le tour, pas pour le relire. */
 const PROMPT_MAX = 200;
+/** Les écritures de l'IA sont plus rares que les tours, et on veut pouvoir
+ *  remonter plus loin : c'est en regardant la série qu'on voit un arbre qui
+ *  se remplit de bruit. */
+const MAX_WRITES = 100;
 
 /** Qui a routé : le hook Claude Code, ou un client MCP (le chat de Cursor et
  *  les autres). Sans les deux, la vue est aveugle la moitié du temps. */
@@ -57,43 +65,115 @@ export type RoutingTurn = {
   error?: string;
 };
 
+/**
+ * Une écriture de l'IA dans l'arbre.
+ *
+ * L'IA écrit directement, sans validation préalable : le garde-fou est la
+ * visibilité, pas l'interdiction. Et il en faut un, parce que la boucle est
+ * fermée — l'IA écrit dans l'arbre qui lui est ensuite injecté. Si l'arbre se
+ * remplit de branches approximatives, le routeur en charge trop et le contexte
+ * devient du bruit auto-produit. Cette trace est ce qui permet de s'en
+ * apercevoir.
+ */
+export type AiWrite = {
+  at: number;
+  op: 'upsert' | 'delete' | 'move';
+  /** Chemin touché — après coup, pour un déplacement. */
+  path: string;
+  title?: string;
+  /** Chemin d'origine d'un déplacement. */
+  from?: string;
+  /** La raison donnée par l'IA. C'est le champ qui rend l'écriture relisable. */
+  why?: string;
+};
+
 /** Surchargeable — surtout pour les tests, qui n'ont pas à écrire dans le home
  *  de qui lance la suite. */
 export function journalDir(): string {
   return process.env['CONTEXTREE_STATE_DIR'] ?? path.join(os.homedir(), '.contextree', 'journal');
 }
 
+/**
+ * La clé porte sur le chemin **réel**, liens symboliques résolus.
+ *
+ * Sans ça, deux écrivains du même arbre écrivent dans deux fichiers : la vue
+ * reçoit de VS Code le chemin tel qu'ouvert, alors qu'un serveur MCP lancé avec
+ * un `cwd` voit le chemin résolu par le système (`/var` → `/private/var` sur
+ * macOS, tout projet rangé derrière un lien symbolique ailleurs). Mesuré : le
+ * même arbre donnait deux journaux.
+ */
+function key(treeDir: string): string {
+  let resolved = path.resolve(treeDir);
+  try {
+    resolved = realpathSync(resolved);
+  } catch {
+    // Pas encore sur le disque : le chemin littéral fera l'affaire.
+  }
+  return createHash('sha256').update(resolved).digest('hex').slice(0, 16);
+}
+
 export function journalFile(treeDir: string): string {
-  const key = createHash('sha256').update(treeDir).digest('hex').slice(0, 16);
-  return path.join(journalDir(), `${key}.json`);
+  return path.join(journalDir(), `${key(treeDir)}.json`);
+}
+
+/** Les écritures de l'IA dans l'arbre. Fichier distinct du journal de routage :
+ *  ce sont deux histoires différentes, et l'une ne doit pas pouvoir abîmer
+ *  l'autre. */
+export function writesFile(treeDir: string): string {
+  return path.join(journalDir(), `${key(treeDir)}-writes.json`);
 }
 
 /** Les tours du plus ancien au plus récent. Un journal absent ou illisible est
  *  un journal vide : on ne fait jamais échouer un appel pour ça. */
 export async function readJournal(treeDir: string): Promise<RoutingTurn[]> {
-  try {
-    const parsed: unknown = JSON.parse(await fs.readFile(journalFile(treeDir), 'utf8'));
-    return Array.isArray(parsed) ? parsed.filter(isTurn) : [];
-  } catch {
-    return [];
-  }
+  return readLog(journalFile(treeDir), isTurn);
 }
 
 /**
  * Ajoute un tour, en gardant les `MAX_TURNS` derniers.
  *
  * Ne rejette jamais : écrire le journal ne doit pas pouvoir bloquer un prompt,
- * c'est le même invariant que le reste du hook. L'écriture passe par un fichier
- * temporaire renommé, pour qu'un lecteur ne tombe jamais sur un JSON à moitié
- * écrit.
+ * c'est le même invariant que le reste du hook.
  */
 export async function appendTurn(treeDir: string, turn: RoutingTurn): Promise<void> {
-  const file = journalFile(treeDir);
+  await appendLog(journalFile(treeDir), { ...turn, prompt: excerpt(turn.prompt) }, isTurn, MAX_TURNS);
+}
+
+/** Les écritures de l'IA, de la plus ancienne à la plus récente. */
+export async function readAiWrites(treeDir: string): Promise<AiWrite[]> {
+  return readLog(writesFile(treeDir), isWrite);
+}
+
+/** Trace une écriture de l'IA. Ne rejette jamais : la trace ne doit pas pouvoir
+ *  faire échouer l'écriture qu'elle raconte. */
+export async function appendAiWrite(treeDir: string, write: AiWrite): Promise<void> {
+  await appendLog(writesFile(treeDir), { ...write, why: excerpt(write.why ?? '') }, isWrite, MAX_WRITES);
+}
+
+// ── Le journal, mécaniquement ────────────────────────────────────────────────
+
+async function readLog<T>(file: string, guard: (v: unknown) => v is T): Promise<T[]> {
   try {
-    const turns = [...(await readJournal(treeDir)), { ...turn, prompt: excerpt(turn.prompt) }];
+    const parsed: unknown = JSON.parse(await fs.readFile(file, 'utf8'));
+    return Array.isArray(parsed) ? parsed.filter(guard) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** L'écriture passe par un fichier temporaire renommé, pour qu'un lecteur ne
+ *  tombe jamais sur un JSON à moitié écrit. */
+async function appendLog<T>(
+  file: string,
+  entry: T,
+  guard: (v: unknown) => v is T,
+  max: number,
+): Promise<void> {
+  try {
+    const entries = [...(await readLog(file, guard)), entry];
     await fs.mkdir(path.dirname(file), { recursive: true });
     const tmp = `${file}.${process.pid}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(turns.slice(-MAX_TURNS)), 'utf8');
+    await fs.writeFile(tmp, JSON.stringify(entries.slice(-max)), 'utf8');
     await fs.rename(tmp, file);
   } catch {
     // Le journal est un confort, pas une dépendance.
@@ -103,6 +183,16 @@ export async function appendTurn(treeDir: string, turn: RoutingTurn): Promise<vo
 function excerpt(prompt: string): string {
   const flat = prompt.replace(/\s+/g, ' ').trim();
   return flat.length > PROMPT_MAX ? `${flat.slice(0, PROMPT_MAX - 1)}…` : flat;
+}
+
+function isWrite(v: unknown): v is AiWrite {
+  if (!v || typeof v !== 'object') return false;
+  const w = v as Record<string, unknown>;
+  return (
+    typeof w['at'] === 'number' &&
+    typeof w['path'] === 'string' &&
+    (w['op'] === 'upsert' || w['op'] === 'delete' || w['op'] === 'move')
+  );
 }
 
 function isTurn(v: unknown): v is RoutingTurn {

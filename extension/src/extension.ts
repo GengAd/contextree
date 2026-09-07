@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { CanvasPanel } from './canvasPanel.js';
-import { ContextTreeProvider, ROOT_ELEMENT, loadCore } from './treeProvider.js';
+import { ContextTreeProvider, ROOT_ELEMENT, freshWrites, loadCore } from './treeProvider.js';
 import { StatusBar, lastTurn, watchJournal } from './statusBar.js';
 import * as edit from './edit.js';
 
@@ -38,7 +38,36 @@ export function activate(context: vscode.ExtensionContext): void {
     void refreshTurn();
     // Créer ou supprimer `.contextree/` change le dossier à observer.
     void armWatcher();
+    void tickFresh();
   };
+
+  /**
+   * Fait vivre la pastille « écrite par l'IA ».
+   *
+   * Rien sur le disque ne change quand une écriture vieillit : sans ce battement,
+   * la pastille afficherait « il y a 2 min » une heure plus tard, puis ne
+   * disparaîtrait jamais. Il ne tourne que tant qu'il reste une écriture fraîche
+   * — c'est-à-dire quasiment jamais.
+   */
+  let freshTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const tickFresh = async (): Promise<void> => {
+    clearTimeout(freshTimer);
+    try {
+      const core = await loadCore();
+      const dir = await core.findTreeDir(searchFrom);
+      if (!dir || !(await freshWrites(core, dir)).size) return;
+    } catch {
+      return;
+    }
+    freshTimer = setTimeout(() => {
+      void provider.refresh();
+      void CanvasPanel.refreshIfOpen();
+      void tickFresh();
+    }, 60_000);
+  };
+
+  context.subscriptions.push({ dispose: () => clearTimeout(freshTimer) });
 
   /**
    * Le point d'entrée unique de l'édition de structure.
@@ -165,6 +194,7 @@ export function activate(context: vscode.ExtensionContext): void {
   void provider.refresh();
   void refreshTurn();
   void armWatcher();
+  void tickFresh();
 }
 
 export function deactivate(): void {}

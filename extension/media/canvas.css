@@ -418,3 +418,27 @@ body {
   border-color: var(--muted);
   color: var(--muted);
 }
+
+/* Trace d'une écriture de l'IA. Le régime est « écriture directe, visibilité
+   comme garde-fou » : cette pastille est le garde-fou. */
+.node.written {
+  border-color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d);
+}
+
+.written-mark {
+  flex: 0 0 auto;
+  overflow: hidden;
+  color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.written-why {
+  flex: 0 0 auto;
+  padding-left: 8px;
+  border-left: 2px solid var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}

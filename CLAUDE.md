@@ -14,6 +14,7 @@ Adrien Buot — développeur solo, TypeScript. Repo privé `GengAd/contextree`, 
 - Le **routage ne bloque jamais l'appel principal** : erreur ou timeout ⇒ fallback `identity` + `rule`, jamais un ensemble vide.
 - Les **fichiers markdown sont la source de vérité**. Rien ne doit rendre `.contextree/` illisible ou non éditable à la main.
 - Garder la doc vivante : proposer les mises à jour de `CLAUDE.md` / `CONTEXT.md` / `REFERENCES.md` / `ROADMAP.md`, ne jamais réécrire en silence.
+- **L'IA écrit dans l'arbre directement**, sans demander la permission, quand elle repère un fait durable — et elle l'**annonce** à chaque fois. Le garde-fou est la visibilité : écrire en silence est la seule façon de mal faire ici, parce que l'arbre écrit lui est réinjecté ensuite.
 
 ## Workflow Trello
 

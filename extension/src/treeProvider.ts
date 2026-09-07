@@ -2,11 +2,45 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 // Le paquet est ESM, ce fichier est compilé en CommonJS : les types doivent
 // être résolus en mode `import`, et le module chargé par `import()` dynamique.
-import type { Branch, BranchType, ContextTree } from '@gengad/contextree' with { 'resolution-mode': 'import' };
+import type { AiWrite, Branch, BranchType, ContextTree } from '@gengad/contextree' with { 'resolution-mode': 'import' };
 
 /** `root.md` — toujours injecté, jamais routé. Ce n'est pas une branche, mais
  *  il doit se lire et s'éditer comme les autres, donc il a sa ligne. */
 export const ROOT_ELEMENT = ':root';
+
+/**
+ * Combien de temps une écriture de l'IA reste signalée dans les vues.
+ *
+ * C'est le garde-fou du régime d'écriture directe : l'IA écrit dans l'arbre qui
+ * lui est ensuite réinjecté, boucle fermée. Assez long pour qu'on la voie en
+ * revenant à l'éditeur, assez court pour que le signal veuille encore dire
+ * « à l'instant » plutôt que « un jour ».
+ */
+export const FRESH_MS = 15 * 60 * 1000;
+
+/** Les écritures de l'IA encore fraîches, la plus récente par branche. */
+export async function freshWrites(
+  core: typeof import('@gengad/contextree', { with: { 'resolution-mode': 'import' } }),
+  treeDir: string,
+): Promise<Map<string, AiWrite>> {
+  const cutoff = Date.now() - FRESH_MS;
+  const fresh = new Map<string, AiWrite>();
+  try {
+    for (const w of await core.readAiWrites(treeDir)) {
+      if (w.at >= cutoff) fresh.set(w.path, w);
+    }
+  } catch {
+    // Pas de trace, pas de pastille. Jamais une raison de casser la vue.
+  }
+  return fresh;
+}
+
+/** « il y a 2 min », pour une pastille qui doit se lire d'un coup d'œil. */
+export function ago(at: number): string {
+  const seconds = Math.max(0, Math.round((Date.now() - at) / 1000));
+  if (seconds < 60) return "à l'instant";
+  return `il y a ${Math.round(seconds / 60)} min`;
+}
 
 type Core = typeof import('@gengad/contextree', { with: { 'resolution-mode': 'import' } });
 
@@ -30,6 +64,7 @@ const ICONS: Record<BranchType, string> = {
  *  qui reste la source de vérité — l'édition se fait dans l'éditeur. */
 export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
   private tree: ContextTree | null = null;
+  private writes = new Map<string, AiWrite>();
   private readonly changed = new vscode.EventEmitter<string | undefined>();
   readonly onDidChangeTreeData = this.changed.event;
 
@@ -40,13 +75,15 @@ export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
   }
 
   async refresh(): Promise<void> {
-    const { findTreeDir, loadTree } = await loadCore();
+    const core = await loadCore();
     try {
-      const dir = await findTreeDir(this.searchFrom);
-      this.tree = dir ? await loadTree(dir) : null;
+      const dir = await core.findTreeDir(this.searchFrom);
+      this.tree = dir ? await core.loadTree(dir) : null;
+      this.writes = dir ? await freshWrites(core, dir) : new Map();
     } catch {
       // Un arbre à moitié écrit ne doit pas laisser une vue cassée : on vide.
       this.tree = null;
+      this.writes = new Map();
     }
     await vscode.commands.executeCommand('setContext', 'contextree.hasTree', this.tree !== null);
     this.changed.fire(undefined);
@@ -90,9 +127,15 @@ export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
         : vscode.TreeItemCollapsibleState.None,
     );
     item.id = branch.path;
-    item.description = branch.type;
-    item.iconPath = new vscode.ThemeIcon(ICONS[branch.type] ?? 'circle-outline');
-    item.tooltip = tooltip(branch.title, branch.loadWhen, branch.content, branch);
+    // Une écriture de l'IA se voit à l'endroit où elle a eu lieu, tant qu'elle
+    // est fraîche : c'est tout l'intérêt de la trace.
+    const write = this.writes.get(branch.path);
+    item.description = write ? `${branch.type} · IA ${ago(write.at)}` : branch.type;
+    item.iconPath = new vscode.ThemeIcon(
+      ICONS[branch.type] ?? 'circle-outline',
+      write ? new vscode.ThemeColor('gitDecoration.modifiedResourceForeground') : undefined,
+    );
+    item.tooltip = tooltip(branch.title, branch.loadWhen, branch.content, branch, write);
     item.resourceUri = vscode.Uri.file(branchFile(tree.dir, branch.path));
     item.command = open(item.resourceUri);
     item.contextValue = 'contextree.branch';
@@ -111,9 +154,15 @@ function tooltip(
   loadWhen: string,
   content: string,
   branch?: Branch,
+  write?: AiWrite,
 ): vscode.MarkdownString {
   const md = new vscode.MarkdownString();
   md.appendMarkdown(`**${title}**${branch ? ` · \`${branch.type}\`` : ''}\n\n`);
+  if (write) {
+    const verb = { upsert: 'écrite', delete: 'supprimée', move: 'déplacée' }[write.op];
+    md.appendMarkdown(`✎ _${verb} par l'IA ${ago(write.at)}_`);
+    md.appendMarkdown(write.why ? ` — ${write.why}\n\n` : '\n\n');
+  }
   md.appendMarkdown(`_charge-moi quand_ : ${loadWhen}\n\n`);
   const body = content.trim();
   if (body) {

@@ -9,7 +9,7 @@ import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, fi
 import { withAncestors, guaranteedBranches, allBranches } from '../dist/core/tree.js';
 import { renderContext } from '../dist/core/render.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
-import { appendTurn, readJournal, journalFile } from '../dist/core/journal.js';
+import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites } from '../dist/core/journal.js';
 
 process.env.CONTEXTREE_STATE_DIR = await fs.mkdtemp(
   path.join(os.tmpdir(), 'contextree-journal-'),
@@ -323,4 +323,27 @@ test('store : un chemin périmé disparaît du fallback sticky, il ne casse rien
   const previous = ['a', 'b'].filter(p => tree.branches.has(p));
   assert.deepEqual(previous, ['b']);
   assert.deepEqual([...withAncestors(tree, previous)], ['b']);
+});
+
+test('journal : les écritures de l\'IA vivent dans leur propre fichier', async () => {
+  const dir = await scratch();
+  await appendTurn(dir, turn({ prompt: 'un tour' }));
+  await appendAiWrite(dir, { at: Date.now(), op: 'upsert', path: 'archi', title: 'Archi', why: 'convention découverte' });
+  await appendAiWrite(dir, { at: Date.now(), op: 'move', path: 'x/archi', from: 'archi' });
+
+  const writes = await readAiWrites(dir);
+  assert.deepEqual(writes.map(w => w.op), ['upsert', 'move']);
+  assert.equal(writes[0].why, 'convention découverte');
+  assert.equal(writes[1].from, 'archi');
+  // Le journal de routage n'a pas bougé : deux histoires, deux fichiers.
+  assert.deepEqual((await readJournal(dir)).map(t => t.prompt), ['un tour']);
+});
+
+test('journal : une écriture mal formée est écartée, le fichier reste lisible', async () => {
+  const dir = await scratch();
+  await appendAiWrite(dir, { at: Date.now(), op: 'upsert', path: 'bon' });
+  const file = journalFile(dir).replace(/\.json$/, '-writes.json');
+  const kept = JSON.parse(await fs.readFile(file, 'utf8'));
+  await fs.writeFile(file, JSON.stringify([...kept, { op: 'upsert' }, { at: 1, op: 'inconnu', path: 'x' }]), 'utf8');
+  assert.deepEqual((await readAiWrites(dir)).map(w => w.path), ['bon']);
 });

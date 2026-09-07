@@ -8,7 +8,7 @@ import { findTreeDir, loadTree, slugify, writeBranch, deleteBranch, moveBranch }
 import { allBranches, formatTree } from '../core/tree.js';
 import { renderContext, renderTrace } from '../core/render.js';
 import { route } from '../core/router.js';
-import { appendTurn } from '../core/journal.js';
+import { appendTurn, appendAiWrite } from '../core/journal.js';
 import { decodePack, encodePack, extractPack, applyPack } from '../core/pack.js';
 import { BRANCH_TYPES } from '../core/types.js';
 import type { ContextTree } from '../core/types.js';
@@ -18,8 +18,14 @@ contexte de domaine, références et skills, sous forme de petites branches typ�
 
 Avant de travailler sur une tâche non triviale, appelle \`get_context\` avec la demande de
 l'utilisateur : tu récupères uniquement les branches pertinentes. Quand tu découvres un fait
-durable sur ce projet (une convention, une contrainte, un chemin qui compte), propose-le avec
-\`upsert_branch\` — l'arbre est fait pour être enrichi à l'usage.
+durable sur ce projet (une convention, une contrainte, un chemin qui compte), écris-le avec
+\`upsert_branch\` — directement, sans demander la permission. L'arbre est fait pour être enrichi
+à l'usage.
+
+En échange, **dis-le**. Après chaque écriture, annonce en une phrase ce que tu as ajouté ou
+changé dans l'arbre et pourquoi. Écrire en silence est la seule façon de mal faire ici : tu
+écris dans l'arbre qui te sera réinjecté ensuite, et personne ne peut corriger ce qu'il ne
+voit pas.
 
 Sous Claude Code, l'injection est déjà automatique via un hook : ne rappelle pas \`get_context\`
 si le contexte est déjà présent dans ta conversation.`;
@@ -134,9 +140,16 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         content: z.string().describe('Corps markdown de la branche.'),
         path: z.string().optional().describe('Chemin explicite. Par défaut, dérivé du titre.'),
         parent: z.string().optional().describe("Chemin de la branche parente, si c'est un enfant."),
+        why: z
+          .string()
+          .describe(
+            "Pourquoi cette branche mérite d'exister, en une phrase. Elle apparaît dans la vue " +
+              "à côté de la branche : c'est ce qui permet à l'utilisateur de relire ce que tu as " +
+              'écrit, et de le corriger. Dis la même chose à l\'utilisateur en clair.',
+          ),
       },
     },
-    async ({ title, type, load_when, content, path: explicit, parent }) => {
+    async ({ title, type, load_when, content, path: explicit, parent, why }) => {
       const { dir, tree } = await open();
       if (parent && !tree.branches.has(parent)) throw new Error(`Parent inconnu : ${parent}`);
       const slug = explicit ?? slugify(title);
@@ -149,7 +162,13 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         loadWhen: load_when,
         content,
       });
-      return text(`Branche écrite : ${branchPath}\n${path.relative(process.cwd(), file)}`);
+      const existed = tree.branches.has(branchPath);
+      await appendAiWrite(dir, { at: Date.now(), op: 'upsert', path: branchPath, title, why });
+      return text(
+        `${existed ? 'Branche mise à jour' : 'Branche écrite'} : ${branchPath} (${type})\n` +
+          `${path.relative(process.cwd(), file)}\n\n` +
+          "Annonce-le maintenant à l'utilisateur : ce que tu viens d'écrire dans l'arbre, et pourquoi.",
+      );
     },
   );
 
@@ -158,16 +177,29 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
     {
       title: 'Supprimer une branche',
       description: 'Supprime une branche et toutes ses branches enfants. Irréversible.',
-      inputSchema: { path: z.string().describe('Chemin de la branche à supprimer.') },
+      inputSchema: {
+        path: z.string().describe('Chemin de la branche à supprimer.'),
+        why: z.string().describe('Pourquoi cette branche ne doit plus exister, en une phrase.'),
+      },
       annotations: { destructiveHint: true },
     },
-    async ({ path: branchPath }) => {
+    async ({ path: branchPath, why }) => {
       const { dir, tree } = await open();
       const branch = tree.branches.get(branchPath);
       if (!branch) throw new Error(`Branche inconnue : ${branchPath}`);
       await deleteBranch(dir, branchPath);
       const kids = branch.childPaths.length;
-      return text(`Supprimé : ${branchPath}${kids ? ` (+ ${kids} enfant(s))` : ''}`);
+      await appendAiWrite(dir, {
+        at: Date.now(),
+        op: 'delete',
+        path: branchPath,
+        title: branch.title,
+        why,
+      });
+      return text(
+        `Supprimé : ${branchPath}${kids ? ` (+ ${kids} enfant(s))` : ''}\n\n` +
+          "Annonce-le maintenant à l'utilisateur : ce que tu viens de retirer de l'arbre, et pourquoi.",
+      );
     },
   );
 
@@ -182,10 +214,11 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       inputSchema: {
         from: z.string().describe('Chemin actuel de la branche.'),
         to: z.string().describe('Nouveau chemin complet (parent inclus).'),
+        why: z.string().optional().describe('Pourquoi ce rangement, si ce n\'est pas évident.'),
       },
       annotations: { destructiveHint: false },
     },
-    async ({ from, to }) => {
+    async ({ from, to, why }) => {
       const { dir, tree } = await open();
       const branch = tree.branches.get(from);
       if (!branch) throw new Error(`Branche inconnue : ${from}`);
@@ -194,6 +227,14 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       if (parent && !tree.branches.has(parent)) throw new Error(`Parent inconnu : ${parent}`);
       await moveBranch(dir, from, to);
       const kids = branch.childPaths.length;
+      await appendAiWrite(dir, {
+        at: Date.now(),
+        op: 'move',
+        path: to,
+        from,
+        title: branch.title,
+        ...(why ? { why } : {}),
+      });
       return text(`${from} → ${to}${kids ? ` (+ ${kids} enfant(s))` : ''}`);
     },
   );
