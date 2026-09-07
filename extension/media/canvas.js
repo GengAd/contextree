@@ -133,6 +133,116 @@
 
   // ── Rendu ─────────────────────────────────────────────────────────────────
 
+  // ── Markdown ──────────────────────────────────────────────────────────────
+  //
+  // Un rendu minimal, fait main : les branches sont de courts `.md`, et le vrai
+  // rendu reste celui de l'éditeur, à un clic. Il s'agit juste de relire une
+  // branche sans lire ses dièses. Tout passe par le DOM, jamais par `innerHTML`.
+
+  const INLINE = /`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\(([^)\s]+)\)/g;
+
+  function inline(target, text) {
+    let last = 0;
+    let m;
+    INLINE.lastIndex = 0;
+    while ((m = INLINE.exec(text)) !== null) {
+      if (m.index > last) target.append(document.createTextNode(text.slice(last, m.index)));
+      const tag = m[1] ? 'code' : m[2] ? 'strong' : m[3] ? 'em' : 'span';
+      const el = document.createElement(tag);
+      // Pas de navigation depuis la webview : le lien se lit, il ne se suit pas.
+      if (m[4] !== undefined) {
+        el.className = 'link';
+        el.title = m[5];
+      }
+      el.textContent = m[1] ?? m[2] ?? m[3] ?? m[4];
+      target.append(el);
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) target.append(document.createTextNode(text.slice(last)));
+    return target;
+  }
+
+  function markdown(root, text) {
+    const lines = text.split('\n');
+    let list = null;
+    let para = null;
+
+    const flush = () => {
+      list = null;
+      para = null;
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      if (line.startsWith('```')) {
+        const buf = [];
+        while (++i < lines.length && !lines[i].startsWith('```')) buf.push(lines[i]);
+        const pre = document.createElement('pre');
+        pre.textContent = buf.join('\n');
+        root.append(pre);
+        flush();
+        continue;
+      }
+
+      if (!line.trim()) {
+        flush();
+        continue;
+      }
+
+      const heading = line.match(/^(#{1,6})\s+(.*)$/);
+      if (heading) {
+        const h = document.createElement('div');
+        h.className = `md-h md-h${heading[1].length}`;
+        inline(h, heading[2]);
+        root.append(h);
+        flush();
+        continue;
+      }
+
+      if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+        root.append(document.createElement('hr'));
+        flush();
+        continue;
+      }
+
+      const item = line.match(/^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$/);
+      if (item) {
+        if (!list) {
+          list = document.createElement('ul');
+          root.append(list);
+        }
+        const li = document.createElement('li');
+        li.style.marginLeft = `${Math.floor(item[1].length / 2) * 14}px`;
+        inline(li, item[2]);
+        list.append(li);
+        para = null;
+        continue;
+      }
+
+      const quote = line.match(/^>\s?(.*)$/);
+      if (quote) {
+        const q = document.createElement('blockquote');
+        inline(q, quote[1]);
+        root.append(q);
+        flush();
+        continue;
+      }
+
+      // Lignes contiguës = un seul paragraphe : les retours doux du markdown ne
+      // sont pas des sauts de ligne.
+      if (para) {
+        para.append(document.createTextNode(' '));
+        inline(para, line);
+        continue;
+      }
+      para = document.createElement('p');
+      inline(para, line);
+      root.append(para);
+      list = null;
+    }
+  }
+
   /** La racine est toujours injectée, jamais routée : elle reste allumée. */
   function kept(id) {
     return !routed || id === ROOT_ID || routed.has(id);
@@ -174,7 +284,9 @@
     if (n.id === selected) {
       const content = document.createElement('div');
       content.className = 'content';
-      content.textContent = (n.content || '').trim() || '(vide)';
+      const md = (n.content || '').trim();
+      if (md) markdown(content, md);
+      else content.textContent = '(vide)';
       const open = document.createElement('button');
       open.className = 'open';
       open.textContent = 'ouvrir le .md';

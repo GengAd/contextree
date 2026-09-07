@@ -271,3 +271,89 @@ body {
 #trace.warn {
   color: var(--vscode-editorWarning-foreground, #fbbf24);
 }
+
+/* Rendu markdown du contenu d'une carte. Compact : la carte n'est pas un
+   lecteur, juste de quoi relire une branche sans lire ses dièses. */
+.content {
+  white-space: normal;
+}
+
+.content > *:first-child {
+  margin-top: 0;
+}
+
+.content p,
+.content ul,
+.content pre,
+.content blockquote {
+  margin: 0 0 8px;
+}
+
+.content .md-h {
+  margin: 12px 0 4px;
+  color: var(--card-fg);
+  font-weight: 600;
+}
+
+.content .md-h1 {
+  font-size: 14px;
+}
+
+.content .md-h2 {
+  font-size: 13px;
+}
+
+.content .md-h3,
+.content .md-h4,
+.content .md-h5,
+.content .md-h6 {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.content ul {
+  padding-left: 18px;
+}
+
+.content li {
+  margin: 2px 0;
+}
+
+.content code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--vscode-textCodeBlock-background, rgba(255, 255, 255, 0.07));
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11.5px;
+}
+
+.content pre {
+  overflow-x: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--vscode-textCodeBlock-background, rgba(255, 255, 255, 0.04));
+  white-space: pre;
+}
+
+.content blockquote {
+  padding-left: 10px;
+  border-left: 2px solid var(--ribbon);
+  color: var(--muted);
+}
+
+.content hr {
+  margin: 10px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+/* Un lien se lit, il ne se suit pas : la webview ne navigue pas, l'URL est
+   dans l'infobulle et le `.md` s'ouvre à côté. */
+.content .link {
+  border-bottom: 1px dotted var(--vscode-textLink-foreground, #4daafc);
+  color: var(--vscode-textLink-foreground, #4daafc);
+  cursor: help;
+}
