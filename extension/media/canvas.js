@@ -28,14 +28,25 @@
 
   const promptInput = document.getElementById('prompt');
   const trace = document.getElementById('trace');
+  const excerpt = document.getElementById('excerpt');
   const clearBtn = document.getElementById('clear');
 
   let roots = [];
   let all = [];
   let selected = null;
-  // `null` = pas de routage en cours ; sinon l'ensemble des chemins retenus.
-  let routed = null;
+  // Deux surlignages possibles, jamais mélangés :
+  //  - `turn`  : ce qui a réellement été chargé au dernier tour (le journal) ;
+  //  - `probe` : une question posée à la main (« que chargerait le routeur… »).
+  // La sonde l'emporte tant qu'elle est active ; ✕ ou Échap rend la toile au
+  // dernier vrai tour. Sans ça on ne saurait plus si on regarde le réel ou un
+  // « et si », ce qui est exactement l'erreur à ne pas faire ici.
+  let turn = null;
+  let probe = null;
   let view = { x: 0, y: 0, k: 1 };
+
+  function overlay() {
+    return probe ?? turn;
+  }
 
   // ── Données ───────────────────────────────────────────────────────────────
 
@@ -69,7 +80,9 @@
     all = [...byId.values()];
     roots = [root];
     if (selected && !byId.has(selected)) selected = null;
-    if (routed) routed = new Set([...routed].filter(p => byId.has(p)));
+    for (const o of [turn, probe]) {
+      if (o) o.selected = new Set([...o.selected].filter(p => byId.has(p)));
+    }
     count.textContent = `${tree.branches.length} branche(s)`;
   }
 
@@ -245,14 +258,16 @@
 
   /** La racine est toujours injectée, jamais routée : elle reste allumée. */
   function kept(id) {
-    return !routed || id === ROOT_ID || routed.has(id);
+    const o = overlay();
+    return !o || id === ROOT_ID || o.selected.has(id);
   }
 
   function card(n) {
     const el = document.createElement('div');
+    const o = overlay();
     el.className = `node${n.id === selected ? ' selected' : ''}${
-      routed ? (kept(n.id) ? ' kept' : ' dropped') : ''
-    }`;
+      o ? (kept(n.id) ? ' kept' : ' dropped') : ''
+    }${o && o.reason === 'fallback' && kept(n.id) ? ' fallback' : ''}`;
     el.style.left = `${n.x}px`;
     el.style.top = `${n.y}px`;
     el.style.width = `${n.w}px`;
@@ -318,7 +333,7 @@
       for (const c of n.children) {
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('d', edgePath(n, c));
-        if (routed && !kept(c.id)) path.classList.add('dropped');
+        if (overlay() && !kept(c.id)) path.classList.add('dropped');
         if (c.id === selected || n.id === selected) {
           path.classList.add('lit');
           path.style.setProperty('--ribbon', COLORS[selected === n.id ? n.type : c.type]);
@@ -412,37 +427,63 @@
   window.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
     if (selected !== null) return select(null, null);
-    if (routed) clearRoute();
+    if (probe) clearProbe();
   });
 
   // ── Routage ───────────────────────────────────────────────────────────────
   //
-  // Un `load_when` ne se vérifie qu'en le confrontant à un vrai prompt. La
-  // toile pose la question au même routeur que le hook, et allume ce qu'il
-  // retiendrait — le `●` / `○` de `contextree route`, mais sur l'arbre.
+  // Deux questions différentes, un seul affichage :
+  //  - « qu'est-ce qui a été chargé ? » — le journal, allumé en permanence ;
+  //  - « qu'est-ce qui serait chargé pour ce prompt ? » — la sonde ci-dessous.
+  // Un `load_when` ne se vérifie qu'en le confrontant à un prompt ; le bandeau
+  // dit toujours laquelle des deux on regarde.
 
-  function askRoute() {
+  const LABELS = { routed: 'routé', all: 'tout chargé', fallback: 'repli' };
+
+  function askProbe() {
     const prompt = promptInput.value.trim();
-    if (!prompt) return clearRoute();
+    if (!prompt) return clearProbe();
     trace.textContent = 'routage…';
     trace.className = '';
+    excerpt.textContent = '';
     clearBtn.hidden = false;
     vscode.postMessage({ type: 'route', prompt });
   }
 
-  function clearRoute() {
-    routed = null;
+  function clearProbe() {
+    probe = null;
     promptInput.value = '';
-    trace.textContent = '';
-    trace.className = '';
     clearBtn.hidden = true;
+    paint();
     render();
   }
 
-  document.getElementById('go').addEventListener('click', askRoute);
-  clearBtn.addEventListener('click', clearRoute);
+  /** Le bandeau : quelle question, quelle réponse, et surtout — repli ou pas. */
+  function paint() {
+    const o = overlay();
+    if (!o) {
+      trace.textContent = all.length ? 'aucun tour routé pour l\'instant' : '';
+      trace.className = '';
+      excerpt.textContent = '';
+      return;
+    }
+    const total = Math.max(0, all.length - 1);
+    const head = probe ? 'sonde' : `dernier tour · ${o.source}`;
+    const bits = [head, `${o.selected.size}/${total}`, LABELS[o.reason] ?? o.reason];
+    if (o.ms) bits.push(`${o.ms} ms`);
+    trace.textContent = bits.join(' · ');
+    // Un repli n'est pas un routage : il doit se voir sans être lu.
+    trace.className = o.reason === 'fallback' ? 'warn' : '';
+    excerpt.textContent = o.reason === 'fallback'
+      ? `repli sur les branches garanties${o.error ? ` — ${o.error}` : ''}`
+      : o.prompt || '';
+    excerpt.className = o.reason === 'fallback' ? 'warn' : '';
+  }
+
+  document.getElementById('go').addEventListener('click', askProbe);
+  clearBtn.addEventListener('click', clearProbe);
   promptInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter') askRoute();
+    if (e.key === 'Enter') askProbe();
   });
 
   // ── Cycle de vie ──────────────────────────────────────────────────────────
@@ -459,13 +500,39 @@
   window.addEventListener('message', e => {
     const msg = e.data;
     if (msg.type === 'routed') {
-      routed = msg.selected ? new Set(msg.selected) : null;
+      probe = msg.selected
+        ? {
+            selected: new Set(msg.selected),
+            reason: msg.reason,
+            prompt: promptInput.value.trim(),
+            source: 'sonde',
+            ms: msg.ms,
+            error: msg.error,
+          }
+        : null;
       clearBtn.hidden = !promptInput.value.trim();
-      const kind = { routed: 'routé', all: 'arbre entier', fallback: 'repli' }[msg.reason] || '';
-      trace.textContent = msg.error
-        ? msg.error
-        : `${routed ? routed.size : 0}/${all.length - 1} — ${kind}${msg.ms ? ` — ${msg.ms} ms` : ''}`;
-      trace.className = msg.error || msg.reason === 'fallback' ? 'warn' : '';
+      if (!probe && msg.error) {
+        trace.textContent = msg.error;
+        trace.className = 'warn';
+        excerpt.textContent = '';
+      } else {
+        paint();
+      }
+      render();
+      return;
+    }
+    if (msg.type === 'turn') {
+      const t = msg.turn;
+      turn = t
+        ? {
+            selected: new Set(t.turn.selected),
+            reason: t.turn.reason,
+            prompt: t.turn.prompt,
+            source: t.turn.source,
+            error: t.turn.error,
+          }
+        : null;
+      paint();
       render();
       return;
     }
@@ -476,10 +543,12 @@
       layerNodes.textContent = '';
       layerEdges.textContent = '';
       count.textContent = 'aucun arbre';
+      paint();
       return;
     }
     const first = all.length === 0;
     build(msg.tree);
+    paint();
     render();
     if (first) fit();
   });

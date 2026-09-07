@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import type { ContextTree } from '@gengad/contextree' with { 'resolution-mode': 'import' };
+import type { LastTurn } from './statusBar.js';
 
 type Core = typeof import('@gengad/contextree', { with: { 'resolution-mode': 'import' } });
 
@@ -20,6 +21,15 @@ type CanvasTree = {
  *  seule — un clic ouvre le `.md`, qui reste la source de vérité. */
 export class CanvasPanel {
   private static current: CanvasPanel | undefined;
+  /** Le dernier tour connu, gardé même panneau fermé : la toile doit pouvoir
+   *  s'allumer dès son ouverture, pas au tour suivant. */
+  private static turn: LastTurn | null = null;
+
+  /** Poussé par l'observateur du journal — même source que la barre d'état. */
+  static async setTurn(turn: LastTurn | null): Promise<void> {
+    CanvasPanel.turn = turn;
+    await CanvasPanel.current?.postTurn();
+  }
 
   static async show(
     context: vscode.ExtensionContext,
@@ -105,6 +115,10 @@ export class CanvasPanel {
     }
   }
 
+  private async postTurn(): Promise<void> {
+    await this.panel.webview.postMessage({ type: 'turn', turn: CanvasPanel.turn });
+  }
+
   private async update(): Promise<void> {
     const { findTreeDir, loadTree } = await this.core();
     let tree: ContextTree | null = null;
@@ -115,6 +129,7 @@ export class CanvasPanel {
       tree = null;
     }
     await this.panel.webview.postMessage({ type: 'tree', tree: tree ? flatten(tree) : null });
+    await this.postTurn();
   }
 
   private html(): string {
@@ -139,13 +154,18 @@ export class CanvasPanel {
   </div>
 </div>
 <div id="hud">
-  <button id="fit" title="Recadrer (double-clic sur le fond)">Recadrer</button>
-  <span id="count"></span>
-  <span class="sep"></span>
-  <input id="prompt" type="text" placeholder="Que chargerait le routeur pour…" />
-  <button id="go" title="Router ce prompt (Entrée)">Router</button>
-  <button id="clear" title="Effacer le surlignage (Échap)" hidden>✕</button>
-  <span id="trace"></span>
+  <div class="row">
+    <button id="fit" title="Recadrer (double-clic sur le fond)">Recadrer</button>
+    <span id="count"></span>
+    <span class="sep"></span>
+    <input id="prompt" type="text" placeholder="Que chargerait le routeur pour…" />
+    <button id="go" title="Router ce prompt (Entrée)">Router</button>
+    <button id="clear" title="Revenir au dernier tour (Échap)" hidden>✕</button>
+  </div>
+  <div class="row">
+    <span id="trace"></span>
+    <span id="excerpt"></span>
+  </div>
 </div>
 <div id="legend"></div>
 <script nonce="${nonce}" src="${asset('canvas.js')}"></script>

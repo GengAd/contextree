@@ -177,6 +177,20 @@ body {
 #hud {
   top: 12px;
   left: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  max-width: min(680px, calc(100vw - 24px));
+}
+
+#hud .row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#hud .row:empty {
+  display: none;
 }
 
 #legend {
@@ -356,4 +370,37 @@ body {
   border-bottom: 1px dotted var(--vscode-textLink-foreground, #4daafc);
   color: var(--vscode-textLink-foreground, #4daafc);
   cursor: help;
+}
+
+/* Le bandeau : quelle question on regarde, et la réponse. `#excerpt` porte le
+   prompt du tour — ou, en repli, ce qui s'est passé à la place. */
+#excerpt {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-style: italic;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#excerpt.warn {
+  color: var(--vscode-editorWarning-foreground, #fbbf24);
+  font-style: normal;
+}
+
+/* Un repli n'est pas un routage : les branches retenues sont le filet, pas un
+   choix. Elles restent lisibles mais perdent leur couleur de type — c'est ce
+   qui doit sauter aux yeux, sans avoir à lire le bandeau. */
+.node.kept.fallback {
+  border-color: var(--muted);
+  box-shadow: 0 0 0 1px var(--muted);
+}
+
+.node.kept.fallback .ribbon {
+  background: var(--muted);
+}
+
+.node.kept.fallback .badge {
+  border-color: var(--muted);
+  color: var(--muted);
 }

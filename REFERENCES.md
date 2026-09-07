@@ -118,6 +118,15 @@ Par tour : horodatage, extrait du prompt (200 caractères, mis à plat), branche
 - **50 derniers tours**, écriture par fichier temporaire renommé — un lecteur ne tombe jamais sur un JSON à moitié écrit.
 - **`appendTurn` ne rejette jamais.** Même invariant que le hook : écrire le journal ne peut pas bloquer un prompt.
 
+Côté vue (`extension/src/statusBar.ts`), le journal alimente deux choses, à partir de la même lecture — elles ne peuvent donc pas se contredire :
+
+- **la barre d'état** — `contextree · 4/9 branches`, clic pour ouvrir la toile. Une extension ne peut rien afficher dans le fil de conversation de Cursor ou de Claude Code : c'est le seul endroit à la fois permanent et jamais dans le chemin. Un repli passe l'icône en `$(warning)` et le fond en `statusBarItem.warningBackground` — un repli doit se voir, pas se lire ;
+- **la toile** — les branches du dernier tour en `●`, les autres estompées, l'extrait du prompt dans le bandeau. En repli, les cartes allumées perdent leur couleur de type : ce sont les branches garanties, pas un choix.
+
+La toile porte deux surlignages, jamais mélangés : le **dernier tour** (le journal, permanent) et la **sonde** (« que chargerait le routeur pour ce prompt ? », à la demande). La sonde l'emporte tant qu'elle est active ; ✕ ou Échap rend la toile au dernier vrai tour — on ne peut pas effacer un fait, seulement une question.
+
+L'observateur du journal est **non récursif** (`*.json` sur le dossier), seul motif que VS Code supporte hors du dossier ouvert. C'est lui qui fait bouger le badge pendant une conversation : aucun `.md` ne change quand un tour est routé.
+
 ## Pièges connus
 
 - **`process.exit` tue le serveur MCP.** La CLI sort en `process.exit(code)` ; la branche `mcp` ne rend donc jamais la main (`await new Promise(() => {})`). Sans ça, le serveur se coupe juste après le `connect()`.

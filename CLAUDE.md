@@ -33,6 +33,7 @@ Adrien Buot — développeur solo, TypeScript. Repo privé `GengAd/contextree`, 
 | CLI, hook Claude Code, installation | `src/cli.ts`, `src/install.ts` | `REFERENCES.md` § Hook |
 | Partage (export/import) | `src/core/pack.ts` | `ROADMAP.md` § Phase 1 |
 | Vue de l'arbre dans VS Code (barre latérale) | `extension/src/treeProvider.ts` | `extension/package.json` § contributes |
+| Badge de barre d'état, dernier tour chargé | `extension/src/statusBar.ts` | `REFERENCES.md` § Journal |
 | Toile 2D de l'arbre (webview) | `extension/src/canvasPanel.ts`, `extension/media/` | — |
 | Ce qu'on construit et pourquoi | racine | `CONTEXT.md` |
 | Ce qui vient après (groupes, orgs) | racine | `ROADMAP.md` |
