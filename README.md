@@ -40,14 +40,31 @@ Puis relance Claude Code. **Aucune clé API n'est nécessaire** : si un CLI d'ag
 
 Le routage par le CLI coûte entre 5 et 60 s : le hook ne l'attend donc jamais. Le tour part avec la sélection du tour précédent et le routage tourne derrière, pour le tour suivant — le hook rend la main en ~150 ms. `contextree route "<prompt>"` montre à tout moment ce que le routeur retiendrait.
 
-## Deux surfaces
+## Trois surfaces
+
+Tous les agents n'ont pas de hook. Par ordre de qualité — c'est l'ordre dans lequel `install` câble :
 
 | | Comment | Où |
 |---|---|---|
 | **Hook** `UserPromptSubmit` | Injection **déterministe** à chaque prompt, sans que l'agent ait à décider | Claude Code |
-| **Serveur MCP** | L'agent appelle `get_context` ; sert aussi à lire et éditer l'arbre depuis la conversation | Claude Code, Cursor, Windsurf, tout client MCP |
+| **Serveur MCP** | L'agent appelle `get_context` ; sert aussi à lire et éditer l'arbre depuis la conversation | Claude Code, Codex, Cursor, Windsurf, tout client MCP |
+| **`AGENTS.md`** | Un bloc borné : la racine et le catalogue, pas l'arbre entier — l'agent route lui-même | Codex, et tout agent sans hook |
 
-Les deux lisent le même arbre et le même routeur.
+Les trois lisent le même arbre et le même routeur.
+
+```bash
+npx @gengad/contextree install                 # tout ce qui est détecté
+npx @gengad/contextree install --agent codex   # MCP + AGENTS.md, même non détecté
+```
+
+Ce qui se configure hors du projet (Codex, dans `~/.codex/`) n'est câblé que si l'agent est détecté, ou nommé explicitement.
+
+**Un agent sans aucune surface** — Claude sur le web, ChatGPT, un chat quelconque ? On ne peut rien y installer, mais on peut coller :
+
+```bash
+npx @gengad/contextree render --copy                # l'arbre entier dans le presse-papier
+npx @gengad/contextree route "<ta demande>" --copy  # seulement la fraction routée
+```
 
 ## CLI
 

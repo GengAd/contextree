@@ -5,25 +5,34 @@ import * as path from 'node:path';
 
 import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch } from './core/store.js';
 import { allBranches, formatTree } from './core/tree.js';
-import { renderContext, renderTrace } from './core/render.js';
+import { renderContext, renderTrace, renderAgentsBlock } from './core/render.js';
 import { route, pickEngine, isCliEngine, engineBin, withoutRouting } from './core/router.js';
 import { encodePack, extractPack, applyPack } from './core/pack.js';
 import { readSelection, writeSelection } from './core/session.js';
 import { appendTurn } from './core/journal.js';
 import { isBranchType, type BranchType } from './core/types.js';
-import { installHook, installMcp, type InstallReport } from './install.js';
+import {
+  installHook,
+  installMcp,
+  installCodexMcp,
+  syncAgentsFile,
+  codexDir,
+  type InstallReport,
+} from './install.js';
 import { resolvePack, runStdio } from './mcp/server.js';
 
 const HELP = `contextree — un arbre de contexte partageable, routé, injecté à chaque appel IA.
 
   contextree init                    crée .contextree/ avec un arbre de démarrage
-  contextree install                 câble le serveur MCP + le hook Claude Code
+  contextree install [--agent a]     câble l'injection (claude, codex, all)
   contextree list                    affiche l'arbre
   contextree add                     crée une branche (--title --type --load-when [--parent])
   contextree rm <chemin>             supprime une branche et ses enfants
   contextree mv <de> <vers>          déplace ou renomme une branche (ses enfants suivent)
   contextree route "<prompt>"        montre ce que le routeur chargerait
-  contextree render                  affiche tout l'arbre assemblé (sans routage)
+  contextree render [--agents]       affiche tout l'arbre assemblé (sans routage)
+                                     --agents : le bloc court pour un AGENTS.md
+                                     --copy   : dans le presse-papier (render, route)
   contextree export [--token] [-o f] exporte l'arbre pour le partager
   contextree import <source>         greffe un pack (jeton, JSON, ou fichier) [--prefix p]
   contextree mcp                     lance le serveur MCP (stdio)
@@ -63,9 +72,9 @@ async function main(argv: string[]): Promise<number> {
     case 'mv':
       return cmdMove(flags._[0], flags._[1]);
     case 'route':
-      return cmdRoute(flags._.join(' '));
+      return cmdRoute(flags._.join(' '), flags);
     case 'render':
-      return cmdRender();
+      return cmdRender(flags);
     case 'export':
       return cmdExport(flags);
     case 'import':
@@ -132,16 +141,49 @@ async function cmdInit(force: boolean): Promise<number> {
   return 0;
 }
 
+/**
+ * Câble l'injection pour les agents présents.
+ *
+ * Claude Code est toujours tenté : les deux fichiers sont dans le projet, ils
+ * ne gênent personne. Les agents dont la configuration est **hors du projet**
+ * (Codex, dans `~/.codex/`) ne sont câblés que s'ils sont détectés, ou nommés
+ * par `--agent` : écrire dans le home de quelqu'un qui n'utilise pas l'outil
+ * serait une surprise, pas un service.
+ */
 async function cmdInstall(flags: Flags): Promise<number> {
   const report: InstallReport = [];
+  const asked = str(flags.agent);
   const only = flags.mcp || flags.hook;
-  if (!only || flags.mcp) await installMcp(process.cwd(), report);
-  if (!only || flags.hook) await installHook(process.cwd(), report);
+
+  const wants = (agent: string): boolean =>
+    asked ? asked === agent || asked === 'all' : true;
+
+  if (wants('claude')) {
+    if (!only || flags.mcp) await installMcp(process.cwd(), report);
+    if (!only || flags.hook) await installHook(process.cwd(), report);
+  }
+
+  // Codex n'a pas d'équivalent du hook `UserPromptSubmit` : il lui reste le
+  // serveur MCP, et `AGENTS.md` pour lui dire de l'appeler.
+  const hasCodex = Boolean(engineBin('codex')) || (await exists(codexDir()));
+  if (wants('codex') && (hasCodex || asked)) {
+    await installCodexMcp(report);
+    const { tree } = await open();
+    await syncAgentsFile(process.cwd(), renderAgentsBlock(tree), report);
+  }
+
   for (const r of report) {
-    process.stdout.write(`${r.action.padEnd(9)} ${path.relative(process.cwd(), r.file)}\n`);
+    const shown = r.file.startsWith(process.cwd()) ? path.relative(process.cwd(), r.file) : r.file;
+    process.stdout.write(`${r.action.padEnd(9)} ${shown}\n`);
+  }
+
+  if (!asked && !hasCodex) {
+    process.stdout.write('\nCodex non détecté — `contextree install --agent codex` pour le câbler quand même.\n');
   }
   process.stdout.write(
-    "\nRelance Claude Code pour prendre en compte le hook et le serveur MCP.\n" +
+    "\nRelance ton agent pour prendre en compte le hook et le serveur MCP.\n" +
+      "Aucun des deux (Claude sur le web, ChatGPT…) : `contextree render --copy`,\n" +
+      "ou `contextree route \"<ta demande>\" --copy`, et tu colles.\n" +
       `Routage : ${describeEngine()}\n`,
   );
   return 0;
@@ -226,7 +268,7 @@ async function cmdMove(from: string | undefined, to: string | undefined): Promis
   }
 }
 
-async function cmdRoute(prompt: string): Promise<number> {
+async function cmdRoute(prompt: string, flags: Flags): Promise<number> {
   if (!prompt.trim()) {
     process.stderr.write('Usage : contextree route "<prompt>"\n');
     return 1;
@@ -239,14 +281,53 @@ async function cmdRoute(prompt: string): Promise<number> {
     `${renderTrace(tree, selected, reason)} — ${Date.now() - started} ms${error ? ` — ${error}` : ''}\n\n` +
       `${formatTree(tree, selected)}\n\n`,
   );
-  process.stdout.write(`${renderContext(tree, selected)}\n`);
+  return emit(renderContext(tree, selected), Boolean(flags.copy));
+}
+
+async function cmdRender(flags: Flags): Promise<number> {
+  const { tree } = await open();
+  if (flags.agents) return emit(renderAgentsBlock(tree), Boolean(flags.copy));
+  return emit(renderContext(tree, new Set(tree.order)), Boolean(flags.copy));
+}
+
+/**
+ * La sortie, sur stdout ou dans le presse-papier.
+ *
+ * Le presse-papier est la surface d'injection des agents qui n'en ont aucune —
+ * Claude sur le web, ChatGPT, un chat quelconque : on ne peut rien y installer,
+ * mais on peut coller. C'est le même bloc que partout ailleurs, pas un format
+ * de plus. Échec de la copie ⇒ on écrit quand même sur stdout : mieux vaut du
+ * texte à sélectionner que rien.
+ */
+async function emit(text: string, copy: boolean): Promise<number> {
+  if (copy && (await toClipboard(text))) {
+    process.stderr.write(`${text.length} caractères copiés dans le presse-papier.\n`);
+    return 0;
+  }
+  if (copy) process.stderr.write('Presse-papier indisponible — sortie sur stdout.\n');
+  process.stdout.write(`${text}\n`);
   return 0;
 }
 
-async function cmdRender(): Promise<number> {
-  const { tree } = await open();
-  process.stdout.write(`${renderContext(tree, new Set(tree.order))}\n`);
-  return 0;
+/** Le presse-papier du système, sans dépendance : l'outil natif de la plateforme. */
+function toClipboard(text: string): Promise<boolean> {
+  const [bin, args] =
+    process.platform === 'darwin'
+      ? ['pbcopy', [] as string[]]
+      : process.platform === 'win32'
+        ? ['clip', []]
+        : ['xclip', ['-selection', 'clipboard']];
+  return new Promise(resolve => {
+    try {
+      const child = spawn(bin, args, { stdio: ['pipe', 'ignore', 'ignore'] });
+      child.on('error', () => resolve(false));
+      child.on('close', code => resolve(code === 0));
+      child.stdin.on('error', () => resolve(false));
+      child.stdin.end(text, 'utf8');
+    } catch {
+      resolve(false);
+    }
+  });
 }
 
 async function cmdExport(flags: Flags): Promise<number> {

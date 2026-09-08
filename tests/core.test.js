@@ -8,7 +8,8 @@ import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter
 import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { route, pickEngine, isCliEngine } from '../dist/core/router.js';
-import { renderContext } from '../dist/core/render.js';
+import { renderContext, renderAgentsBlock } from '../dist/core/render.js';
+import { syncAgentsFile, installCodexMcp } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
 import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites } from '../dist/core/journal.js';
 
@@ -155,6 +156,76 @@ test('routeur : le moteur forcé est respecté, anciens noms compris', () => {
       if (saved[k] === undefined) delete process.env[k];
       else process.env[k] = saved[k];
     }
+  }
+});
+
+test("AGENTS.md : la racine et le catalogue, jamais l'arbre entier", async () => {
+  const dir = await scratch();
+  await writeRoot(dir, 'RACINE');
+  await writeBranch(dir, {
+    path: 'r',
+    type: 'rule',
+    title: 'Une règle',
+    loadWhen: 'quand on touche au code',
+    content: 'LE CONTENU DE LA REGLE',
+  });
+  const block = renderAgentsBlock(await loadTree(dir));
+
+  assert.match(block, /RACINE/);
+  // Le catalogue, celui que lit le routeur — titre et condition.
+  assert.match(block, /Une règle.*charger quand : quand on touche au code/);
+  assert.match(block, /get_context/);
+  // Surtout pas le contenu des branches : ce serait le gros fichier de
+  // consignes que contextree existe pour remplacer.
+  assert.ok(!block.includes('LE CONTENU DE LA REGLE'));
+});
+
+test('AGENTS.md : le bloc est borné, resynchronisé, et ne duplique rien', async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-agents-'));
+  const file = path.join(projectDir, 'AGENTS.md');
+  await fs.writeFile(file, '# Mes consignes\n\nÀ moi.\n', 'utf8');
+
+  const report = [];
+  await syncAgentsFile(projectDir, 'PREMIER', report);
+  let body = await fs.readFile(file, 'utf8');
+  assert.match(body, /# Mes consignes/);
+  assert.match(body, /PREMIER/);
+  assert.equal(report[0].action, 'updated');
+
+  // Resynchronisation : le bloc est remplacé, pas ajouté à la suite.
+  await syncAgentsFile(projectDir, 'SECOND', report);
+  body = await fs.readFile(file, 'utf8');
+  assert.equal(body.match(/contextree:start/g).length, 1);
+  assert.ok(!body.includes('PREMIER'));
+  assert.match(body, /SECOND/);
+  assert.match(body, /# Mes consignes/);
+
+  // Rien à faire : un install répété ne salit pas un diff.
+  await syncAgentsFile(projectDir, 'SECOND', report);
+  assert.equal(report[2].action, 'unchanged');
+});
+
+test('codex : la table MCP est ajoutée à la fin, jamais réécrite', async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-codex-'));
+  const saved = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = home;
+  try {
+    await fs.writeFile(path.join(home, 'config.toml'), '[projects."/x"]\ntrust_level = "trusted"\n', 'utf8');
+    const report = [];
+    await installCodexMcp(report);
+    const body = await fs.readFile(path.join(home, 'config.toml'), 'utf8');
+    // Ce qui était là est intact, et la nouvelle table est bien à la fin :
+    // aucune table précédente ne peut l'avaler.
+    assert.match(body, /\[projects\."\/x"\]\ntrust_level = "trusted"/);
+    assert.match(body, /\[mcp_servers\.contextree\]\ncommand = "npx"/);
+    assert.ok(body.indexOf('[mcp_servers.contextree]') > body.indexOf('[projects."/x"]'));
+
+    await installCodexMcp(report);
+    assert.equal(report[1].action, 'unchanged');
+    assert.equal((await fs.readFile(path.join(home, 'config.toml'), 'utf8')), body);
+  } finally {
+    if (saved === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = saved;
   }
 });
 

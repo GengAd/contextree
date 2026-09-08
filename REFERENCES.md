@@ -133,6 +133,26 @@ C'est le seul chemin *déterministe* : il ne dépend pas de la décision de l'ag
 
 `contextree install` fusionne les entrées dans `.mcp.json` et `.claude/settings.json` — jamais d'écrasement, idempotent, et on ne touche pas à une entrée existante qui ne vient pas de nous.
 
+### Les autres agents (`src/install.ts`)
+
+Tous les agents n'ont pas de hook. Trois surfaces, par ordre de qualité — c'est l'ordre dans lequel on câble :
+
+| Surface | Où | Qualité |
+|---|---|---|
+| Hook par prompt | `.claude/settings.json` | **déterministe** — l'agent ne décide de rien |
+| Serveur MCP | `.mcp.json`, `~/.codex/config.toml` | portable, mais l'agent doit vouloir appeler `get_context` |
+| Fichier de consignes | `AGENTS.md` | dernier recours, pour qui n'a ni l'un ni l'autre |
+
+**Codex** n'a pas d'équivalent de `UserPromptSubmit` : il reçoit le serveur MCP (`[mcp_servers.contextree]` ajouté **à la fin** de `~/.codex/config.toml` — pas de parseur TOML, ce serait la 4e dépendance pour six lignes, et une table finale ne peut être avalée par aucune table précédente) et un bloc dans `AGENTS.md`.
+
+**Ce bloc n'est jamais l'arbre entier** (`renderAgentsBlock`) : la racine, plus le catalogue — titre et `load_when`, les mêmes lignes que lit le routeur — et la consigne d'appeler `get_context` pour le reste. Y déverser le contenu des branches reconstituerait exactement le gros fichier de consignes que contextree existe pour remplacer. Le bloc est borné par `<!-- contextree:start -->` / `<!-- contextree:end -->`, remplacé à l'identique d'une resynchronisation à l'autre, et ce qui est dehors appartient à l'utilisateur.
+
+**Les agents sans aucune surface** (Claude sur le web, ChatGPT, un chat quelconque) : on ne peut rien y installer, mais on peut coller. `contextree render --copy` met l'arbre entier dans le presse-papier, `contextree route "<demande>" --copy` seulement la fraction routée, `contextree render --agents` le bloc court. C'est le même bloc que partout ailleurs — surtout pas un format de plus.
+
+Un jeton d'export (`export --token`) **n'est pas** une réponse ici : c'est du base64 compressé, fait pour greffer un arbre dans une autre installation de contextree, illisible pour un modèle.
+
+Ce qui est câblé hors du projet (le home de l'utilisateur) ne l'est **que si l'agent est détecté**, ou nommé par `--agent` : écrire dans le `~` de quelqu'un qui n'utilise pas l'outil serait une surprise, pas un service.
+
 ## MCP (`src/mcp/server.ts`)
 
 Transport stdio. Sept outils : `get_context`, `list_branches`, `read_branch`, `upsert_branch`, `delete_branch`, `export_pack`, `import_pack`.

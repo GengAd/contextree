@@ -29,6 +29,42 @@ function section(b: { title: string; content: string }): string {
   return `### ${b.title}\n${b.content}`.trim();
 }
 
+/**
+ * Le bloc pour un agent sans hook — `AGENTS.md` et compagnie.
+ *
+ * Surtout pas l'arbre entier : ce serait exactement le gros fichier de
+ * consignes que contextree existe pour remplacer. On donne la **racine**
+ * (toujours injectée, jamais routée) et le **catalogue** — titre plus
+ * `load_when`, les mêmes lignes que lit le routeur. L'agent route alors
+ * lui-même, à la demande, avec `get_context`.
+ *
+ * Dégradation prévue : sans MCP, il reste la racine et une carte des branches,
+ * ce qui est déjà mieux que rien — et beaucoup moins que tout.
+ */
+export function renderAgentsBlock(tree: ContextTree): string {
+  const parts: string[] = ['## Contexte du projet (contextree)'];
+  const root = tree.rootContent.trim();
+  if (root) parts.push(root);
+
+  parts.push(
+    "Le reste du contexte vit dans `.contextree/`, en petites branches typées. " +
+      "**N'ouvre pas tout** : appelle l'outil MCP `get_context` avec la demande de " +
+      "l'utilisateur, tu récupères uniquement les branches pertinentes. Sans MCP : " +
+      '`npx -y @gengad/contextree route "<la demande>"`.',
+  );
+
+  const branches = allBranches(tree);
+  if (branches.length) {
+    parts.push(
+      `### Branches\n${branches
+        .map(b => `- **${b.title}** (${b.type}) — charger quand : ${b.loadWhen}`)
+        .join('\n')}`,
+    );
+  }
+
+  return parts.join('\n\n');
+}
+
 const TRACE_LABELS: Record<RouteReason, string> = {
   routed: 'routé',
   all: 'tout chargé',
