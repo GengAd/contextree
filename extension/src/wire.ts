@@ -75,3 +75,38 @@ function shorten(file: string): string {
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   return folder && file.startsWith(folder) ? path.relative(folder, file) : file;
 }
+
+/**
+ * Créer l'arbre depuis la vue, sur un projet vierge.
+ *
+ * Sans `.contextree/`, l'extension n'avait rien à montrer et il fallait passer
+ * par un terminal : le premier geste de l'outil échappait à l'outil. Ici, le
+ * même tronc que `contextree init` — il vit dans le cœur (`initTree`), deux
+ * copies auraient divergé au premier ajustement de `load_when`.
+ *
+ * Enchaîner sur le câblage est délibéré : créer l'arbre et le brancher à une
+ * IA sont le même geste de démarrage, et un arbre que personne ne lit ne sert
+ * à rien.
+ */
+export async function initFromView(core: Core, projectDir: string): Promise<boolean> {
+  const existing = await core.findTreeDir(projectDir);
+  if (existing) {
+    void vscode.window.showInformationMessage(`Un arbre existe déjà : ${shorten(existing)}`);
+    return false;
+  }
+
+  const { dir, branches } = await core.initTree(projectDir);
+
+  // La racine s'ouvre tout de suite : c'est le seul fichier toujours injecté,
+  // et le seul qu'il faut vraiment écrire soi-même.
+  await vscode.window.showTextDocument(
+    vscode.Uri.file(path.join(dir, core.ROOT_FILE)),
+  );
+
+  const next = await vscode.window.showInformationMessage(
+    `Arbre créé — ${branches} branches de départ. Corrige leur « charger quand », c'est lui qui décide de tout.`,
+    'Ajouter à une IA',
+  );
+  if (next === 'Ajouter à une IA') await wireAgent(core, projectDir);
+  return true;
+}

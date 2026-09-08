@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch } from './core/store.js';
+import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, deleteBranch, moveBranch, initTree } from './core/store.js';
 import { allBranches, formatTree } from './core/tree.js';
 import { renderContext, renderTrace, renderAgentsBlock } from './core/render.js';
 import { route, pickEngine, isCliEngine, engineBin, withoutRouting } from './core/router.js';
@@ -92,47 +92,19 @@ async function main(argv: string[]): Promise<number> {
 // ── commandes ────────────────────────────────────────────────────────────────
 
 async function cmdInit(force: boolean): Promise<number> {
-  const dir = path.join(process.cwd(), DIR_NAME);
-  if (!force && (await exists(dir))) {
-    process.stderr.write(`${DIR_NAME}/ existe déjà. --force pour réécrire les fichiers de départ.\n`);
+  try {
+    const { dir, branches } = await initTree(process.cwd(), { force });
+    process.stdout.write(
+      `${path.relative(process.cwd(), dir)}/ créé avec ${branches} branches de départ.\n` +
+        `Prochaine étape : édite les fichiers, puis \`contextree install\`.\n`,
+    );
+    return 0;
+  } catch (err) {
+    process.stderr.write(
+      `${err instanceof Error ? err.message : String(err)} --force pour réécrire les fichiers de départ.\n`,
+    );
     return 1;
   }
-  const project = path.basename(process.cwd());
-  await writeRoot(dir, `# Contexte — ${project}\n\nCe bloc est injecté à chaque appel. Garde-le court : qui, quoi, dans quel repo.`);
-  await writeBranch(dir, {
-    path: 'identite',
-    type: 'identity',
-    title: 'Identité',
-    loadWhen: "toujours pertinent — qui est l'assistant sur ce projet",
-    content: "Tu assistes sur le projet **" + project + "**.\n\nDécris ici l'expertise attendue et le style de travail.",
-  });
-  await writeBranch(dir, {
-    path: 'regles',
-    type: 'rule',
-    title: 'Règles du projet',
-    loadWhen: 'quand la demande touche au code, aux fichiers ou aux features',
-    content: '- Une contrainte dure par ligne.\n- Ce qui est interdit, ce qui est obligatoire.',
-  });
-  await writeBranch(dir, {
-    path: 'architecture',
-    type: 'context',
-    title: 'Architecture',
-    loadWhen: "quand la demande porte sur la structure du projet ou l'endroit où vit un bout de code",
-    content: "Vue d'ensemble : les zones du repo et ce qu'elles portent.",
-  });
-  await writeBranch(dir, {
-    path: 'architecture/commandes',
-    type: 'reference',
-    title: 'Commandes',
-    loadWhen: 'quand il faut lancer, tester ou builder le projet',
-    content: '```bash\n# à compléter\n```',
-  });
-
-  process.stdout.write(
-    `${DIR_NAME}/ créé avec 4 branches de départ.\n` +
-      `Prochaine étape : édite les fichiers, puis \`contextree install\`.\n`,
-  );
-  return 0;
 }
 
 /**

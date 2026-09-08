@@ -255,3 +255,63 @@ export function slugify(input: string): string {
     .slice(0, 60);
   return slug || 'branche';
 }
+
+/**
+ * L'arbre de départ : une racine et quatre branches.
+ *
+ * Il vit ici et pas dans la CLI parce que la vue le crée aussi — deux copies
+ * du tronc auraient divergé au premier ajustement de `load_when`, et c'est
+ * précisément le champ dont dépend tout le routage.
+ *
+ * Quatre branches, pas quarante : un arbre entier deviné d'un coup n'est relu
+ * par personne. Celles-ci sont des amorces à corriger, et leur `load_when` est
+ * écrit comme une condition — c'est la forme qu'on veut voir imitée.
+ */
+export async function initTree(
+  projectDir: string,
+  opts: { force?: boolean } = {},
+): Promise<{ dir: string; branches: number }> {
+  const dir = path.join(projectDir, DIR_NAME);
+  if (!opts.force && (await isDir(dir))) {
+    throw new Error(`${DIR_NAME}/ existe déjà.`);
+  }
+  const project = path.basename(projectDir);
+
+  await writeRoot(
+    dir,
+    `# Contexte — ${project}\n\nCe bloc est injecté à chaque appel. Garde-le court : qui, quoi, dans quel repo.`,
+  );
+  const starters: Parameters<typeof writeBranch>[1][] = [
+    {
+      path: 'identite',
+      type: 'identity',
+      title: 'Identité',
+      loadWhen: "toujours pertinent — qui est l'assistant sur ce projet",
+      content: `Tu assistes sur le projet **${project}**.\n\nDécris ici l'expertise attendue et le style de travail.`,
+    },
+    {
+      path: 'regles',
+      type: 'rule',
+      title: 'Règles du projet',
+      loadWhen: 'quand la demande touche au code, aux fichiers ou aux features',
+      content: '- Une contrainte dure par ligne.\n- Ce qui est interdit, ce qui est obligatoire.',
+    },
+    {
+      path: 'architecture',
+      type: 'context',
+      title: 'Architecture',
+      loadWhen: "quand la demande porte sur la structure du projet ou l'endroit où vit un bout de code",
+      content: "Vue d'ensemble : les zones du repo et ce qu'elles portent.",
+    },
+    {
+      path: 'architecture/commandes',
+      type: 'reference',
+      title: 'Commandes',
+      loadWhen: 'quand il faut lancer, tester ou builder le projet',
+      content: '```bash\n# à compléter\n```',
+    },
+  ];
+  for (const branch of starters) await writeBranch(dir, branch);
+
+  return { dir, branches: starters.length };
+}

@@ -22,12 +22,16 @@
       "explorer": [
         {
           "id": "contextree.tree",
-          "name": "contextree",
-          "when": "contextree.hasTree"
+          "name": "contextree"
         }
       ]
     },
     "commands": [
+      {
+        "command": "contextree.init",
+        "title": "contextree : créer l'arbre de contexte",
+        "icon": "$(new-folder)"
+      },
       {
         "command": "contextree.wire",
         "title": "contextree : ajouter à une IA",
@@ -76,12 +80,12 @@
         },
         {
           "command": "contextree.newBranch",
-          "when": "view == contextree.tree",
+          "when": "view == contextree.tree && contextree.hasTree",
           "group": "navigation@1"
         },
         {
           "command": "contextree.openCanvas",
-          "when": "view == contextree.tree",
+          "when": "view == contextree.tree && contextree.hasTree",
           "group": "navigation@2"
         }
       ],
@@ -144,7 +148,14 @@
           "when": "false"
         }
       ]
-    }
+    },
+    "viewsWelcome": [
+      {
+        "view": "contextree.tree",
+        "contents": "Aucun arbre de contexte dans ce dossier.\n\nUn arbre, ce sont de petites branches typées — identité, règles, contexte, références — dont seule la fraction utile est injectée à chaque appel.\n[Créer l'arbre](command:contextree.init)\nQuatre branches de départ, à corriger ensuite comme des fichiers markdown.\n[Ajouter contextree à une IA](command:contextree.wire)",
+        "when": "!contextree.hasTree"
+      }
+    ]
   },
   "scripts": {
     "build": "tsc -p .",

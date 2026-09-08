@@ -240,6 +240,14 @@ Trois mécanismes, tous nécessaires :
 
 `import_pack` n'est pas tracé : c'est une greffe en masse, annoncée par nature, pas une capitalisation au fil de l'eau.
 
+## Démarrer sur un dossier vide (`initTree`)
+
+Sans `.contextree/`, l'extension n'avait rien à montrer et il fallait un terminal : le premier geste de l'outil échappait à l'outil. La vue est donc **toujours visible**, et une `viewsWelcome` (`when: !contextree.hasTree`) porte deux boutons — « Créer l'arbre » et « Ajouter contextree à une IA ». Les boutons qui n'ont de sens qu'avec un arbre (nouvelle branche, toile) sont gardés par `contextree.hasTree`.
+
+**Le tronc de départ vit dans le cœur** (`initTree`, dans `store.ts`), pas dans la CLI : la vue le crée aussi, et deux copies auraient divergé au premier ajustement de `load_when` — le champ dont dépend tout le routage. Quatre branches, pas quarante : un arbre entier deviné d'un coup n'est relu par personne. Ce sont des amorces à corriger, et leur `load_when` est écrit comme une condition, parce que c'est la forme qu'on veut voir imitée.
+
+**Le démarrage à froid n'est pas une panne.** Mesuré sur un arbre neuf : le routeur *tourne* dès la 4ᵉ branche (le court-circuit s'arrête à ≤ 3), mais il retient les 4 — les `load_when` de départ sont volontairement larges (« toujours pertinent », « quand la demande touche au code »). On voit donc `routé — 4 branche(s)` et rien qui ressemble à un tri. C'est le comportement attendu : le routage se met à payer quand l'arbre grossit et que les conditions se resserrent, pas avant.
+
 ## Packaging de l'extension (`npm run package:ext`)
 
 L'extension vit dans `extension/`, se compile en **CommonJS** et charge un cœur **ESM** : c'est ce qui contraint tout le reste.

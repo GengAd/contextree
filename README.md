@@ -103,6 +103,8 @@ Les groupes, les arbres publics et les hiérarchies d'entreprise sont les phases
 
 Une extension (`extension/`) montre l'arbre dans la barre latérale, en surligne les branches réellement lues au dernier tour, et ouvre une toile 2D pour essayer un prompt sans lancer de conversation. La structure s'édite depuis la vue — créer, renommer, changer le type, déplacer ; le contenu reste dans le `.md` ouvert à côté.
 
+Sur un projet sans arbre, la vue propose de le **créer** puis de le **brancher à une IA** : le démarrage complet sans passer par un terminal.
+
 ```bash
 npm run package:ext    # produit extension/contextree-vscode-0.1.0.vsix
 ```

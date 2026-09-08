@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
-import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir } from '../dist/core/store.js';
+import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, initTree } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { route, pickEngine, isCliEngine } from '../dist/core/router.js';
 import { renderContext, renderAgentsBlock } from '../dist/core/render.js';
@@ -271,6 +271,24 @@ test('install : Claude Code est câblé quand le hook ET le serveur MCP y sont',
   // Ce qui était déjà là n'est pas réécrit.
   const report = await installAgent('claude-code', projectDir);
   assert.ok(report.every(r => r.action === 'unchanged'));
+});
+
+test("init : le tronc de départ est le même pour la CLI et pour la vue", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-init-'));
+
+  const { dir, branches } = await initTree(projectDir);
+  assert.equal(branches, 4);
+  const tree = await loadTree(dir);
+  assert.deepEqual(tree.order, ['architecture', 'architecture/commandes', 'identite', 'regles']);
+  assert.match(tree.rootContent, /Contexte/);
+  // Le `load_when` est écrit comme une condition : c'est la forme qu'on veut
+  // voir imitée, et c'est de lui que dépend tout le routage.
+  assert.match(tree.branches.get('architecture/commandes').loadWhen, /^quand /);
+
+  // Un arbre existant n'est pas écrasé sans qu'on le demande.
+  await assert.rejects(() => initTree(projectDir), /existe déjà/);
+  await initTree(projectDir, { force: true });
+  assert.equal((await loadTree(dir)).order.length, 4);
 });
 
 test('render : racine toujours là, Rules avant Context, non sélectionné exclu', async () => {

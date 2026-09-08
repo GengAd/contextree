@@ -3,7 +3,7 @@ import { CanvasPanel } from './canvasPanel.js';
 import { ContextTreeProvider, ROOT_ELEMENT, freshWrites, loadCore } from './treeProvider.js';
 import { LoadedDecorations, lastTurn, turnDescription, watchJournal } from './turn.js';
 import * as edit from './edit.js';
-import { wireAgent } from './wire.js';
+import { wireAgent, initFromView } from './wire.js';
 
 /** Les opérations de structure exposées par les deux vues. Une seule liste :
  *  la barre latérale et la toile appellent le même code. */
@@ -150,6 +150,19 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     view,
+    vscode.commands.registerCommand('contextree.init', async () => {
+      try {
+        if (!folder) {
+          vscode.window.showErrorMessage('contextree : ouvre un dossier pour y créer un arbre.');
+          return;
+        }
+        if (await initFromView(await loadCore(), folder.uri.fsPath)) reloadViews();
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `contextree : ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }),
     vscode.commands.registerCommand('contextree.wire', async () => {
       try {
         if (await wireAgent(await loadCore(), searchFrom)) reloadViews();
