@@ -3,6 +3,7 @@ import type { AiWrite, ContextTree } from '@gengad/contextree/view' with { 'reso
 import { freshWrites } from './treeProvider.js';
 import type { LastTurn } from './turn.js';
 import type { EditOp } from './extension.js';
+import type { SavePatch } from './edit.js';
 
 import type { Core } from './treeProvider.js';
 
@@ -21,8 +22,9 @@ type CanvasTree = {
   }>;
 };
 
-/** La toile 2D : l'arbre entier d'un coup d'œil, comme dans Lacis. Lecture
- *  seule — un clic ouvre le `.md`, qui reste la source de vérité. */
+/** La toile 2D : l'arbre entier d'un coup d'œil, comme dans Lacis. On y lit,
+ *  on y édite la structure, et depuis le 8 septembre 2026 le `load_when` et le
+ *  corps — le `.md` reste la source de vérité, et reste à un clic. */
 export class CanvasPanel {
   private static current: CanvasPanel | undefined;
   /** Le dernier tour connu, gardé même panneau fermé : la toile doit pouvoir
@@ -32,13 +34,21 @@ export class CanvasPanel {
   /**
    * Le protocole webview → extension porte des **écritures**, pas seulement des
    * ouvertures de fichier : la toile envoie `{type:'edit', op, path}` et
-   * l'extension exécute. C'est la couture prévue pour que l'édition du contenu
-   * vienne s'y brancher plus tard sans rien réécrire.
+   * l'extension exécute. C'est la couture par laquelle l'édition du contenu est
+   * venue se brancher (`save`, plus bas) sans rien réécrire.
    */
   private static edit: ((op: EditOp, target?: string) => Promise<void>) | undefined;
 
   static onEdit(handler: (op: EditOp, target?: string) => Promise<void>): void {
     CanvasPanel.edit = handler;
+  }
+
+  /** L'écriture du contenu. Elle **répond** — la toile ne jette son brouillon
+   *  que sur un accusé, jamais parce qu'elle a cliqué. */
+  private static save: ((branchPath: string, patch: SavePatch) => Promise<boolean>) | undefined;
+
+  static onSave(handler: (branchPath: string, patch: SavePatch) => Promise<boolean>): void {
+    CanvasPanel.save = handler;
   }
 
   /** Poussé par l'observateur du journal — même source que la barre latérale. */
@@ -87,10 +97,23 @@ export class CanvasPanel {
       CanvasPanel.current = undefined;
     });
     panel.webview.onDidReceiveMessage(
-      async (msg: { type: string; path?: string; prompt?: string; op?: EditOp }) => {
+      async (msg: {
+        type: string;
+        path?: string;
+        prompt?: string;
+        op?: EditOp;
+        loadWhen?: string;
+        content?: string;
+      }) => {
         if (msg.type === 'ready') return void this.update();
         if (msg.type === 'open') return void this.open(msg.path);
         if (msg.type === 'route') return void this.route(msg.prompt ?? '');
+        if (msg.type === 'save' && msg.path) {
+          return void this.save(msg.path, {
+            loadWhen: msg.loadWhen ?? '',
+            content: msg.content ?? '',
+          });
+        }
         if (msg.type === 'edit' && msg.op) {
           // La racine n'est pas une branche : elle ne se renomme ni ne se
           // supprime. Seule « nouvelle branche » a du sens depuis elle.
@@ -99,6 +122,25 @@ export class CanvasPanel {
         }
       },
     );
+  }
+
+  /**
+   * Écrire, puis dire ce qui s'est passé.
+   *
+   * Un `ok` faux n'est pas une anomalie : c'est un `load_when` vide refusé, ou
+   * un onglet sale que l'utilisateur a préféré garder. Dans les deux cas la
+   * toile doit conserver son brouillon — d'où l'accusé, plutôt qu'une écriture
+   * qu'on suppose réussie.
+   */
+  private async save(branchPath: string, patch: SavePatch): Promise<void> {
+    let ok = false;
+    let error: string | undefined;
+    try {
+      ok = (await CanvasPanel.save?.(branchPath, patch)) ?? false;
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+    await this.panel.webview.postMessage({ type: 'saved', path: branchPath, ok, error });
   }
 
   private async open(branchPath: string | undefined): Promise<void> {

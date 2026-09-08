@@ -214,16 +214,28 @@ La toile porte deux surlignages, jamais mélangés : le **dernier tour** (le jou
 
 L'observateur du journal est **non récursif** (`*.json` sur le dossier), seul motif que VS Code supporte hors du dossier ouvert. C'est lui qui fait bouger le surlignage pendant une conversation : aucun `.md` ne change quand un tour est routé.
 
-## Édition de la structure depuis la vue (`extension/src/edit.ts`)
+## Édition depuis la vue (`extension/src/edit.ts`)
 
-Créer, renommer, changer le type, déplacer, supprimer. Le **contenu** reste édité dans le `.md` qui s'ouvre à côté — c'est la ligne de `perimetre.md` : ces cinq opérations-là ne se font pas en ouvrant un fichier, ce sont des opérations sur des fichiers et des dossiers.
+Deux moitiés. La **structure** — créer, renommer, changer le type, déplacer, supprimer — parce que ce sont des opérations sur des fichiers et des dossiers, pas des choses qu'on fait en ouvrant un `.md`. Et depuis le 8 septembre 2026 le **contenu** — le `load_when` et le corps, dans la carte de la toile.
 
 Une seule implémentation, deux appelants : le menu contextuel de la barre latérale et les boutons de la carte ouverte sur la toile. Tout passe par `runEdit(op, target)` dans `extension.ts`, qui relit l'arbre juste avant (les `.md` sont la source de vérité et ont pu changer) et recharge les vues après.
 
-- **Le protocole webview → extension porte des écritures**, pas seulement des ouvertures : la toile envoie `{type:'edit', op, path}`. C'est la couture prévue pour que l'édition du contenu vienne s'y brancher sans réécrire l'existant.
+- **Le protocole webview → extension porte des écritures**, pas seulement des ouvertures : la toile envoie `{type:'edit', op, path}` pour la structure, `{type:'save', path, loadWhen, content}` pour le contenu. La seconde est venue se brancher sur la couture posée par la première, sans réécrire l'existant.
 - **`load_when` est demandé à la création**, pas plus tard : c'est le seul champ que le modèle ne peut pas deviner, et sans lui la branche ne sera jamais routée.
 - **Renommer change le titre.** Le fichier ne suit que si son nom venait du titre précédent ; un slug choisi à la main n'est pas touché. Le `path` est l'identité d'une branche — on ne le change pas dans le dos de qui l'a écrit.
 - **Supprimer est toujours confirmé**, avec le nombre d'enfants qui partent avec.
+### Écrire le contenu dans la carte (`saveBranch`)
+
+Ce point **renverse** la ligne du 7 septembre 2026, qui plaçait l'édition du contenu dans une webview maison hors périmètre. La raison du renversement : le `load_when` est le seul bouton de routage de l'outil, on le corrige en regardant la toile, et l'aller-retour vers un onglet suffisait à ce qu'on ne le corrige pas.
+
+Ce que la carte **n'est pas** : un éditeur. Pas de coloration, pas de recherche, pas de multi-curseur — le `.md` reste la source de vérité et reste à un clic, bouton compris à côté de « Enregistrer ». Trois garde-fous tiennent la ligne, et se cassent ensemble si on les oublie :
+
+- **Le cœur sérialise, jamais la webview.** La toile envoie deux chaînes ; `writeBranch` (ou `writeRoot` pour la racine) fabrique le fichier. Il n'existe pas de second code d'écriture qui pourrait diverger de `parseFrontmatter` — un frontmatter invalide n'a pas de chemin jusqu'au disque.
+- **Le `load_when` est aplati sur une ligne** avant l'écriture. C'est un scalaire de frontmatter, et `parseFrontmatter` ne déséchappe pas ce qu'un multi-ligne produirait. Vide, il est refusé : une branche sans condition ne serait plus jamais routée.
+- **Un onglet aux modifications non enregistrées gagne sur la carte.** C'est le seul endroit où quelque chose que la toile ne voit pas serait perdu. Modale, l'onglet est proposé à l'ouverture, et l'écrasement se demande.
+
+Côté toile, ce sont des **brouillons** (`drafts`, dans `canvas.js`) et pas un champ lié : ils survivent au changement de sélection et aux rechargements de l'arbre — le watcher se réveille au moindre `.md` touché, et ce qu'on a écrit ne doit pas partir parce qu'un autre fichier a bougé. Une carte fermée qui porte un brouillon le montre (trait discontinu, `✎ brouillon non enregistré`). Si le fichier change sur le disque pendant qu'on tape, la carte le dit et propose de repartir du disque plutôt que d'écraser en silence. Le brouillon n'est jeté que sur l'**accusé** `{type:'saved', ok}` : un refus le garde intact. Et `Échap` ne jette rien — un brouillon modifié se règle avec « Enregistrer » ou « Abandonner », pas avec une touche qu'on presse par réflexe pour sortir d'un champ.
+
 - Les commandes de branche sont masquées de la palette (`commandPalette` / `when: false`) : elles ont besoin d'une branche sélectionnée, que seul le menu contextuel fournit.
 
 Il n'y a **pas** de commande « recharger l'arbre » : l'observateur le fait déjà, et un bouton qui refait ce qui se fait tout seul est du bruit. L'observateur porte sur le dossier **réellement trouvé** par `findTreeDir`, pas sur le dossier ouvert — un `.contextree/` au-dessus de la racine du workspace était sinon jamais rechargé. Le motif `**/*.md` reste complexe, donc récursif même hors du dossier ouvert. Tant qu'aucun arbre n'existe, on retombe sur `**/.contextree/**/*.md` dans le workspace : c'est ce qui rattrape un `contextree init` fait après coup, et l'observateur bascule tout seul.

@@ -146,8 +146,84 @@ body {
   white-space: pre-wrap;
 }
 
-/* Les boutons de la carte ouverte : la structure s'édite ici, le contenu dans
-   le `.md`. Ils se replient plutôt que de déborder d'une carte de 540px. */
+/* La carte en écriture. Les champs empruntent les couleurs de saisie de l'hôte :
+   ce qu'on tape ici finit dans un `.md`, ça doit s'écrire comme ailleurs. */
+.edit {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  cursor: auto;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 0;
+}
+
+/* Le corps prend ce qui reste : c'est lui qu'on vient écrire. */
+.field:last-of-type {
+  flex: 1;
+}
+
+.caption {
+  color: var(--muted);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+}
+
+.edit textarea {
+  padding: 6px 8px;
+  border: 1px solid var(--vscode-input-border, var(--line));
+  border-radius: 4px;
+  background: var(--vscode-input-background, transparent);
+  color: var(--vscode-input-foreground, var(--card-fg));
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: none;
+}
+
+.edit textarea.mono {
+  flex: 1;
+  min-height: 0;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.edit textarea:focus {
+  outline: 1px solid var(--vscode-focusBorder, var(--ribbon));
+  outline-offset: -1px;
+}
+
+.note {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.note.warn {
+  color: var(--vscode-editorWarning-foreground, #fbbf24);
+}
+
+/* Un brouillon non enregistré, carte fermée : le trait discontinu dit que ce
+   qu'on voit n'est pas ce qui est sur le disque. */
+.node.drafted {
+  border-style: dashed;
+}
+
+.draft-mark {
+  color: var(--vscode-editorWarning-foreground, #fbbf24);
+  font-size: 10.5px;
+}
+
+/* Les boutons de la carte ouverte : la structure et le contenu s'éditent ici,
+   le `.md` reste à un clic. Ils se replient plutôt que de déborder d'une carte
+   de 540px. */
 .actions {
   display: flex;
   flex: 0 0 auto;
@@ -169,6 +245,17 @@ body {
 
 .act:hover {
   border-color: var(--ribbon);
+}
+
+.act.primary {
+  border-color: var(--ribbon);
+  background: var(--vscode-button-background, transparent);
+  color: var(--vscode-button-foreground, var(--card-fg));
+}
+
+.act[disabled] {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .act.danger:hover {

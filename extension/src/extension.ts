@@ -141,7 +141,25 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
+  /**
+   * L'autre moitié : écrire le `load_when` et le corps depuis la toile.
+   *
+   * Même discipline que `runEdit` — l'arbre est relu juste avant (les `.md`
+   * sont la source de vérité et ont pu changer), le cœur écrit, les vues
+   * rechargent après. Le booléen remonte jusqu'à la toile : elle ne jette son
+   * brouillon que si quelque chose a vraiment été écrit.
+   */
+  const runSave = async (target: string, patch: edit.SavePatch): Promise<boolean> => {
+    const core = await loadCore();
+    const dir = await core.findTreeDir(searchFrom);
+    if (!dir) return false;
+    const written = await edit.saveBranch(core, await core.loadTree(dir), target, patch);
+    if (written) reloadViews();
+    return written;
+  };
+
   CanvasPanel.onEdit(runEdit);
+  CanvasPanel.onSave(runSave);
 
   // Le surlignage des branches lues est un confort, et `FileDecorationProvider`
   // est l'API la plus susceptible de manquer dans un fork de VS Code. Absente,
