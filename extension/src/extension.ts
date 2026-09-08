@@ -29,6 +29,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!dir) {
         view.description = undefined;
         decorations.set([], null);
+        provider.setLoaded(() => false);
         return;
       }
       const tree = await core.loadTree(dir);
@@ -45,10 +46,12 @@ export function activate(context: vscode.ExtensionContext): void {
           : [],
         last?.turn.reason ?? null,
       );
+      provider.setLoaded(file => decorations.has(file));
       await CanvasPanel.setTurn(last);
     } catch {
       // Le surlignage est un confort, pas un chemin critique.
       decorations.set([], null);
+      provider.setLoaded(() => false);
     }
   };
 

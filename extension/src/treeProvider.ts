@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 // Le paquet est ESM, ce fichier est compilé en CommonJS : les types doivent
 // être résolus en mode `import`, et le module chargé par `import()` dynamique.
 import type { AiWrite, Branch, BranchType, ContextTree } from '@gengad/contextree/view' with { 'resolution-mode': 'import' };
+import { LOADED_COLOR } from './turn.js';
 
 /** `root.md` — toujours injecté, jamais routé. Ce n'est pas une branche, mais
  *  il doit se lire et s'éditer comme les autres, donc il a sa ligne. */
@@ -82,10 +83,20 @@ const ICONS: Record<BranchType, string> = {
 export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
   private tree: ContextTree | null = null;
   private writes = new Map<string, AiWrite>();
+  /** Les `.md` injectés au dernier tour, tenus à jour par l'observateur du
+   *  journal. Sert à teindre l'icône : la décoration de fichier ne peint que le
+   *  libellé et la pastille, et une ligne à moitié teinte se lit mal. */
+  private loaded: (file: string) => boolean = () => false;
   private readonly changed = new vscode.EventEmitter<string | undefined>();
   readonly onDidChangeTreeData = this.changed.event;
 
   constructor(private readonly searchFrom: string) {}
+
+  /** Rebranche la source du surlignage et redessine les lignes. */
+  setLoaded(loaded: (file: string) => boolean): void {
+    this.loaded = loaded;
+    this.changed.fire(undefined);
+  }
 
   get treeDir(): string | null {
     return this.tree?.dir ?? null;
@@ -126,9 +137,12 @@ export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
     if (element === ROOT_ELEMENT) {
       const item = new vscode.TreeItem('Racine', vscode.TreeItemCollapsibleState.None);
       item.description = 'toujours injectée';
-      item.iconPath = new vscode.ThemeIcon('symbol-namespace');
       item.tooltip = tooltip('Racine', 'toujours injectée, jamais routée', tree.rootContent);
       item.resourceUri = vscode.Uri.file(path.join(tree.dir, ROOT_FILE));
+      item.iconPath = new vscode.ThemeIcon(
+        'symbol-namespace',
+        this.loaded(item.resourceUri.fsPath) ? LOADED_COLOR : undefined,
+      );
       item.command = open(item.resourceUri);
       item.contextValue = 'contextree.root';
       return item;
@@ -148,12 +162,18 @@ export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
     // est fraîche : c'est tout l'intérêt de la trace.
     const write = this.writes.get(branch.path);
     item.description = write ? `${branch.type} · IA ${ago(write.at)}` : branch.type;
-    item.iconPath = new vscode.ThemeIcon(
-      ICONS[branch.type] ?? 'circle-outline',
-      write ? new vscode.ThemeColor('gitDecoration.modifiedResourceForeground') : undefined,
-    );
     item.tooltip = tooltip(branch.title, branch.loadWhen, branch.content, branch, write);
     item.resourceUri = vscode.Uri.file(branchFile(tree.dir, branch.path));
+    // Une écriture fraîche l'emporte sur le surlignage du tour : elle vient de
+    // se produire, l'injection est l'état permanent.
+    item.iconPath = new vscode.ThemeIcon(
+      ICONS[branch.type] ?? 'circle-outline',
+      write
+        ? new vscode.ThemeColor('gitDecoration.modifiedResourceForeground')
+        : this.loaded(item.resourceUri.fsPath)
+          ? LOADED_COLOR
+          : undefined,
+    );
     item.command = open(item.resourceUri);
     item.contextValue = 'contextree.branch';
     return item;

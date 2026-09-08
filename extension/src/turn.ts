@@ -18,19 +18,28 @@ export const LABELS: Record<string, string> = {
   deferred: 'différé',
 };
 
+/** La teinte d'une branche injectée : celle des correspondances de recherche,
+ *  jamais celle d'une erreur. */
+export const LOADED_COLOR = new vscode.ThemeColor('list.highlightForeground');
+
 /**
  * Les branches lues au dernier tour, marquées là où on regarde déjà : dans
  * l'arbre de la barre latérale.
  *
- * C'est un `FileDecorationProvider` et pas une couleur d'icône parce que le
- * `.md` est la vraie chose : la même marque apparaît dans l'explorateur et sur
- * l'onglet du fichier ouvert.
+ * C'est d'abord un `FileDecorationProvider` parce que le `.md` est la vraie
+ * chose : la même marque apparaît dans l'explorateur et sur l'onglet du fichier
+ * ouvert, pas seulement dans la vue de contextree.
  *
- * **Un point, et rien d'autre.** Pas de couleur : `FileDecoration.color` teinte
- * le libellé entier, et une moitié d'arbre en rouge se lit comme une alerte
- * alors qu'il ne s'est rien passé d'anormal — une lecture est un fait ordinaire.
- * Ce qui distingue un vrai routage d'un repli est dans le titre de la vue, pas
- * dans la couleur de chaque ligne.
+ * **Le libellé entier est teinté, pas seulement pastillé.** Un point de trois
+ * pixels ne se voit pas dans une liste de vingt lignes ; ce qui a été injecté
+ * doit se repérer sans lire. Le fond de la ligne serait mieux encore, mais
+ * l'API des vues arborescentes ne l'expose pas : `FileDecoration` ne donne
+ * qu'une pastille et une couleur de libellé. On prend les deux, plus l'icône
+ * (teintée par le fournisseur d'items), et c'est le maximum disponible.
+ *
+ * La couleur est celle des correspondances de recherche, pas celle d'une
+ * erreur : une lecture est un fait ordinaire, pas une alerte. Ce qui distingue
+ * un vrai routage d'un repli reste dans le titre de la vue et l'infobulle.
  */
 export class LoadedDecorations implements vscode.FileDecorationProvider {
   private loaded = new Set<string>();
@@ -45,14 +54,21 @@ export class LoadedDecorations implements vscode.FileDecorationProvider {
     this.changed.fire(undefined);
   }
 
+  /** Le même ensemble, pour que la vue teinte aussi l'icône : la décoration de
+   *  fichier ne touche que le libellé et la pastille. */
+  has(file: string): boolean {
+    return this.loaded.has(file);
+  }
+
   provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
     if (!this.loaded.has(uri.fsPath)) return undefined;
     // Un repli et un routage diffèrent : dans un cas la branche a été choisie
     // pour ce prompt, dans l'autre elle est là faute de mieux. Ça se dit dans
-    // l'infobulle, pas en repeignant la ligne.
+    // l'infobulle — la teinte, elle, dit seulement « ceci est parti à l'IA ».
     const chosen = this.reason === 'routed';
     return {
       badge: '•',
+      color: LOADED_COLOR,
       tooltip: chosen
         ? "contextree : lue par l'IA au dernier tour"
         : `contextree : injectée au dernier tour (${LABELS[this.reason ?? ''] ?? this.reason})`,
