@@ -117,9 +117,14 @@ Le bloc est encadré par `<contextree>…</contextree>` et assemblé dans cet or
 
 1. le contenu de `root.md` (toujours),
 2. `## Rules` — les branches `identity` et `rule` retenues,
-3. `## Context` — tout le reste.
+3. `## Context` — tout le reste,
+4. `## Catalogue — branches non chargées` — une ligne par branche **écartée** : titre, type, `load_when`.
 
-Les règles passent avant le contexte parce que ce sont des contraintes : le modèle doit les avoir en tête avant de lire la doc de domaine. Chaque branche devient `### <title>` suivi de son corps.
+Les règles passent avant le contexte parce que ce sont des contraintes : le modèle doit les avoir en tête avant de lire la doc de domaine. Chaque branche devient `### <title>` suivi de son corps. Le catalogue passe en dernier — on le lit une fois qu'on sait ce qu'on a reçu.
+
+**Le catalogue est ce qui rend le modèle « pull » possible** (8 septembre 2026). Le routage se fait sur le **prompt seul**, et un prompt comme « prends la prochaine tâche » ne dit rien de la tâche — elle est dans une carte Trello qu'on n'a pas encore lue. Sans catalogue, l'agent qui reçoit une branche n'a aucun moyen de savoir qu'il en existe onze autres : `renderTrace` part sur stderr, qu'il ne voit pas. On ne tire pas ce dont on ignore l'existence.
+
+Le push devient donc une **avance**, pas un remplacement : le bloc invite à rappeler `get_context` dès que la tâche se précise, et les instructions du serveur MCP disent la même chose — elles disaient jusque-là l'inverse (« sous Claude Code, ne rappelle pas `get_context` »). C'est aussi ce qui aligne cette surface sur `renderAgentsBlock`, qui donne le catalogue depuis toujours : les trois surfaces sont des adaptateurs au-dessus du même moteur, et celle-ci en divergeait. Un **seul rendu de catalogue** est partagé par les deux, pour qu'elles ne redivergent pas.
 
 `renderTrace` produit la ligne de transparence (nombre de branches, lesquelles, routé/fallback/tout). Le hook l'écrit sur stderr, l'outil MCP en commentaire HTML. **Jamais de boîte noire** — c'est un engagement produit, pas un détail de debug.
 

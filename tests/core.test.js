@@ -304,6 +304,36 @@ test('render : racine toujours là, Rules avant Context, non sélectionné exclu
   assert.ok(!out.includes('EXCLU'));
 });
 
+test('render : le catalogue liste ce qui n\'a pas été chargé, sans son contenu', async () => {
+  const dir = await scratch();
+  await writeRoot(dir, 'RACINE');
+  await writeBranch(dir, { path: 'r', type: 'rule', title: 'R', loadWhen: 'x', content: 'REGLE' });
+  await writeBranch(dir, {
+    path: 'z',
+    type: 'context',
+    title: 'Z',
+    loadWhen: 'quand on touche à Z',
+    content: 'CONTENU DE Z',
+  });
+  const tree = await loadTree(dir);
+  const out = renderContext(tree, new Set(['r']));
+
+  // Une branche écartée reste visible en une ligne : titre, type, condition.
+  // Sans ça, on ne peut pas tirer ce dont on ignore l'existence.
+  assert.match(out, /\*\*Z\*\* \(context\) — charger quand : quand on touche à Z/);
+  // Mais surtout pas son contenu : ce serait le gros fichier de consignes.
+  assert.ok(!out.includes('CONTENU DE Z'));
+  // Et l'invitation à tirer, sinon le catalogue n'est qu'une liste.
+  assert.match(out, /get_context/);
+  // Le catalogue passe en dernier : on le lit une fois qu'on sait ce qu'on a reçu.
+  assert.ok(out.indexOf('## Context') < out.indexOf('## Catalogue') || !out.includes('## Context'));
+  assert.ok(out.indexOf('## Rules') < out.indexOf('## Catalogue'));
+
+  // Tout chargé : plus rien à annoncer, pas de section vide.
+  const full = renderContext(tree, new Set(['r', 'z']));
+  assert.ok(!full.includes('## Catalogue'));
+});
+
 test('render : arbre vide → chaîne vide (rien à injecter)', async () => {
   const dir = await scratch();
   const tree = await loadTree(dir);

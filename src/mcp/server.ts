@@ -27,8 +27,12 @@ changé dans l'arbre et pourquoi. Écrire en silence est la seule façon de mal 
 écris dans l'arbre qui te sera réinjecté ensuite, et personne ne peut corriger ce qu'il ne
 voit pas.
 
-Sous Claude Code, l'injection est déjà automatique via un hook : ne rappelle pas \`get_context\`
-si le contexte est déjà présent dans ta conversation.`;
+Sous Claude Code, un hook injecte déjà une première sélection à chaque prompt. Ce n'est qu'une
+**avance** : elle est routée sur le prompt seul, parfois avec un tour de retard, et le bloc
+injecté liste en fin de message les branches qu'il n'a **pas** chargées. Dès que la tâche se
+précise — une carte ou un ticket que tu viens de lire, une trace d'erreur, un fichier que tu
+ouvres —, rappelle \`get_context\` avec ce que tu sais maintenant. C'est le régime normal, pas
+un rattrapage exceptionnel : un prompt de départ ne contient presque jamais la tâche entière.`;
 
 const branchTypeSchema = z.enum(BRANCH_TYPES);
 
@@ -55,7 +59,9 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       description:
         "Renvoie les branches de l'arbre de contexte pertinentes pour une demande donnée, " +
         'assemblées en un bloc prêt à lire. Les branches parentes sont incluses d\'office. ' +
-        "À appeler en début de tâche, avec la demande de l'utilisateur telle quelle.",
+        "À appeler dès que tu sais sur quoi porte la tâche : au début avec la demande telle " +
+        'quelle, puis à nouveau chaque fois qu\'elle se précise — une carte lue, une trace ' +
+        "d'erreur, un fichier ouvert. Rappeler cet outil est le régime normal.",
       inputSchema: {
         query: z.string().describe("La demande de l'utilisateur, en clair."),
       },
