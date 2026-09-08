@@ -19,14 +19,18 @@ export const LABELS: Record<string, string> = {
 };
 
 /**
- * Les branches lues au dernier tour, surlignées là où on regarde déjà : dans
+ * Les branches lues au dernier tour, marquées là où on regarde déjà : dans
  * l'arbre de la barre latérale.
  *
  * C'est un `FileDecorationProvider` et pas une couleur d'icône parce que le
  * `.md` est la vraie chose : la même marque apparaît dans l'explorateur et sur
- * l'onglet du fichier ouvert. On voit ce que l'IA a lu sans ouvrir de vue
- * dédiée — c'est tout ce qu'on demandait à l'ancien badge de barre d'état, mais
- * à l'endroit où l'information a un sens.
+ * l'onglet du fichier ouvert.
+ *
+ * **Un point, et rien d'autre.** Pas de couleur : `FileDecoration.color` teinte
+ * le libellé entier, et une moitié d'arbre en rouge se lit comme une alerte
+ * alors qu'il ne s'est rien passé d'anormal — une lecture est un fait ordinaire.
+ * Ce qui distingue un vrai routage d'un repli est dans le titre de la vue, pas
+ * dans la couleur de chaque ligne.
  */
 export class LoadedDecorations implements vscode.FileDecorationProvider {
   private loaded = new Set<string>();
@@ -44,12 +48,11 @@ export class LoadedDecorations implements vscode.FileDecorationProvider {
   provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
     if (!this.loaded.has(uri.fsPath)) return undefined;
     // Un repli et un routage diffèrent : dans un cas la branche a été choisie
-    // pour ce prompt, dans l'autre elle est là faute de mieux. Même marque,
-    // pas la même couleur.
+    // pour ce prompt, dans l'autre elle est là faute de mieux. Ça se dit dans
+    // l'infobulle, pas en repeignant la ligne.
     const chosen = this.reason === 'routed';
     return {
-      badge: '●',
-      color: new vscode.ThemeColor(chosen ? 'charts.red' : 'descriptionForeground'),
+      badge: '•',
       tooltip: chosen
         ? "contextree : lue par l'IA au dernier tour"
         : `contextree : injectée au dernier tour (${LABELS[this.reason ?? ''] ?? this.reason})`,

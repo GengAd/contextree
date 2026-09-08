@@ -4,9 +4,7 @@
   --line: var(--vscode-editorWidget-border, #3a3d44);
   --muted: var(--vscode-descriptionForeground, #9aa0a6);
   --dot: var(--vscode-editorIndentGuide-background, #33363d);
-  /* Le rouge du chargement. Il n'appartient à aucun type de branche : c'est
-     l'entourage qui dit « celle-ci a été lue », pas la couleur de la carte. */
-  --loaded: var(--vscode-charts-red, #f14c4c);
+  --dot-size: 7px;
 }
 
 * {
@@ -230,10 +228,12 @@ body {
   border-radius: 3px;
 }
 
-/* La pastille « chargé » n'est pas une couleur de type : c'est un contour. */
-#legend i.ring {
-  border: 2px solid var(--loaded);
-  background: transparent;
+/* La pastille « lu » n'est pas un type : c'est la marque, en neutre. */
+#legend i.mark {
+  width: var(--dot-size);
+  height: var(--dot-size);
+  border-radius: 50%;
+  background: var(--muted);
 }
 
 #count {
@@ -261,17 +261,23 @@ body {
   transform: translate(-50%, -50%);
 }
 
-/* Surlignage du routeur : ce qui a été chargé est **entouré**, le reste ne
-   perd rien. Estomper le non-chargé rendait illisible la moitié de l'arbre —
-   or c'est précisément là qu'on va corriger un `load_when`. */
-.node.kept {
-  border-color: var(--loaded);
-  box-shadow: 0 0 0 2px var(--loaded);
+/* Ce qui a été lu au dernier tour : un point, et rien d'autre.
+   Deux marches manquées avant celle-ci — estomper le reste (illisible, or
+   c'est justement là qu'on corrige un `load_when`), puis entourer de rouge
+   (agressif : la moitié d'un arbre en alerte, pour une lecture normale).
+   Un point dans la couleur du type se remarque sans crier, et n'ajoute
+   aucune couleur à la palette. */
+.dot {
+  flex: 0 0 auto;
+  width: var(--dot-size);
+  height: var(--dot-size);
+  border-radius: 50%;
+  background: var(--ribbon);
 }
 
-#edges path.kept {
-  stroke: var(--loaded);
-  stroke-width: 2;
+/* Un repli n'est pas une lecture choisie : le point perd sa couleur de type. */
+.node.fallback .dot {
+  background: var(--muted);
 }
 
 #hud .sep {
@@ -405,18 +411,6 @@ body {
 #excerpt.warn {
   color: var(--vscode-editorWarning-foreground, #fbbf24);
   font-style: normal;
-}
-
-/* Un repli n'est pas un routage : ce qui est entouré n'a pas été choisi pour
-   ce prompt. L'entourage passe au gris — la carte, elle, garde sa couleur de
-   type : elle n'a rien fait de mal. */
-.node.kept.fallback {
-  border-color: var(--muted);
-  box-shadow: 0 0 0 2px var(--muted);
-}
-
-#edges path.kept.fallback {
-  stroke: var(--muted);
 }
 
 /* Trace d'une écriture de l'IA. Le régime est « écriture directe, visibilité

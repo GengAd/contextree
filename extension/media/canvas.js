@@ -306,9 +306,10 @@
   function card(n) {
     const el = document.createElement('div');
     const o = overlay();
+    const lu = Boolean(o) && kept(n.id);
     el.className = `node${n.id === selected ? ' selected' : ''}${
-      o && kept(n.id) ? ' kept' : ''
-    }${o && o.reason === 'fallback' && kept(n.id) ? ' fallback' : ''}`;
+      lu && o.reason === 'fallback' ? ' fallback' : ''
+    }`;
     el.style.left = `${n.x}px`;
     el.style.top = `${n.y}px`;
     el.style.width = `${n.w}px`;
@@ -329,7 +330,17 @@
     const badge = document.createElement('span');
     badge.className = 'badge';
     badge.textContent = n.type;
-    head.append(title, badge);
+    head.append(title);
+    // Le point de lecture, avant le badge de type : c'est la marque la plus
+    // discrète qui se remarque quand même, et elle emprunte la couleur du type
+    // plutôt que d'en ajouter une.
+    if (lu) {
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.title = "lue par l'IA au dernier tour";
+      head.append(dot);
+    }
+    head.append(badge);
 
     const when = document.createElement('div');
     when.className = 'when';
@@ -386,11 +397,6 @@
       for (const c of n.children) {
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('d', edgePath(n, c));
-        // Le fil se colore avec ce qu'il porte : entouré = chargé.
-        if (overlay() && kept(c.id)) {
-          path.classList.add('kept');
-          if (overlay().reason === 'fallback') path.classList.add('fallback');
-        }
         if (c.id === selected || n.id === selected) {
           path.classList.add('lit');
           path.style.setProperty('--ribbon', COLORS[selected === n.id ? n.type : c.type]);
@@ -561,11 +567,11 @@
     chip.append(swatch, document.createTextNode(type));
     legend.append(chip);
   }
-  const loadedChip = document.createElement('span');
-  const ring = document.createElement('i');
-  ring.className = 'ring';
-  loadedChip.append(ring, document.createTextNode('chargé'));
-  legend.append(loadedChip);
+  const readChip = document.createElement('span');
+  const mark = document.createElement('i');
+  mark.className = 'mark';
+  readChip.append(mark, document.createTextNode('lu au dernier tour'));
+  legend.append(readChip);
 
   window.addEventListener('message', e => {
     const msg = e.data;
