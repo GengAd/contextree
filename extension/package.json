@@ -29,6 +29,11 @@
     },
     "commands": [
       {
+        "command": "contextree.wire",
+        "title": "contextree : ajouter à une IA",
+        "icon": "$(plug)"
+      },
+      {
         "command": "contextree.openCanvas",
         "title": "contextree : voir l'arbre (toile)",
         "icon": "$(type-hierarchy)"
@@ -65,14 +70,19 @@
     "menus": {
       "view/title": [
         {
-          "command": "contextree.newBranch",
+          "command": "contextree.wire",
           "when": "view == contextree.tree",
           "group": "navigation@0"
         },
         {
-          "command": "contextree.openCanvas",
+          "command": "contextree.newBranch",
           "when": "view == contextree.tree",
           "group": "navigation@1"
+        },
+        {
+          "command": "contextree.openCanvas",
+          "when": "view == contextree.tree",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [

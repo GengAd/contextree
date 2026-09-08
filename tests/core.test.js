@@ -9,7 +9,7 @@ import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, fi
 import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { route, pickEngine, isCliEngine } from '../dist/core/router.js';
 import { renderContext, renderAgentsBlock } from '../dist/core/render.js';
-import { syncAgentsFile, installCodexMcp } from '../dist/install.js';
+import { syncAgentsFile, installCodexMcp, agentStatus, installAgent } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
 import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites } from '../dist/core/journal.js';
 
@@ -227,6 +227,50 @@ test('codex : la table MCP est ajoutée à la fin, jamais réécrite', async () 
     if (saved === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = saved;
   }
+});
+
+test("install : l'état d'un agent se lit sans rien écrire, et le câblage est idempotent", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-wire-'));
+
+  const before = await agentStatus(projectDir);
+  const cursor = () => before.find(a => a.id === 'cursor');
+  assert.equal(cursor().wired, false);
+  // Regarder n'écrit rien : c'est ce qui permet à un bouton de montrer l'état
+  // plutôt que de tenter et d'échouer en silence.
+  assert.deepEqual(await fs.readdir(projectDir), []);
+
+  const report = await installAgent('cursor', projectDir);
+  assert.equal(report[0].action, 'created');
+  const written = JSON.parse(await fs.readFile(path.join(projectDir, '.cursor', 'mcp.json'), 'utf8'));
+  assert.equal(written.mcpServers.contextree.command, 'npx');
+
+  const after = await agentStatus(projectDir);
+  assert.equal(after.find(a => a.id === 'cursor').wired, true);
+
+  const again = await installAgent('cursor', projectDir);
+  assert.equal(again[0].action, 'unchanged');
+});
+
+test('install : Claude Code est câblé quand le hook ET le serveur MCP y sont', async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-wire-cc-'));
+  const wired = async () => (await agentStatus(projectDir)).find(a => a.id === 'claude-code').wired;
+
+  // Un serveur MCP seul n'est pas un câblage : le hook est la moitié qui rend
+  // l'injection déterministe. L'annoncer comme fait serait mentir.
+  await fs.mkdir(path.join(projectDir, '.claude'), { recursive: true });
+  await fs.writeFile(
+    path.join(projectDir, '.mcp.json'),
+    JSON.stringify({ mcpServers: { contextree: {} } }),
+    'utf8',
+  );
+  assert.equal(await wired(), false);
+
+  await installAgent('claude-code', projectDir);
+  assert.equal(await wired(), true);
+
+  // Ce qui était déjà là n'est pas réécrit.
+  const report = await installAgent('claude-code', projectDir);
+  assert.ok(report.every(r => r.action === 'unchanged'));
 });
 
 test('render : racine toujours là, Rules avant Context, non sélectionné exclu', async () => {

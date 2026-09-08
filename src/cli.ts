@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { promises as fs } from 'node:fs';
 import { spawn } from 'node:child_process';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch } from './core/store.js';
@@ -11,20 +12,13 @@ import { encodePack, extractPack, applyPack } from './core/pack.js';
 import { readSelection, writeSelection } from './core/session.js';
 import { appendTurn } from './core/journal.js';
 import { isBranchType, type BranchType } from './core/types.js';
-import {
-  installHook,
-  installMcp,
-  installCodexMcp,
-  syncAgentsFile,
-  codexDir,
-  type InstallReport,
-} from './install.js';
+import { AGENTS, agentStatus, installAgent, type InstallReport } from './install.js';
 import { resolvePack, runStdio } from './mcp/server.js';
 
 const HELP = `contextree — un arbre de contexte partageable, routé, injecté à chaque appel IA.
 
   contextree init                    crée .contextree/ avec un arbre de démarrage
-  contextree install [--agent a]     câble l'injection (claude, codex, all)
+  contextree install [--agent a]     câble l'injection (--status pour voir l'état)
   contextree list                    affiche l'arbre
   contextree add                     crée une branche (--title --type --load-when [--parent])
   contextree rm <chemin>             supprime une branche et ses enfants
@@ -144,49 +138,76 @@ async function cmdInit(force: boolean): Promise<number> {
 /**
  * Câble l'injection pour les agents présents.
  *
- * Claude Code est toujours tenté : les deux fichiers sont dans le projet, ils
- * ne gênent personne. Les agents dont la configuration est **hors du projet**
- * (Codex, dans `~/.codex/`) ne sont câblés que s'ils sont détectés, ou nommés
- * par `--agent` : écrire dans le home de quelqu'un qui n'utilise pas l'outil
+ * Par défaut : tout ce qui est **détecté**, plus Claude Code, dont les deux
+ * fichiers sont dans le projet et ne gênent personne. Les agents dont la
+ * configuration vit dans le home ne sont câblés que s'ils sont là, ou nommés
+ * par `--agent` : écrire dans le `~` de quelqu'un qui n'utilise pas l'outil
  * serait une surprise, pas un service.
+ *
+ * `--status` ne fait que regarder : c'est la question qu'on se pose quand rien
+ * ne s'injecte.
  */
 async function cmdInstall(flags: Flags): Promise<number> {
-  const report: InstallReport = [];
   const asked = str(flags.agent);
-  const only = flags.mcp || flags.hook;
+  const statuses = await agentStatus(process.cwd());
 
-  const wants = (agent: string): boolean =>
-    asked ? asked === agent || asked === 'all' : true;
-
-  if (wants('claude')) {
-    if (!only || flags.mcp) await installMcp(process.cwd(), report);
-    if (!only || flags.hook) await installHook(process.cwd(), report);
+  if (flags.status) {
+    for (const a of statuses) {
+      const state = a.wired ? 'câblé' : a.detected ? 'à câbler' : 'non détecté';
+      process.stdout.write(`${state.padEnd(12)} ${a.label}\n`);
+      for (const f of a.files) process.stdout.write(`             ${shorten(f)}\n`);
+    }
+    process.stdout.write(`\nRoutage : ${describeEngine()}\n`);
+    return 0;
   }
 
-  // Codex n'a pas d'équivalent du hook `UserPromptSubmit` : il lui reste le
-  // serveur MCP, et `AGENTS.md` pour lui dire de l'appeler.
-  const hasCodex = Boolean(engineBin('codex')) || (await exists(codexDir()));
-  if (wants('codex') && (hasCodex || asked)) {
-    await installCodexMcp(report);
-    const { tree } = await open();
-    await syncAgentsFile(process.cwd(), renderAgentsBlock(tree), report);
+  if (asked && asked !== 'all' && !AGENTS.some(a => a.id === asked)) {
+    process.stderr.write(
+      `Agent inconnu : ${asked} (${AGENTS.map(a => a.id).join(', ')}, all)\n`,
+    );
+    return 1;
   }
 
-  for (const r of report) {
-    const shown = r.file.startsWith(process.cwd()) ? path.relative(process.cwd(), r.file) : r.file;
-    process.stdout.write(`${r.action.padEnd(9)} ${shown}\n`);
+  const targets = statuses.filter(a =>
+    asked ? asked === 'all' || asked === a.id : a.detected || a.id === 'claude-code',
+  );
+
+  // Le bloc `AGENTS.md` n'est calculé que si un agent en veut un : sans arbre,
+  // `install` doit rester possible pour câbler d'abord et créer ensuite.
+  let block: string | undefined;
+  if (targets.some(a => a.id === 'codex')) {
+    const dir = await findTreeDir();
+    if (dir) block = renderAgentsBlock(await loadTree(dir));
   }
 
-  if (!asked && !hasCodex) {
-    process.stdout.write('\nCodex non détecté — `contextree install --agent codex` pour le câbler quand même.\n');
+  const report: InstallReport = [];
+  for (const a of targets) report.push(...(await installAgent(a.id, process.cwd(), block)));
+
+  for (const r of report) process.stdout.write(`${r.action.padEnd(9)} ${shorten(r.file)}\n`);
+
+  // Seulement quand on n'a rien demandé de précis : sur `--agent cursor`, les
+  // autres ne sont pas « non détectés », ils ne sont pas le sujet.
+  const skipped = asked ? [] : statuses.filter(s => !targets.includes(s));
+  if (skipped.length) {
+    process.stdout.write(
+      `\nNon câblé (non détecté) : ${skipped.map(s => s.id).join(', ')}` +
+        ` — \`--agent <id>\` pour forcer.\n`,
+    );
   }
   process.stdout.write(
     "\nRelance ton agent pour prendre en compte le hook et le serveur MCP.\n" +
-      "Aucun des deux (Claude sur le web, ChatGPT…) : `contextree render --copy`,\n" +
+      "Aucune de ces surfaces (Claude sur le web, ChatGPT…) : `contextree render --copy`,\n" +
       "ou `contextree route \"<ta demande>\" --copy`, et tu colles.\n" +
       `Routage : ${describeEngine()}\n`,
   );
   return 0;
+}
+
+/** Un chemin lisible : relatif au projet quand il en vient, `~` sinon. */
+function shorten(file: string): string {
+  if (file.startsWith(process.cwd())) return path.relative(process.cwd(), file);
+  const home = os.homedir();
+  return file.startsWith(home) ? `~${file.slice(home.length)}` : file;
 }
 
 async function cmdList(): Promise<number> {

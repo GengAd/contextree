@@ -52,12 +52,15 @@ Tous les agents n'ont pas de hook. Par ordre de qualité — c'est l'ordre dans 
 
 Les trois lisent le même arbre et le même routeur.
 
+Cinq agents sont câblables : **Claude Code**, **Cursor**, **Codex**, **Windsurf**, **Claude Desktop**.
+
 ```bash
-npx @gengad/contextree install                 # tout ce qui est détecté
-npx @gengad/contextree install --agent codex   # MCP + AGENTS.md, même non détecté
+npx @gengad/contextree install            # tout ce qui est détecté
+npx @gengad/contextree install --status   # câblé / à câbler / non détecté, sans rien écrire
+npx @gengad/contextree install --agent cursor
 ```
 
-Ce qui se configure hors du projet (Codex, dans `~/.codex/`) n'est câblé que si l'agent est détecté, ou nommé explicitement.
+Ce qui se configure hors du projet (Codex, Windsurf, Claude Desktop) n'est câblé que si l'agent est détecté, ou nommé explicitement. Depuis l'extension, le même geste est un bouton — **contextree : ajouter à une IA** — qui montre l'état de chaque agent avant d'écrire, et dit ensuite quels fichiers ont bougé.
 
 **Un agent sans aucune surface** — Claude sur le web, ChatGPT, un chat quelconque ? On ne peut rien y installer, mais on peut coller :
 

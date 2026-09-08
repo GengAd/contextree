@@ -153,6 +153,26 @@ Un jeton d'export (`export --token`) **n'est pas** une réponse ici : c'est du b
 
 Ce qui est câblé hors du projet (le home de l'utilisateur) ne l'est **que si l'agent est détecté**, ou nommé par `--agent` : écrire dans le `~` de quelqu'un qui n'utilise pas l'outil serait une surprise, pas un service.
 
+### Le registre des agents (`AGENTS`)
+
+Cinq agents, une table. Chacun répond à trois questions **sans rien modifier** — est-il là (`marks`), est-il déjà câblé (`wired`), qu'est-ce qu'on écrirait (`files`) — plus une quatrième qui écrit (`install`).
+
+| Agent | Où | Surface |
+|---|---|---|
+| Claude Code | `.claude/settings.json` + `.mcp.json` | hook + MCP |
+| Cursor | `.cursor/mcp.json` (le projet, pas le home) | MCP |
+| Codex | `~/.codex/config.toml` + `AGENTS.md` | MCP + consignes |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | MCP |
+| Claude Desktop | `~/Library/Application Support/Claude/…` (selon l'OS) | MCP |
+
+Quatre des cinq partagent la forme `{ "mcpServers": … }` : une seule fonction (`installMcpJson`) et une table de chemins, plutôt qu'un adaptateur par agent qui divergerait au premier correctif.
+
+**Séparer « regarder » de « écrire » est le point de toute cette table.** `agentStatus()` rend l'état sans toucher au disque, ce qui permet à `contextree install --status` et au bouton de l'extension de **montrer** « câblé / à câbler / non détecté » au lieu de tenter l'écriture pour découvrir le résultat.
+
+**Câblé = tous ses fichiers le sont.** Un serveur MCP posé sans le hook est un câblage à moitié fait : l'annoncer comme terminé serait mentir sur la seule surface déterministe.
+
+La détection d'un hook déjà posé cherche `contextree` dans la commande — ce que `install` écrit toujours (`npx -y @gengad/contextree hook`). Un câblage écrit à la main avec un chemin local (`node dist/cli.js hook`, comme dans ce dépôt) n'est donc pas reconnu ; c'est le cas du développeur du projet, pas celui d'un utilisateur.
+
 ## MCP (`src/mcp/server.ts`)
 
 Transport stdio. Sept outils : `get_context`, `list_branches`, `read_branch`, `upsert_branch`, `delete_branch`, `export_pack`, `import_pack`.
