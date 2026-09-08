@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch } from './core/store.js';
 import { allBranches, formatTree } from './core/tree.js';
 import { renderContext, renderTrace } from './core/render.js';
-import { route, pickEngine, claudeBin, withoutRouting } from './core/router.js';
+import { route, pickEngine, isCliEngine, engineBin, withoutRouting } from './core/router.js';
 import { encodePack, extractPack, applyPack } from './core/pack.js';
 import { readSelection, writeSelection } from './core/session.js';
 import { appendTurn } from './core/journal.js';
@@ -29,11 +29,13 @@ const HELP = `contextree — un arbre de contexte partageable, routé, injecté 
   contextree mcp                     lance le serveur MCP (stdio)
   contextree hook                    point d'entrée du hook UserPromptSubmit
 
-Routage : aucune clé requise si le CLI \`claude\` est installé — c'est ton abonnement
-          qui route. Une clé (ANTHROPIC_API_KEY) est utilisée si elle est là.
+Routage : aucune clé requise si un CLI d'agent (\`claude\`, \`codex\`, \`gemini\`) est
+          installé — c'est ton abonnement qui route. Une clé (ANTHROPIC_API_KEY,
+          OPENAI_API_KEY) est utilisée si elle est là.
 
-Variables : CONTEXTREE_ROUTER (sdk | cli | off), CONTEXTREE_ROUTER_MODEL,
-            CONTEXTREE_ROUTER_TIMEOUT_MS, CONTEXTREE_CLAUDE_BIN,
+Variables : CONTEXTREE_ROUTER (auto | anthropic | openai | claude | codex | gemini | off),
+            CONTEXTREE_ROUTER_MODEL, CONTEXTREE_ROUTER_TIMEOUT_MS,
+            OPENAI_API_KEY / OPENAI_BASE_URL, CONTEXTREE_CLAUDE_BIN,
             CONTEXTREE_STATE_DIR (où vit le journal des tours)
 `;
 
@@ -307,7 +309,7 @@ async function cmdHook(): Promise<number> {
     // derrière — il servira au tour suivant. `CONTEXTREE_ROUTER_BLOCKING=1`
     // rend la main à l'attente si on préfère payer la latence.
     const deferred =
-      pickEngine() === 'cli' && process.env['CONTEXTREE_ROUTER_BLOCKING'] !== '1';
+      isCliEngine(pickEngine()) && process.env['CONTEXTREE_ROUTER_BLOCKING'] !== '1';
 
     const { selected, reason, error } = deferred
       ? { selected: withoutRouting(tree, previous), reason: 'deferred' as const, error: undefined }
@@ -392,13 +394,16 @@ async function cmdRouteBackground(flags: Flags): Promise<number> {
 /** D'où vient le routage sur cette machine — dit une fois, en clair : c'est la
  *  question qu'on se pose quand rien ne se charge. */
 function describeEngine(): string {
-  switch (pickEngine()) {
-    case 'sdk':
+  const engine = pickEngine();
+  switch (engine) {
+    case 'anthropic':
       return 'clé API Anthropic';
-    case 'cli':
-      return `CLI \`claude\` (ton abonnement) — ${claudeBin()}`;
+    case 'openai':
+      return `endpoint compatible OpenAI — ${process.env['OPENAI_BASE_URL'] ?? 'api.openai.com'}`;
+    case 'none':
+      return 'aucun moteur — arbre entier injecté (installe un CLI `claude`/`codex`/`gemini`, ou pose ANTHROPIC_API_KEY / OPENAI_API_KEY)';
     default:
-      return 'aucun moteur — arbre entier injecté (installe le CLI `claude` ou pose ANTHROPIC_API_KEY)';
+      return `CLI \`${engine}\` (ton abonnement) — ${engineBin(engine) ?? 'introuvable'}`;
   }
 }
 

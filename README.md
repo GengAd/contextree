@@ -36,7 +36,7 @@ npx @gengad/contextree init      # crée .contextree/ avec un arbre de départ
 npx @gengad/contextree install   # câble le serveur MCP + le hook Claude Code
 ```
 
-Puis relance Claude Code. **Aucune clé API n'est nécessaire** : si le binaire `claude` est installé, c'est ton abonnement qui route. Une clé (`ANTHROPIC_API_KEY`) est utilisée si elle est là — c'est juste plus rapide.
+Puis relance Claude Code. **Aucune clé API n'est nécessaire** : si un CLI d'agent (`claude`, `codex`, `gemini`) est installé, c'est ton abonnement qui route. Une clé (`ANTHROPIC_API_KEY`, ou `OPENAI_API_KEY` avec au besoin `OPENAI_BASE_URL` pour Groq, OpenRouter, Ollama, LM Studio) est utilisée si elle est là — c'est juste plus rapide.
 
 Le routage par le CLI coûte entre 5 et 60 s : le hook ne l'attend donc jamais. Le tour part avec la sélection du tour précédent et le routage tourne derrière, pour le tour suivant — le hook rend la main en ~150 ms. `contextree route "<prompt>"` montre à tout moment ce que le routeur retiendrait.
 

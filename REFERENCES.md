@@ -64,26 +64,41 @@ Ce que ça invalide : le cache de session et le journal des tours référencent 
 
 Un appel IA léger reçoit le catalogue des branches — index, type, titre, `load_when` — plus le message de l'utilisateur, et renvoie les indices retenus. Les indices 0-based évitent au modèle de recopier des chemins, source classique d'échec.
 
-### Trois moteurs, dans cet ordre (`pickEngine`)
+### Les moteurs, dans cet ordre (`pickEngine`)
+
+Le routeur ne demande qu'un **tableau d'entiers** : n'importe quel modèle correct sait le rendre, donc rien ici n'est propre à Claude. Deux familles, et un ordre — une clé explicite (le chemin le plus court), sinon un CLI d'agent déjà authentifié sur la machine.
 
 | Moteur | Quand | Latence mesurée |
 |---|---|---|
-| `sdk` | une clé est là (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, ou passée en argument) | ~1 s, budget 2,5 s |
-| `cli` | sinon, si le binaire `claude` est trouvé — **c'est l'abonnement de l'utilisateur** | 5 à 60 s (voir plus bas) |
-| `none` | ni l'un ni l'autre : l'arbre entier est injecté, et `error` le dit | 0 |
+| `anthropic` | une clé est là (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, ou passée en argument) | ~1 s, budget 2,5 s |
+| `openai` | sinon, si `OPENAI_API_KEY` est posée — endpoint compatible OpenAI | ~1 s, budget 2,5 s |
+| `claude`, `codex`, `gemini` | sinon, le premier binaire trouvé — **c'est l'abonnement de l'utilisateur** | 5 à 60 s (voir plus bas) |
+| `none` | rien de tout ça : l'arbre entier est injecté, et `error` le dit | 0 |
 
-**Personne ne devrait avoir à sortir une clé API** pour router son propre arbre alors que sa machine sait déjà parler au modèle. Le moteur `cli` lance `claude -p` avec le strict nécessaire : `--tools ''`, `--strict-mcp-config --mcp-config '{"mcpServers":{}}'`, `--setting-sources ''` (donc **aucun hook** — sinon le routage relancerait le hook qui l'a appelé), `--no-session-persistence`, `--disable-slash-commands`. Le prompt passe par stdin. `CONTEXTREE_ROUTING=1` dans l'environnement du fils est le second garde-fou anti-récursion : `cmdHook` sort immédiatement s'il le voit.
+**Personne ne devrait avoir à sortir une clé API** pour router son propre arbre alors que sa machine sait déjà parler à un modèle. Les moteurs CLI partagent la même mécanique (`CliSpec`) : prompt sur stdin — un catalogue d'arbre n'a rien à faire dans un `argv` — et process réduit au strict nécessaire.
+
+- `claude -p` : `--tools ''`, `--strict-mcp-config --mcp-config '{"mcpServers":{}}'`, `--setting-sources ''` (donc **aucun hook** — sinon le routage relancerait le hook qui l'a appelé), `--no-session-persistence`, `--disable-slash-commands`, consigne système par `--system-prompt`.
+- `codex exec - --sandbox read-only --skip-git-repo-check` : un routeur n'écrit rien, et tourne parfois hors d'un dépôt.
+- `gemini` sans TTY : lit son prompt sur stdin et rend la main.
+
+`CONTEXTREE_ROUTING=1` dans l'environnement du fils est le second garde-fou anti-récursion : `cmdHook` sort immédiatement s'il le voit.
+
+**Le modèle n'est deviné pour personne.** `claude` route sur `haiku` (mesuré), les autres CLI partent sur le défaut de l'utilisateur sauf si `CONTEXTREE_ROUTER_MODEL` tranche : inventer un identifiant de modèle pour un CLI qu'on ne maîtrise pas, c'est un moteur qui échoue au premier appel.
+
+Le moteur `openai` est **un `fetch`, pas un SDK** : la quatrième dépendance du projet ne se justifie pas pour trois lignes de POST, et le même dialecte couvre OpenAI, Groq, OpenRouter, Ollama et LM Studio (`OPENAI_BASE_URL`). Le corps est volontairement minimal — modèle et messages, rien d'autre : `temperature`, `max_tokens` et `response_format` sont refusés par une partie de ces endpoints (modèles de raisonnement, serveurs locaux), et c'est le timeout qui borne l'appel.
+
+**Un moteur forcé n'est pas vérifié.** `CONTEXTREE_ROUTER=codex` sur une machine sans `codex` échoue et tombe dans le fallback — plutôt qu'un repli silencieux sur un moteur que l'utilisateur n'a pas demandé.
 
 Deux détails payés par la mesure :
 
-- **Pas de `--json-schema`** sur le chemin CLI : la sortie structurée y coûte un tour de plus et double la latence. On demande le tableau en toutes lettres et on garde un parseur tolérant — mais **strict sur le contenu** : un tableau qui n'est pas fait d'entiers n'est pas une réponse de routeur, c'est du texte avec des crochets, et on préfère le repli à une sélection vide obtenue en filtrant des chaînes.
+- **Pas de `--json-schema`** sur le chemin CLI : la sortie structurée y coûte un tour de plus et double la latence. On demande le tableau en toutes lettres et on garde un parseur tolérant — mais **strict sur le contenu** : un tableau qui n'est pas fait d'entiers n'est pas une réponse de routeur, c'est du texte avec des crochets, et on préfère le repli à une sélection vide obtenue en filtrant des chaînes. Comme un CLI d'agent préfixe volontiers sa réponse (bannière, horodatage, session), c'est le **dernier** tableau d'entiers de la sortie qui compte : la réponse est à la fin, le bruit est devant.
 - **L'environnement est nettoyé** (`cleanEnv`) de tout `CLAUDE*` sauf `CLAUDE_CONFIG_DIR` : le hook tourne *dans* Claude Code, et le fils héritait sinon de `CLAUDE_EFFORT` — un routeur qui n'a rien à réfléchir se mettait à réfléchir. (`CLAUDE_CONFIG_DIR` reste : les identifiants de l'abonnement sont là.)
 
 ### Le hook ne l'attend pas : routage différé
 
-Le moteur `cli` est trop lent pour être mis devant un prompt. `cmdHook` ne l'attend donc **jamais** : le tour part avec la sélection du tour précédent (l'arbre entier au premier tour, `reason: 'deferred'`), et le routage de *ce* prompt part en tâche de fond — `contextree route-bg`, détaché, sans stdio, qui survit à la sortie du hook et n'écrit le cache de session que s'il a vraiment routé. Le tour suivant en profite. Mesuré : **hook à ~150 ms**, routage utile dès le deuxième prompt.
+Un moteur CLI est trop lent pour être mis devant un prompt. `cmdHook` ne l'attend donc **jamais** : le tour part avec la sélection du tour précédent (l'arbre entier au premier tour, `reason: 'deferred'`), et le routage de *ce* prompt part en tâche de fond — `contextree route-bg`, détaché, sans stdio, qui survit à la sortie du hook et n'écrit le cache de session que s'il a vraiment routé. Le tour suivant en profite. Mesuré : **hook à ~150 ms**, routage utile dès le deuxième prompt.
 
-C'est le prix assumé : le routage est décalé d'un tour. Dans une conversation, deux prompts consécutifs portent presque toujours sur la même tâche — et un tour de retard coûte infiniment moins cher que 12 s d'attente avant chaque prompt. `CONTEXTREE_ROUTER_BLOCKING=1` rend l'attente à qui la préfère ; avec une clé API (moteur `sdk`, ~1 s) le hook route en direct, sans différé.
+C'est le prix assumé : le routage est décalé d'un tour. Dans une conversation, deux prompts consécutifs portent presque toujours sur la même tâche — et un tour de retard coûte infiniment moins cher que 12 s d'attente avant chaque prompt. `CONTEXTREE_ROUTER_BLOCKING=1` rend l'attente à qui la préfère ; avec une clé API (moteur `anthropic` ou `openai`, ~1 s) le hook route en direct, sans différé.
 
 ### Les autres points de conception
 
@@ -92,9 +107,9 @@ C'est le prix assumé : le routage est décalé d'un tour. Dans une conversation
 - **Fallback jamais vide, et jamais typé** (`withoutRouting`) : la sélection précédente (sticky, cache de session), sinon l'arbre entier. Aucun type n'est privilégié — un `identity` n'est pas plus « garanti » qu'un `reference`, c'est le `load_when` qui décide, ou personne. (Avant le 8 septembre 2026, le filet était `identity` + `rule` : une règle invisible qui décidait à la place du `load_when`, et qui faisait mentir la vue.)
 - **Court-circuit ≤ 3 branches** : en dessous, l'aller-retour de routage coûte plus que d'injecter tout l'arbre.
 
-Variables : `CONTEXTREE_ROUTER` (`sdk` | `cli` | `off`), `CONTEXTREE_ROUTER_MODEL` (défaut `claude-opus-5` en SDK, `haiku` en CLI), `CONTEXTREE_ROUTER_TIMEOUT_MS` (défaut `2500` en SDK, `20000` en CLI), `CONTEXTREE_ROUTER_BLOCKING`, `CONTEXTREE_CLAUDE_BIN`.
+Variables : `CONTEXTREE_ROUTER` (`auto` | `anthropic` | `openai` | `claude` | `codex` | `gemini` | `off` ; `sdk` et `cli` restent compris), `CONTEXTREE_ROUTER_MODEL` (défaut `claude-opus-5` sur clé Anthropic, `gpt-4o-mini` sur endpoint OpenAI, `haiku` sur le CLI `claude`, celui de l'utilisateur ailleurs), `CONTEXTREE_ROUTER_TIMEOUT_MS` (défaut `2500` sur API, `20000` en CLI), `CONTEXTREE_ROUTER_BLOCKING`, `OPENAI_API_KEY` / `OPENAI_BASE_URL`, `CONTEXTREE_CLAUDE_BIN`.
 
-> **Choix de modèle à trancher.** Le défaut SDK est `claude-opus-5`. Pour un routeur appelé à chaque prompt, un modèle plus petit (`claude-haiku-4-5`, `claude-sonnet-5`) diviserait le coût et la latence — la tâche est une classification sur un catalogue court. À arbitrer en mesurant la qualité de sélection sur de vrais prompts avant de changer le défaut. (Le moteur CLI, lui, est déjà sur `haiku`.)
+> **Choix de modèle à trancher.** Le défaut sur clé Anthropic est `claude-opus-5`. Pour un routeur appelé à chaque prompt, un modèle plus petit (`claude-haiku-4-5`, `claude-sonnet-5`) diviserait le coût et la latence — la tâche est une classification sur un catalogue court. À arbitrer en mesurant la qualité de sélection sur de vrais prompts avant de changer le défaut. (Le moteur CLI, lui, est déjà sur `haiku`.)
 
 ## Injection (`src/core/render.ts`)
 

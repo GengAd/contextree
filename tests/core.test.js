@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
 import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
-import { route, pickEngine } from '../dist/core/router.js';
+import { route, pickEngine, isCliEngine } from '../dist/core/router.js';
 import { renderContext } from '../dist/core/render.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
 import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites } from '../dist/core/journal.js';
@@ -112,6 +112,49 @@ test("routeur : sans moteur, tout l'arbre — et aucun type privilégié", async
   } finally {
     if (previous === undefined) delete process.env.CONTEXTREE_ROUTER;
     else process.env.CONTEXTREE_ROUTER = previous;
+  }
+});
+
+test('routeur : le moteur forcé est respecté, anciens noms compris', () => {
+  const saved = { ...process.env };
+  const only = keys => {
+    for (const k of ['CONTEXTREE_ROUTER', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY']) {
+      delete process.env[k];
+    }
+    Object.assign(process.env, keys);
+  };
+  try {
+    // Un moteur forcé n'est pas vérifié : s'il manque, c'est le fallback qui
+    // rattrape — jamais un repli silencieux sur un moteur non demandé.
+    only({ CONTEXTREE_ROUTER: 'openai' });
+    assert.equal(pickEngine(), 'openai');
+    only({ CONTEXTREE_ROUTER: 'codex' });
+    assert.equal(pickEngine(), 'codex');
+    only({ CONTEXTREE_ROUTER: 'gemini' });
+    assert.equal(pickEngine(), 'gemini');
+    // Les noms d'avant l'ouverture aux autres IA restent compris.
+    only({ CONTEXTREE_ROUTER: 'sdk' });
+    assert.equal(pickEngine(), 'anthropic');
+    only({ CONTEXTREE_ROUTER: 'cli' });
+    assert.equal(pickEngine(), 'claude');
+
+    // Sans rien de forcé : une clé gagne, Anthropic avant OpenAI.
+    only({ OPENAI_API_KEY: 'x' });
+    assert.equal(pickEngine(), 'openai');
+    only({ OPENAI_API_KEY: 'x', ANTHROPIC_API_KEY: 'y' });
+    assert.equal(pickEngine(), 'anthropic');
+    // Une clé passée en argument gagne aussi.
+    only({});
+    assert.equal(pickEngine('z'), 'anthropic');
+
+    // Seuls les moteurs CLI sont lents : c'est ce qui décide du différé.
+    assert.ok(isCliEngine('claude') && isCliEngine('codex') && isCliEngine('gemini'));
+    assert.ok(!isCliEngine('anthropic') && !isCliEngine('openai') && !isCliEngine('none'));
+  } finally {
+    for (const k of ['CONTEXTREE_ROUTER', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY']) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
   }
 });
 
