@@ -64,18 +64,37 @@ Ce que ça invalide : le cache de session et le journal des tours référencent 
 
 Un appel IA léger reçoit le catalogue des branches — index, type, titre, `load_when` — plus le message de l'utilisateur, et renvoie les indices retenus. Les indices 0-based évitent au modèle de recopier des chemins, source classique d'échec.
 
-Points de conception, chacun payé par une leçon :
+### Trois moteurs, dans cet ordre (`pickEngine`)
 
-- **Sortie structurée** (`output_config.format` + JSON Schema) : le routeur ne peut pas renvoyer autre chose qu'un tableau d'entiers. Le parseur reste tolérant (tableau nu, JSON encadré de texte) au cas où un modèle ou un proxy n'appliquerait pas le schéma.
+| Moteur | Quand | Latence mesurée |
+|---|---|---|
+| `sdk` | une clé est là (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, ou passée en argument) | ~1 s, budget 2,5 s |
+| `cli` | sinon, si le binaire `claude` est trouvé — **c'est l'abonnement de l'utilisateur** | 5 à 60 s (voir plus bas) |
+| `none` | ni l'un ni l'autre : l'arbre entier est injecté, et `error` le dit | 0 |
+
+**Personne ne devrait avoir à sortir une clé API** pour router son propre arbre alors que sa machine sait déjà parler au modèle. Le moteur `cli` lance `claude -p` avec le strict nécessaire : `--tools ''`, `--strict-mcp-config --mcp-config '{"mcpServers":{}}'`, `--setting-sources ''` (donc **aucun hook** — sinon le routage relancerait le hook qui l'a appelé), `--no-session-persistence`, `--disable-slash-commands`. Le prompt passe par stdin. `CONTEXTREE_ROUTING=1` dans l'environnement du fils est le second garde-fou anti-récursion : `cmdHook` sort immédiatement s'il le voit.
+
+Deux détails payés par la mesure :
+
+- **Pas de `--json-schema`** sur le chemin CLI : la sortie structurée y coûte un tour de plus et double la latence. On demande le tableau en toutes lettres et on garde un parseur tolérant — mais **strict sur le contenu** : un tableau qui n'est pas fait d'entiers n'est pas une réponse de routeur, c'est du texte avec des crochets, et on préfère le repli à une sélection vide obtenue en filtrant des chaînes.
+- **L'environnement est nettoyé** (`cleanEnv`) de tout `CLAUDE*` sauf `CLAUDE_CONFIG_DIR` : le hook tourne *dans* Claude Code, et le fils héritait sinon de `CLAUDE_EFFORT` — un routeur qui n'a rien à réfléchir se mettait à réfléchir. (`CLAUDE_CONFIG_DIR` reste : les identifiants de l'abonnement sont là.)
+
+### Le hook ne l'attend pas : routage différé
+
+Le moteur `cli` est trop lent pour être mis devant un prompt. `cmdHook` ne l'attend donc **jamais** : le tour part avec la sélection du tour précédent (l'arbre entier au premier tour, `reason: 'deferred'`), et le routage de *ce* prompt part en tâche de fond — `contextree route-bg`, détaché, sans stdio, qui survit à la sortie du hook et n'écrit le cache de session que s'il a vraiment routé. Le tour suivant en profite. Mesuré : **hook à ~150 ms**, routage utile dès le deuxième prompt.
+
+C'est le prix assumé : le routage est décalé d'un tour. Dans une conversation, deux prompts consécutifs portent presque toujours sur la même tâche — et un tour de retard coûte infiniment moins cher que 12 s d'attente avant chaque prompt. `CONTEXTREE_ROUTER_BLOCKING=1` rend l'attente à qui la préfère ; avec une clé API (moteur `sdk`, ~1 s) le hook route en direct, sans différé.
+
+### Les autres points de conception
+
+- **Sortie structurée côté SDK** (`output_config.format` + JSON Schema) : là, elle est gratuite.
 - **Pas de thinking, `effort: low`** : le routeur a un budget latence, pas un budget réflexion. Les deux pièges connus du mode thinking-off ne s'appliquent pas ici — aucun outil déclaré, et la sortie est contrainte par un schéma.
-- **Timeout 2,5 s, `maxRetries: 0`** : au-delà, on tombe en fallback. L'appel principal ne doit jamais attendre après le routeur.
-- **Fallback jamais vide** : sélection précédente (sticky, cache de session) + `identity` + `rule`, ancêtres inclus. Un échec transitoire ne doit pas retirer d'un coup le contexte que le tour d'avant avait.
+- **Fallback jamais vide, et jamais typé** (`withoutRouting`) : la sélection précédente (sticky, cache de session), sinon l'arbre entier. Aucun type n'est privilégié — un `identity` n'est pas plus « garanti » qu'un `reference`, c'est le `load_when` qui décide, ou personne. (Avant le 8 septembre 2026, le filet était `identity` + `rule` : une règle invisible qui décidait à la place du `load_when`, et qui faisait mentir la vue.)
 - **Court-circuit ≤ 3 branches** : en dessous, l'aller-retour de routage coûte plus que d'injecter tout l'arbre.
-- **Pas de garde sur `ANTHROPIC_API_KEY`** : le SDK résout aussi `ANTHROPIC_AUTH_TOKEN` et les profils `ant auth login`. Une absence d'identifiants remonte comme n'importe quelle autre erreur, et tombe dans le même fallback.
 
-Variables : `CONTEXTREE_ROUTER_MODEL` (défaut `claude-opus-5`), `CONTEXTREE_ROUTER_TIMEOUT_MS` (défaut `2500`).
+Variables : `CONTEXTREE_ROUTER` (`sdk` | `cli` | `off`), `CONTEXTREE_ROUTER_MODEL` (défaut `claude-opus-5` en SDK, `haiku` en CLI), `CONTEXTREE_ROUTER_TIMEOUT_MS` (défaut `2500` en SDK, `20000` en CLI), `CONTEXTREE_ROUTER_BLOCKING`, `CONTEXTREE_CLAUDE_BIN`.
 
-> **Choix de modèle à trancher.** Le défaut est `claude-opus-5`. Pour un routeur appelé à chaque prompt, un modèle plus petit (`claude-haiku-4-5`, `claude-sonnet-5`) diviserait le coût et la latence — la tâche est une classification sur un catalogue court. À arbitrer en mesurant la qualité de sélection sur de vrais prompts avant de changer le défaut.
+> **Choix de modèle à trancher.** Le défaut SDK est `claude-opus-5`. Pour un routeur appelé à chaque prompt, un modèle plus petit (`claude-haiku-4-5`, `claude-sonnet-5`) diviserait le coût et la latence — la tâche est une classification sur un catalogue court. À arbitrer en mesurant la qualité de sélection sur de vrais prompts avant de changer le défaut. (Le moteur CLI, lui, est déjà sur `haiku`.)
 
 ## Injection (`src/core/render.ts`)
 
@@ -121,7 +140,7 @@ Un `ContextPack` est un objet plat autonome (`v: 1`, `rootContent`, `branches[]`
 
 Ce qui a été chargé, tour après tour — la donnée que `renderTrace` envoyait sur `stderr`, gardée pour que la vue puisse montrer ce qui a **réellement** servi.
 
-Par tour : horodatage, extrait du prompt (200 caractères, mis à plat), branches retenues, `reason` (`routed` / `all` / `fallback` — c'est lui l'indicateur de repli, pas un booléen en double), `source` (`hook` ou `mcp`) et l'erreur du routeur s'il y en a eu une.
+Par tour : horodatage, extrait du prompt (200 caractères, mis à plat), branches retenues, `reason` (`routed` / `all` / `fallback` / `deferred` — c'est lui l'indicateur de repli, pas un booléen en double), `source` (`hook` ou `mcp`) et l'erreur du routeur s'il y en a eu une.
 
 - **Séparé du cache sticky.** `session.ts` a un contrat dont dépend le fallback du tour suivant : un journal corrompu ne doit jamais pouvoir abîmer le routage.
 - **Clé par dossier d'arbre, pas par session.** Un arbre, un journal, toutes sessions confondues — la vue ne connaît pas le `session_id` et n'a pas à deviner quel fichier lire.
@@ -129,14 +148,14 @@ Par tour : horodatage, extrait du prompt (200 caractères, mis à plat), branche
 - **50 derniers tours**, écriture par fichier temporaire renommé — un lecteur ne tombe jamais sur un JSON à moitié écrit.
 - **`appendTurn` ne rejette jamais.** Même invariant que le hook : écrire le journal ne peut pas bloquer un prompt.
 
-Côté vue (`extension/src/statusBar.ts`), le journal alimente deux choses, à partir de la même lecture — elles ne peuvent donc pas se contredire :
+Côté vue (`extension/src/turn.ts`), le journal alimente deux choses, à partir de la même lecture — elles ne peuvent donc pas se contredire :
 
-- **la barre d'état** — `contextree · 4/9 branches`, clic pour ouvrir la toile. Une extension ne peut rien afficher dans le fil de conversation de Cursor ou de Claude Code : c'est le seul endroit à la fois permanent et jamais dans le chemin. Un repli passe l'icône en `$(warning)` et le fond en `statusBarItem.warningBackground` — un repli doit se voir, pas se lire ;
-- **la toile** — les branches du dernier tour en `●`, les autres estompées, l'extrait du prompt dans le bandeau. En repli, les cartes allumées perdent leur couleur de type : ce sont les branches garanties, pas un choix.
+- **la barre latérale** — les `.md` lus au dernier tour sont surlignés par un `FileDecorationProvider` : pastille `●` et libellé en `charts.red` (en gris si le tour n'était pas un vrai routage : repli ou différé). Le titre de la vue porte l'état, `4/9 · routé`. C'est un décorateur de *fichier* et pas une couleur d'icône, donc la même marque apparaît dans l'explorateur et sur l'onglet ouvert — on voit ce que l'IA a lu là où on regarde déjà. (Il a remplacé le badge de barre d'état le 8 septembre 2026 : personne ne regarde en bas à droite.)
+- **la toile** — les branches du dernier tour **entourées de rouge**, les autres intactes, l'extrait du prompt dans le bandeau. On n'estompe pas le reste : c'est précisément dans les branches *non* chargées qu'on va corriger un `load_when`, et une carte à 32 % d'opacité ne se lit pas. En repli, l'entourage passe au gris — la carte garde sa couleur de type, elle n'a rien fait de mal.
 
 La toile porte deux surlignages, jamais mélangés : le **dernier tour** (le journal, permanent) et la **sonde** (« que chargerait le routeur pour ce prompt ? », à la demande). La sonde l'emporte tant qu'elle est active ; ✕ ou Échap rend la toile au dernier vrai tour — on ne peut pas effacer un fait, seulement une question.
 
-L'observateur du journal est **non récursif** (`*.json` sur le dossier), seul motif que VS Code supporte hors du dossier ouvert. C'est lui qui fait bouger le badge pendant une conversation : aucun `.md` ne change quand un tour est routé.
+L'observateur du journal est **non récursif** (`*.json` sur le dossier), seul motif que VS Code supporte hors du dossier ouvert. C'est lui qui fait bouger le surlignage pendant une conversation : aucun `.md` ne change quand un tour est routé.
 
 ## Édition de la structure depuis la vue (`extension/src/edit.ts`)
 

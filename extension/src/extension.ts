@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { CanvasPanel } from './canvasPanel.js';
 import { ContextTreeProvider, ROOT_ELEMENT, freshWrites, loadCore } from './treeProvider.js';
-import { StatusBar, lastTurn, watchJournal } from './statusBar.js';
+import { LoadedDecorations, lastTurn, turnDescription, watchJournal } from './turn.js';
 import * as edit from './edit.js';
 
 /** Les opérations de structure exposées par les deux vues. Une seule liste :
@@ -12,23 +12,42 @@ export function activate(context: vscode.ExtensionContext): void {
   const folder = vscode.workspace.workspaceFolders?.[0];
   const searchFrom = folder?.uri.fsPath ?? process.cwd();
   const provider = new ContextTreeProvider(searchFrom);
-  const status = new StatusBar();
+  const view = vscode.window.createTreeView('contextree.tree', { treeDataProvider: provider });
+  const decorations = new LoadedDecorations();
 
-  /** Ce qui a réellement été chargé au dernier tour : la barre d'état et la
-   *  toile lisent le même journal, elles ne peuvent pas se contredire. */
+  /**
+   * Ce qui a réellement été chargé au dernier tour, montré là où on regarde
+   * déjà : les branches lues sont surlignées dans la barre latérale, et le
+   * titre de la vue porte l'état du routage. La vue et la toile lisent le même
+   * journal, elles ne peuvent pas se contredire.
+   */
   const refreshTurn = async (): Promise<void> => {
     try {
       const core = await loadCore();
       const dir = await core.findTreeDir(searchFrom);
-      if (!dir) return status.hide();
+      if (!dir) {
+        view.description = undefined;
+        decorations.set([], null);
+        return;
+      }
       const tree = await core.loadTree(dir);
       const total = tree.order.length;
       const last = await lastTurn(core, dir, total);
-      status.show(last, total);
+      view.description = turnDescription(last, total);
+      // `root.md` est toujours injecté : il fait partie de ce qui a été lu.
+      decorations.set(
+        last
+          ? [
+              vscode.Uri.joinPath(vscode.Uri.file(dir), core.ROOT_FILE).fsPath,
+              ...last.turn.selected.map(p => core.branchFile(dir, p)),
+            ]
+          : [],
+        last?.turn.reason ?? null,
+      );
       await CanvasPanel.setTurn(last);
     } catch {
-      // La barre d'état est un badge, pas un chemin critique.
-      status.hide();
+      // Le surlignage est un confort, pas un chemin critique.
+      decorations.set([], null);
     }
   };
 
@@ -121,8 +140,8 @@ export function activate(context: vscode.ExtensionContext): void {
   CanvasPanel.onEdit(runEdit);
 
   context.subscriptions.push(
-    status.disposable,
-    vscode.window.registerTreeDataProvider('contextree.tree', provider),
+    view,
+    vscode.window.registerFileDecorationProvider(decorations),
     vscode.commands.registerCommand('contextree.openCanvas', () =>
       CanvasPanel.show(context, loadCore, searchFrom),
     ),

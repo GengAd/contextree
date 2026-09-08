@@ -307,7 +307,7 @@
     const el = document.createElement('div');
     const o = overlay();
     el.className = `node${n.id === selected ? ' selected' : ''}${
-      o ? (kept(n.id) ? ' kept' : ' dropped') : ''
+      o && kept(n.id) ? ' kept' : ''
     }${o && o.reason === 'fallback' && kept(n.id) ? ' fallback' : ''}`;
     el.style.left = `${n.x}px`;
     el.style.top = `${n.y}px`;
@@ -386,7 +386,11 @@
       for (const c of n.children) {
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('d', edgePath(n, c));
-        if (overlay() && !kept(c.id)) path.classList.add('dropped');
+        // Le fil se colore avec ce qu'il porte : entouré = chargé.
+        if (overlay() && kept(c.id)) {
+          path.classList.add('kept');
+          if (overlay().reason === 'fallback') path.classList.add('fallback');
+        }
         if (c.id === selected || n.id === selected) {
           path.classList.add('lit');
           path.style.setProperty('--ribbon', COLORS[selected === n.id ? n.type : c.type]);
@@ -491,7 +495,12 @@
   // Un `load_when` ne se vérifie qu'en le confrontant à un prompt ; le bandeau
   // dit toujours laquelle des deux on regarde.
 
-  const LABELS = { routed: 'routé', all: 'tout chargé', fallback: 'repli' };
+  const LABELS = {
+    routed: 'routé',
+    all: 'tout chargé',
+    fallback: 'repli',
+    deferred: 'différé — routage en tâche de fond',
+  };
 
   function askProbe() {
     const prompt = promptInput.value.trim();
@@ -527,9 +536,12 @@
     trace.textContent = bits.join(' · ');
     // Un repli n'est pas un routage : il doit se voir sans être lu.
     trace.className = o.reason === 'fallback' ? 'warn' : '';
-    excerpt.textContent = o.reason === 'fallback'
-      ? `repli sur les branches garanties${o.error ? ` — ${o.error}` : ''}`
-      : o.prompt || '';
+    excerpt.textContent =
+      o.reason === 'fallback'
+        ? `repli sur la sélection précédente${o.error ? ` — ${o.error}` : ''}`
+        : o.reason === 'deferred'
+          ? `sélection du tour précédent — le routage de « ${(o.prompt || '').slice(0, 60)} » tourne derrière`
+          : o.prompt || '';
     excerpt.className = o.reason === 'fallback' ? 'warn' : '';
   }
 
@@ -549,6 +561,11 @@
     chip.append(swatch, document.createTextNode(type));
     legend.append(chip);
   }
+  const loadedChip = document.createElement('span');
+  const ring = document.createElement('i');
+  ring.className = 'ring';
+  loadedChip.append(ring, document.createTextNode('chargé'));
+  legend.append(loadedChip);
 
   window.addEventListener('message', e => {
     const msg = e.data;

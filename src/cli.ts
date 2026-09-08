@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { promises as fs } from 'node:fs';
+import { spawn } from 'node:child_process';
 import * as path from 'node:path';
 
 import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch } from './core/store.js';
 import { allBranches, formatTree } from './core/tree.js';
 import { renderContext, renderTrace } from './core/render.js';
-import { route } from './core/router.js';
+import { route, pickEngine, claudeBin, withoutRouting } from './core/router.js';
 import { encodePack, extractPack, applyPack } from './core/pack.js';
 import { readSelection, writeSelection } from './core/session.js';
 import { appendTurn } from './core/journal.js';
@@ -28,7 +29,11 @@ const HELP = `contextree — un arbre de contexte partageable, routé, injecté 
   contextree mcp                     lance le serveur MCP (stdio)
   contextree hook                    point d'entrée du hook UserPromptSubmit
 
-Variables : ANTHROPIC_API_KEY (routage), CONTEXTREE_ROUTER_MODEL, CONTEXTREE_ROUTER_TIMEOUT_MS,
+Routage : aucune clé requise si le CLI \`claude\` est installé — c'est ton abonnement
+          qui route. Une clé (ANTHROPIC_API_KEY) est utilisée si elle est là.
+
+Variables : CONTEXTREE_ROUTER (sdk | cli | off), CONTEXTREE_ROUTER_MODEL,
+            CONTEXTREE_ROUTER_TIMEOUT_MS, CONTEXTREE_CLAUDE_BIN,
             CONTEXTREE_STATE_DIR (où vit le journal des tours)
 `;
 
@@ -71,6 +76,8 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     case 'hook':
       return cmdHook();
+    case 'route-bg':
+      return cmdRouteBackground(flags);
     default:
       process.stderr.write(`Commande inconnue : ${command}\n\n${HELP}`);
       return 1;
@@ -133,7 +140,7 @@ async function cmdInstall(flags: Flags): Promise<number> {
   }
   process.stdout.write(
     "\nRelance Claude Code pour prendre en compte le hook et le serveur MCP.\n" +
-      "Le routage a besoin d'ANTHROPIC_API_KEY dans l'environnement.\n",
+      `Routage : ${describeEngine()}\n`,
   );
   return 0;
 }
@@ -224,6 +231,7 @@ async function cmdRoute(prompt: string): Promise<number> {
   }
   const { tree } = await open();
   const started = Date.now();
+  process.stderr.write(`${describeEngine()}\n`);
   const { selected, reason, error } = await route(tree, prompt);
   process.stderr.write(
     `${renderTrace(tree, selected, reason)} — ${Date.now() - started} ms${error ? ` — ${error}` : ''}\n\n` +
@@ -276,6 +284,9 @@ async function cmdImport(flags: Flags): Promise<number> {
  */
 async function cmdHook(): Promise<number> {
   try {
+    // Le routeur peut lancer `claude -p` : si ce process relançait le hook, on
+    // partirait en boucle. Il se tait.
+    if (process.env['CONTEXTREE_ROUTING']) return 0;
     const raw = (await readStdin()) ?? '';
     const payload = raw.trim() ? (JSON.parse(raw) as Record<string, unknown>) : {};
     const prompt = typeof payload['prompt'] === 'string' ? payload['prompt'] : '';
@@ -289,8 +300,24 @@ async function cmdHook(): Promise<number> {
     if (!tree.order.length && !tree.rootContent.trim()) return 0;
 
     const previous = await readSelection(dir, sessionId);
-    const { selected, reason, error } = await route(tree, prompt, { previousSelection: previous });
-    await writeSelection(dir, sessionId, selected);
+
+    // Le routage par le CLI coûte entre 5 et 60 s : hors de question de le
+    // mettre devant le prompt. Ce tour part avec la sélection du tour précédent
+    // (l'arbre entier au premier tour), et le routage de *ce* prompt tourne
+    // derrière — il servira au tour suivant. `CONTEXTREE_ROUTER_BLOCKING=1`
+    // rend la main à l'attente si on préfère payer la latence.
+    const deferred =
+      pickEngine() === 'cli' && process.env['CONTEXTREE_ROUTER_BLOCKING'] !== '1';
+
+    const { selected, reason, error } = deferred
+      ? { selected: withoutRouting(tree, previous), reason: 'deferred' as const, error: undefined }
+      : await route(tree, prompt, { previousSelection: previous });
+
+    // En différé, c'est le process de fond qui écrira la sélection : l'écraser
+    // ici reviendrait à effacer le routage avant qu'il n'arrive.
+    if (deferred) routeInBackground(dir, sessionId, prompt);
+    else await writeSelection(dir, sessionId, selected);
+
     await appendTurn(dir, {
       at: Date.now(),
       prompt,
@@ -308,6 +335,71 @@ async function cmdHook(): Promise<number> {
     // bloqué est une panne.
   }
   return 0;
+}
+
+/**
+ * Le routage de ce prompt, lancé derrière et laissé seul.
+ *
+ * Détaché et sans stdio : il survit à la sortie du hook — c'est tout l'intérêt.
+ * Le prompt passe en base64, un `argv` n'a pas à deviner ce qu'un utilisateur
+ * peut écrire. Toute panne ici est un routage en moins, jamais un prompt bloqué.
+ */
+function routeInBackground(dir: string, sessionId: string, prompt: string): void {
+  try {
+    const entry = process.argv[1];
+    if (!entry) return;
+    const child = spawn(
+      process.execPath,
+      [
+        entry,
+        'route-bg',
+        '--dir', dir,
+        '--session', sessionId,
+        '--prompt64', Buffer.from(prompt.slice(0, 4000), 'utf8').toString('base64'),
+      ],
+      { detached: true, stdio: 'ignore' },
+    );
+    child.unref();
+  } catch {
+    // Pas de routage de fond : le tour suivant repartira du tour précédent.
+  }
+}
+
+/**
+ * Le routage de fond lui-même. Personne ne l'attend, donc il a le droit d'être
+ * lent — et il n'écrit que s'il a vraiment routé : un repli n'a rien à mettre
+ * dans le cache, il en sort.
+ */
+async function cmdRouteBackground(flags: Flags): Promise<number> {
+  try {
+    const dir = str(flags.dir);
+    const encoded = str(flags.prompt64);
+    if (!dir || !encoded) return 0;
+    const sessionId = str(flags.session) ?? 'default';
+    process.env['CONTEXTREE_ROUTER_TIMEOUT_MS'] ??= '120000';
+
+    const tree = await loadTree(dir);
+    const previous = await readSelection(dir, sessionId);
+    const prompt = Buffer.from(encoded, 'base64').toString('utf8');
+    const { selected, reason } = await route(tree, prompt, { previousSelection: previous });
+    if (reason === 'routed') await writeSelection(dir, sessionId, selected);
+  } catch {
+    // Même contrat que le hook : silencieux, code 0.
+  }
+  return 0;
+}
+
+/** D'où vient le routage sur cette machine — dit une fois, en clair : c'est la
+ *  question qu'on se pose quand rien ne se charge. */
+function describeEngine(): string {
+  switch (pickEngine()) {
+    case 'sdk':
+      return 'clé API Anthropic';
+    case 'cli':
+      return `CLI \`claude\` (ton abonnement) — ${claudeBin()}`;
+    default:
+      return 'aucun moteur — arbre entier injecté (installe le CLI `claude` ou pose ANTHROPIC_API_KEY)';
+  }
 }
 
 // ── plomberie ────────────────────────────────────────────────────────────────

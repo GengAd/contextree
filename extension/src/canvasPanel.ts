@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { AiWrite, ContextTree } from '@gengad/contextree' with { 'resolution-mode': 'import' };
 import { freshWrites } from './treeProvider.js';
-import type { LastTurn } from './statusBar.js';
+import type { LastTurn } from './turn.js';
 import type { EditOp } from './extension.js';
 
 type Core = typeof import('@gengad/contextree', { with: { 'resolution-mode': 'import' } });
@@ -41,7 +41,7 @@ export class CanvasPanel {
     CanvasPanel.edit = handler;
   }
 
-  /** Poussé par l'observateur du journal — même source que la barre d'état. */
+  /** Poussé par l'observateur du journal — même source que la barre latérale. */
   static async setTurn(turn: LastTurn | null): Promise<void> {
     CanvasPanel.turn = turn;
     await CanvasPanel.current?.postTurn();

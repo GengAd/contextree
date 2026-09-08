@@ -7,8 +7,8 @@ Comme un `CLAUDE.md` — mais au lieu de charger tout le fichier à chaque fois,
 ```
 .contextree/
 ├── root.md                    toujours injecté
-├── identite.md                (identity) — garanti si le routage échoue
-├── regles.md                  (rule)     — garanti si le routage échoue
+├── identite.md                (identity) — chargé si pertinent
+├── regles.md                  (rule)     — chargé si pertinent
 ├── architecture.md            (context)  — chargé si pertinent
 │   └── commandes.md           (reference)
 └── revue-de-code.md           (skill)
@@ -26,7 +26,7 @@ load_when: quand on touche à un composant ou du CSS
 - Tous les textes affichés sont en anglais.
 ```
 
-À chaque prompt, un appel IA léger lit ces conditions et retient les branches qui comptent. **Si un enfant est retenu, ses parents le sont aussi** — une branche profonde n'a de sens qu'avec le chemin qui y mène. Si le routage échoue, on retombe sur `identity` + `rule` : jamais un contexte vide, jamais un prompt bloqué.
+À chaque prompt, un appel IA léger lit ces conditions et retient les branches qui comptent. **Si un enfant est retenu, ses parents le sont aussi** — une branche profonde n'a de sens qu'avec le chemin qui y mène. Aucun type n'est privilégié : c'est le `load_when` qui décide, ou personne. Si le routage échoue, on retombe sur la sélection du tour précédent, sinon sur l'arbre entier — jamais un contexte vide, jamais un prompt bloqué.
 
 ## Démarrer
 
@@ -36,7 +36,9 @@ npx @gengad/contextree init      # crée .contextree/ avec un arbre de départ
 npx @gengad/contextree install   # câble le serveur MCP + le hook Claude Code
 ```
 
-Puis relance Claude Code. Le routage utilise l'API Anthropic — `ANTHROPIC_API_KEY` dans l'environnement, ou un profil `ant auth login`.
+Puis relance Claude Code. **Aucune clé API n'est nécessaire** : si le binaire `claude` est installé, c'est ton abonnement qui route. Une clé (`ANTHROPIC_API_KEY`) est utilisée si elle est là — c'est juste plus rapide.
+
+Le routage par le CLI coûte entre 5 et 60 s : le hook ne l'attend donc jamais. Le tour part avec la sélection du tour précédent et le routage tourne derrière, pour le tour suivant — le hook rend la main en ~150 ms. `contextree route "<prompt>"` montre à tout moment ce que le routeur retiendrait.
 
 ## Deux surfaces
 

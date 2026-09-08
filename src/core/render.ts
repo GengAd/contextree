@@ -1,5 +1,6 @@
 import { allBranches } from './tree.js';
 import type { ContextTree } from './types.js';
+import type { RouteReason } from './router.js';
 
 /**
  * Assemble le bloc injecté dans l'appel IA.
@@ -28,14 +29,20 @@ function section(b: { title: string; content: string }): string {
   return `### ${b.title}\n${b.content}`.trim();
 }
 
+const TRACE_LABELS: Record<RouteReason, string> = {
+  routed: 'routé',
+  all: 'tout chargé',
+  fallback: 'fallback',
+  deferred: 'différé — routage en tâche de fond',
+};
+
 /** Ligne de transparence : ce qui a été chargé, et pourquoi. Jamais de boîte noire. */
 export function renderTrace(
   tree: ContextTree,
   selected: Set<string>,
-  reason: 'routed' | 'all' | 'fallback',
+  reason: RouteReason,
 ): string {
   const titles = [...selected].map(p => tree.branches.get(p)?.title ?? p);
-  const label =
-    reason === 'all' ? 'tout chargé' : reason === 'fallback' ? 'fallback' : 'routé';
+  const label = TRACE_LABELS[reason] ?? reason;
   return `contextree (${label}) — ${titles.length} branche(s) : ${titles.join(', ') || '—'}`;
 }

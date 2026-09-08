@@ -11,7 +11,8 @@ Adrien Buot — développeur solo, TypeScript. Repo privé `GengAd/contextree`, 
 - Ne pas créer de fichier `.md` à la racine sans demander.
 - `npm test` (build + tests) doit passer avant de valider.
 - Le **hook ne bloque jamais un prompt** : toute erreur sort en code 0 et silence. C'est l'invariant non négociable.
-- Le **routage ne bloque jamais l'appel principal** : erreur ou timeout ⇒ fallback `identity` + `rule`, jamais un ensemble vide.
+- Le **routage ne bloque jamais l'appel principal** : erreur ou timeout ⇒ fallback sur la sélection du tour précédent, sinon l'arbre entier — jamais un ensemble vide. Le routage par le CLI `claude` (l'abonnement, sans clé API) est trop lent pour être attendu : le hook le lance en tâche de fond et le tour suivant en profite.
+- **Aucun type de branche n'est privilégié.** Pas de « branches garanties » `identity` + `rule` : c'est le `load_when` qui décide, ou personne.
 - Les **fichiers markdown sont la source de vérité**. Rien ne doit rendre `.contextree/` illisible ou non éditable à la main.
 - Garder la doc vivante : proposer les mises à jour de `CLAUDE.md` / `CONTEXT.md` / `REFERENCES.md` / `ROADMAP.md`, ne jamais réécrire en silence.
 - **L'IA écrit dans l'arbre directement**, sans demander la permission, quand elle repère un fait durable — et elle l'**annonce** à chaque fois. Le garde-fou est la visibilité : écrire en silence est la seule façon de mal faire ici, parce que l'arbre écrit lui est réinjecté ensuite.
@@ -34,7 +35,7 @@ Adrien Buot — développeur solo, TypeScript. Repo privé `GengAd/contextree`, 
 | CLI, hook Claude Code, installation | `src/cli.ts`, `src/install.ts` | `REFERENCES.md` § Hook |
 | Partage (export/import) | `src/core/pack.ts` | `ROADMAP.md` § Phase 1 |
 | Vue de l'arbre dans VS Code (barre latérale) | `extension/src/treeProvider.ts` | `extension/package.json` § contributes |
-| Badge de barre d'état, dernier tour chargé | `extension/src/statusBar.ts` | `REFERENCES.md` § Journal |
+| Surbrillance des branches lues, dernier tour |  `extension/src/turn.ts` | `REFERENCES.md` § Journal |
 | Créer / renommer / déplacer une branche depuis la vue | `extension/src/edit.ts` | `REFERENCES.md` § Édition |
 | Toile 2D de l'arbre (webview) | `extension/src/canvasPanel.ts`, `extension/media/` | — |
 | Ce qu'on construit et pourquoi | racine | `CONTEXT.md` |

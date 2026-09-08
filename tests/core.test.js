@@ -6,7 +6,8 @@ import * as path from 'node:path';
 
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
 import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir } from '../dist/core/store.js';
-import { withAncestors, guaranteedBranches, allBranches } from '../dist/core/tree.js';
+import { withAncestors, allBranches } from '../dist/core/tree.js';
+import { route, pickEngine } from '../dist/core/router.js';
 import { renderContext } from '../dist/core/render.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
 import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites } from '../dist/core/journal.js';
@@ -88,14 +89,30 @@ test('tree : sélectionner un enfant remonte tous ses parents', async () => {
   assert.deepEqual([...withAncestors(tree, ['a/b/c'])].sort(), ['a', 'a/b', 'a/b/c']);
 });
 
-test('tree : le filet du routeur, ce sont identity + rule (avec leurs parents)', async () => {
+test("routeur : sans moteur, tout l'arbre — et aucun type privilégié", async () => {
   const dir = await scratch();
   await writeBranch(dir, { path: 'zone', type: 'context', title: 'Zone', loadWhen: 'x', content: '' });
   await writeBranch(dir, { path: 'zone/r', type: 'rule', title: 'R', loadWhen: 'x', content: '' });
   await writeBranch(dir, { path: 'i', type: 'identity', title: 'I', loadWhen: 'x', content: '' });
   await writeBranch(dir, { path: 'doc', type: 'reference', title: 'D', loadWhen: 'x', content: '' });
   const tree = await loadTree(dir);
-  assert.deepEqual([...guaranteedBranches(tree)].sort(), ['i', 'zone', 'zone/r']);
+
+  const previous = process.env.CONTEXTREE_ROUTER;
+  process.env.CONTEXTREE_ROUTER = 'off';
+  try {
+    assert.equal(pickEngine(), 'none');
+    const { selected, reason, error } = await route(tree, 'peu importe', {
+      previousSelection: ['i'],
+    });
+    // Pas de moteur : on injecte tout, et on le dit. Surtout pas une sélection
+    // décidée par le type des branches.
+    assert.deepEqual([...selected].sort(), ['doc', 'i', 'zone', 'zone/r']);
+    assert.equal(reason, 'all');
+    assert.match(error, /aucun moteur/);
+  } finally {
+    if (previous === undefined) delete process.env.CONTEXTREE_ROUTER;
+    else process.env.CONTEXTREE_ROUTER = previous;
+  }
 });
 
 test('render : racine toujours là, Rules avant Context, non sélectionné exclu', async () => {
