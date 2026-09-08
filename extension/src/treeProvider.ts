@@ -2,7 +2,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 // Le paquet est ESM, ce fichier est compilé en CommonJS : les types doivent
 // être résolus en mode `import`, et le module chargé par `import()` dynamique.
-import type { AiWrite, Branch, BranchType, ContextTree } from '@gengad/contextree' with { 'resolution-mode': 'import' };
+import type { AiWrite, Branch, BranchType, ContextTree } from '@gengad/contextree/view' with { 'resolution-mode': 'import' };
 
 /** `root.md` — toujours injecté, jamais routé. Ce n'est pas une branche, mais
  *  il doit se lire et s'éditer comme les autres, donc il a sa ligne. */
@@ -20,7 +20,7 @@ export const FRESH_MS = 15 * 60 * 1000;
 
 /** Les écritures de l'IA encore fraîches, la plus récente par branche. */
 export async function freshWrites(
-  core: typeof import('@gengad/contextree', { with: { 'resolution-mode': 'import' } }),
+  core: Core,
   treeDir: string,
 ): Promise<Map<string, AiWrite>> {
   const cutoff = Date.now() - FRESH_MS;
@@ -42,15 +42,32 @@ export function ago(at: number): string {
   return `il y a ${Math.round(seconds / 60)} min`;
 }
 
-type Core = typeof import('@gengad/contextree', { with: { 'resolution-mode': 'import' } });
+export type Core = typeof import('@gengad/contextree/view', { with: { 'resolution-mode': 'import' } });
 
 let corePromise: Promise<Core> | undefined;
 
-/** Chargement paresseux et unique du cœur, partagé par les deux vues. */
+/**
+ * Chargement paresseux et unique du cœur, partagé par les deux vues.
+ *
+ * Le cœur est **copié** dans `out/core/` (`npm run bundle:core`), pas résolu
+ * depuis `node_modules` : un lien `file:..` fait suivre à `vsce` tout le
+ * `node_modules` du repo, avec des chemins qui sortent du dossier — un `.vsix`
+ * impossible à produire. Ici, c'est un chemin relatif dans le paquet.
+ *
+ * `view.js` et pas `index.js` : le barillet complet tire le routeur et le
+ * serveur MCP, donc les trois dépendances du projet. Une vue n'en a aucune.
+ */
 export function loadCore(): Promise<Core> {
-  corePromise ??= import('@gengad/contextree');
+  // Spécificateur non littéral : `out/core/` est rempli après la compilation
+  // (`npm run bundle:core`), donc tsc n'a rien à résoudre ici. Le `.js` copié
+  // est ESM et le dit (un `package.json` de deux lignes est copié à côté) ;
+  // `module: node16` préserve l'`import()`, seule façon de charger de l'ESM
+  // depuis ce fichier compilé en CommonJS.
+  corePromise ??= import(CORE_ENTRY) as Promise<Core>;
   return corePromise;
 }
+
+const CORE_ENTRY = './core/view.js';
 
 const ICONS: Record<BranchType, string> = {
   identity: 'account',

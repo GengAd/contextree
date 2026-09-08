@@ -1,0 +1,10 @@
+# Ce qui n'a rien à faire dans le .vsix : les sources (compilées dans out/),
+# la configuration de build, et le cœur en lien `file:..` — il est copié dans
+# out/core/ par `npm run bundle:core`, pas résolu depuis node_modules.
+.vscodeignore
+src/**
+tsconfig.json
+node_modules/**
+package-lock.json
+**/*.map
+**/*.d.ts

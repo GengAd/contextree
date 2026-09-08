@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
-import type { AiWrite, ContextTree } from '@gengad/contextree' with { 'resolution-mode': 'import' };
+import type { AiWrite, ContextTree } from '@gengad/contextree/view' with { 'resolution-mode': 'import' };
 import { freshWrites } from './treeProvider.js';
 import type { LastTurn } from './turn.js';
 import type { EditOp } from './extension.js';
 
-type Core = typeof import('@gengad/contextree', { with: { 'resolution-mode': 'import' } });
+import type { Core } from './treeProvider.js';
 
 /** Ce que la webview reçoit. Plat et sans Map : ça passe par postMessage. */
 type CanvasTree = {

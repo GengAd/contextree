@@ -4,3 +4,7 @@ dist/
 .DS_Store
 .env
 .contextree/.cache/
+
+# Le paquet de l'extension : un produit de build, jamais versionné.
+*.vsix
+extension/out/core/

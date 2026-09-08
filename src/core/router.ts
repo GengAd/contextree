@@ -1,6 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { spawn } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
+import { createRequire } from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { allBranches, withAncestors } from './tree.js';
@@ -267,12 +267,33 @@ export function pickEngine(apiKey?: string): RouterEngine {
     const engine = LEGACY[forced] ?? (forced as RouterEngine);
     if (engine === 'anthropic' || engine === 'openai' || isCliEngine(engine)) return engine;
   }
-  if (apiKey || process.env['ANTHROPIC_API_KEY'] || process.env['ANTHROPIC_AUTH_TOKEN']) {
-    return 'anthropic';
-  }
+  const key = apiKey || process.env['ANTHROPIC_API_KEY'] || process.env['ANTHROPIC_AUTH_TOKEN'];
+  if (key && hasSdk()) return 'anthropic';
   if (process.env['OPENAI_API_KEY']) return 'openai';
   for (const spec of CLIS) if (findBin(spec.bin)) return spec.engine;
   return 'none';
+}
+
+/**
+ * Le SDK Anthropic est-il installé à côté ?
+ *
+ * Deux raisons de le demander plutôt que de l'importer en haut de fichier :
+ * le hook le chargeait à **chaque prompt** même quand il route par le CLI, et
+ * la copie du cœur embarquée dans l'extension n'a pas de `node_modules` du
+ * tout. Une clé qui ne peut mener nulle part n'est pas un moteur.
+ */
+let sdkThere: boolean | undefined;
+
+function hasSdk(): boolean {
+  if (sdkThere === undefined) {
+    try {
+      createRequire(import.meta.url).resolve('@anthropic-ai/sdk');
+      sdkThere = true;
+    } catch {
+      sdkThere = false;
+    }
+  }
+  return sdkThere;
 }
 
 async function askAnthropic(
@@ -280,6 +301,7 @@ async function askAnthropic(
   timeout: number,
   apiKey?: string,
 ): Promise<number[] | null> {
+  const { default: Anthropic } = await import('@anthropic-ai/sdk');
   const client = new Anthropic({ maxRetries: 0, ...(apiKey ? { apiKey } : {}) });
   const response = await client.messages.create(
     {

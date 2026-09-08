@@ -96,6 +96,23 @@ Les groupes, les arbres publics et les hiérarchies d'entreprise sont les phases
 
 `upsert_branch` est le levier participatif : quand l'IA découvre un fait durable sur le projet, elle le propose comme branche. L'arbitrage se fait en relisant un diff git.
 
+## Voir son arbre dans l'éditeur
+
+Une extension (`extension/`) montre l'arbre dans la barre latérale, en surligne les branches réellement lues au dernier tour, et ouvre une toile 2D pour essayer un prompt sans lancer de conversation. La structure s'édite depuis la vue — créer, renommer, changer le type, déplacer ; le contenu reste dans le `.md` ouvert à côté.
+
+```bash
+npm run package:ext    # produit extension/contextree-vscode-0.1.0.vsix
+```
+
+Puis, selon l'éditeur :
+
+```bash
+code   --install-extension extension/contextree-vscode-0.1.0.vsix
+cursor --install-extension extension/contextree-vscode-0.1.0.vsix
+```
+
+(ou la palette de commandes → « Extensions: Install from VSIX »). Rien n'est publié tant que le repo est privé ; le jour venu, ce sera **Open VSX** d'abord — c'est le registre que lisent Cursor, Windsurf et VSCodium.
+
 ## Transparence
 
 À chaque tour, une ligne dit exactement ce qui a été chargé et pourquoi :

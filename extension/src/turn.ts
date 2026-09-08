@@ -1,8 +1,8 @@
 import { promises as fs } from 'node:fs';
 import * as vscode from 'vscode';
-import type { RoutingTurn } from '@gengad/contextree' with { 'resolution-mode': 'import' };
+import type { RoutingTurn } from '@gengad/contextree/view' with { 'resolution-mode': 'import' };
 
-type Core = typeof import('@gengad/contextree', { with: { 'resolution-mode': 'import' } });
+import type { Core } from './treeProvider.js';
 
 /** Ce qu'un tour raconte, une fois lu : de quoi allumer la vue et la toile. */
 export type LastTurn = {

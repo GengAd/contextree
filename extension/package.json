@@ -6,7 +6,7 @@
   "private": true,
   "publisher": "gengad",
   "engines": {
-    "vscode": "^1.90.0",
+    "vscode": "^1.85.0",
     "node": ">=20"
   },
   "categories": [
@@ -138,14 +138,17 @@
   },
   "scripts": {
     "build": "tsc -p .",
-    "watch": "tsc -p . --watch"
-  },
-  "dependencies": {
-    "@gengad/contextree": "file:.."
+    "watch": "tsc -p . --watch",
+    "package": "npx -y @vscode/vsce package --skip-license"
   },
   "devDependencies": {
+    "@gengad/contextree": "file:..",
     "@types/node": "^22.10.0",
-    "@types/vscode": "^1.90.0",
+    "@types/vscode": "^1.85.0",
     "typescript": "^5.7.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GengAd/contextree.git"
   }
 }

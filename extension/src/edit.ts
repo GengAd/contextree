@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import type { Branch, BranchType, ContextTree } from '@gengad/contextree' with { 'resolution-mode': 'import' };
+import type { Branch, BranchType, ContextTree } from '@gengad/contextree/view' with { 'resolution-mode': 'import' };
 
-type Core = typeof import('@gengad/contextree', { with: { 'resolution-mode': 'import' } });
+import type { Core } from './treeProvider.js';
 
 /**
  * Édition de la **structure** de l'arbre : créer, renommer, changer le type,

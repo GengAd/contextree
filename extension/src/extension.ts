@@ -139,9 +139,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
   CanvasPanel.onEdit(runEdit);
 
+  // Le surlignage des branches lues est un confort, et `FileDecorationProvider`
+  // est l'API la plus susceptible de manquer dans un fork de VS Code. Absente,
+  // la vue perd la pastille et garde tout le reste — jamais une extension qui
+  // ne s'active pas.
+  if (typeof vscode.window.registerFileDecorationProvider === 'function') {
+    context.subscriptions.push(vscode.window.registerFileDecorationProvider(decorations));
+  }
+
   context.subscriptions.push(
     view,
-    vscode.window.registerFileDecorationProvider(decorations),
     vscode.commands.registerCommand('contextree.openCanvas', () =>
       CanvasPanel.show(context, loadCore, searchFrom),
     ),

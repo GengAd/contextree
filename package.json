@@ -7,6 +7,10 @@
     "contextree": "./dist/cli.js"
   },
   "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./view": "./dist/view.js"
+  },
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
@@ -17,10 +21,12 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "build:ext": "npm --prefix extension install --silent && npm --prefix extension run build",
+    "build:ext": "npm run build && npm --prefix extension install --silent && npm --prefix extension run build && npm run bundle:core",
     "typecheck": "tsc -b --noEmit",
     "test": "npm run build && node --test \"tests/*.test.js\"",
-    "dev": "tsc -b --watch"
+    "dev": "tsc -b --watch",
+    "bundle:core": "rm -rf extension/out/core && mkdir -p extension/out/core && cp -R dist/ extension/out/core/ && node -e \"require('fs').writeFileSync('extension/out/core/package.json','{\\\"type\\\":\\\"module\\\"}\\n')\"",
+    "package:ext": "npm run build:ext && cd extension && npx -y @vscode/vsce package --skip-license"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
