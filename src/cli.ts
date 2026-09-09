@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { promises as fs } from 'node:fs';
+import { spawn } from 'node:child_process';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch } from './core/store.js';
+import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, deleteBranch, moveBranch, initTree } from './core/store.js';
 import { allBranches, formatTree } from './core/tree.js';
-import { renderContext, renderTrace } from './core/render.js';
-import { route } from './core/router.js';
+import { renderContext, renderTrace, renderAgentsBlock } from './core/render.js';
+import { route, pickEngine, isCliEngine, engineBin, withoutRouting } from './core/router.js';
 import { encodePack, extractPack, applyPack } from './core/pack.js';
 import { readSelection, writeSelection } from './core/session.js';
 import { appendTurn } from './core/journal.js';
@@ -20,19 +22,21 @@ import {
 } from './core/remote.js';
 import { link, pull, push, readTracking } from './core/sync.js';
 import { isBranchType, type BranchType } from './core/types.js';
-import { installHook, installMcp, type InstallReport } from './install.js';
+import { AGENTS, agentStatus, installAgent, type InstallReport } from './install.js';
 import { resolvePack, runStdio } from './mcp/server.js';
 
 const HELP = `contextree — un arbre de contexte partageable, routé, injecté à chaque appel IA.
 
   contextree init                    crée .contextree/ avec un arbre de démarrage
-  contextree install                 câble le serveur MCP + le hook Claude Code
+  contextree install [--agent a]     câble l'injection (--status pour voir l'état)
   contextree list                    affiche l'arbre
   contextree add                     crée une branche (--title --type --load-when [--parent])
   contextree rm <chemin>             supprime une branche et ses enfants
   contextree mv <de> <vers>          déplace ou renomme une branche (ses enfants suivent)
   contextree route "<prompt>"        montre ce que le routeur chargerait
-  contextree render                  affiche tout l'arbre assemblé (sans routage)
+  contextree render [--agents]       affiche tout l'arbre assemblé (sans routage)
+                                     --agents : le bloc court pour un AGENTS.md
+                                     --copy   : dans le presse-papier (render, route)
   contextree export [--token] [-o f] exporte l'arbre pour le partager
   contextree import <source>         greffe un pack (jeton, JSON, ou fichier) [--prefix p]
   contextree mcp                     lance le serveur MCP (stdio)
@@ -49,7 +53,13 @@ Contexte partagé (phase 2) :
   contextree push -m "<message>"     pousse ses changements locaux
   contextree status                  ce que cette copie de travail suit
 
-Variables : ANTHROPIC_API_KEY (routage), CONTEXTREE_ROUTER_MODEL, CONTEXTREE_ROUTER_TIMEOUT_MS,
+Routage : aucune clé requise si un CLI d'agent (\`claude\`, \`codex\`, \`gemini\`) est
+          installé — c'est ton abonnement qui route. Une clé (ANTHROPIC_API_KEY,
+          OPENAI_API_KEY) est utilisée si elle est là.
+
+Variables : CONTEXTREE_ROUTER (auto | anthropic | openai | claude | codex | gemini | off),
+            CONTEXTREE_ROUTER_MODEL, CONTEXTREE_ROUTER_TIMEOUT_MS,
+            OPENAI_API_KEY / OPENAI_BASE_URL, CONTEXTREE_CLAUDE_BIN,
             CONTEXTREE_STATE_DIR (où vit le journal des tours)
 `;
 
@@ -77,9 +87,9 @@ async function main(argv: string[]): Promise<number> {
     case 'mv':
       return cmdMove(flags._[0], flags._[1]);
     case 'route':
-      return cmdRoute(flags._.join(' '));
+      return cmdRoute(flags._.join(' '), flags);
     case 'render':
-      return cmdRender();
+      return cmdRender(flags);
     case 'export':
       return cmdExport(flags);
     case 'import':
@@ -110,6 +120,8 @@ async function main(argv: string[]): Promise<number> {
       return cmdPush(str(flags.m) ?? str(flags.message));
     case 'status':
       return cmdStatus();
+    case 'route-bg':
+      return cmdRouteBackground(flags);
     default:
       process.stderr.write(`Commande inconnue : ${command}\n\n${HELP}`);
       return 1;
@@ -119,62 +131,94 @@ async function main(argv: string[]): Promise<number> {
 // ── commandes ────────────────────────────────────────────────────────────────
 
 async function cmdInit(force: boolean): Promise<number> {
-  const dir = path.join(process.cwd(), DIR_NAME);
-  if (!force && (await exists(dir))) {
-    process.stderr.write(`${DIR_NAME}/ existe déjà. --force pour réécrire les fichiers de départ.\n`);
+  try {
+    const { dir, branches } = await initTree(process.cwd(), { force });
+    process.stdout.write(
+      `${path.relative(process.cwd(), dir)}/ créé avec ${branches} branches de départ.\n` +
+        `Prochaine étape : édite les fichiers, puis \`contextree install\`.\n`,
+    );
+    return 0;
+  } catch (err) {
+    process.stderr.write(
+      `${err instanceof Error ? err.message : String(err)} --force pour réécrire les fichiers de départ.\n`,
+    );
     return 1;
   }
-  const project = path.basename(process.cwd());
-  await writeRoot(dir, `# Contexte — ${project}\n\nCe bloc est injecté à chaque appel. Garde-le court : qui, quoi, dans quel repo.`);
-  await writeBranch(dir, {
-    path: 'identite',
-    type: 'identity',
-    title: 'Identité',
-    loadWhen: "toujours pertinent — qui est l'assistant sur ce projet",
-    content: "Tu assistes sur le projet **" + project + "**.\n\nDécris ici l'expertise attendue et le style de travail.",
-  });
-  await writeBranch(dir, {
-    path: 'regles',
-    type: 'rule',
-    title: 'Règles du projet',
-    loadWhen: 'quand la demande touche au code, aux fichiers ou aux features',
-    content: '- Une contrainte dure par ligne.\n- Ce qui est interdit, ce qui est obligatoire.',
-  });
-  await writeBranch(dir, {
-    path: 'architecture',
-    type: 'context',
-    title: 'Architecture',
-    loadWhen: "quand la demande porte sur la structure du projet ou l'endroit où vit un bout de code",
-    content: "Vue d'ensemble : les zones du repo et ce qu'elles portent.",
-  });
-  await writeBranch(dir, {
-    path: 'architecture/commandes',
-    type: 'reference',
-    title: 'Commandes',
-    loadWhen: 'quand il faut lancer, tester ou builder le projet',
-    content: '```bash\n# à compléter\n```',
-  });
+}
 
+/**
+ * Câble l'injection pour les agents présents.
+ *
+ * Par défaut : tout ce qui est **détecté**, plus Claude Code, dont les deux
+ * fichiers sont dans le projet et ne gênent personne. Les agents dont la
+ * configuration vit dans le home ne sont câblés que s'ils sont là, ou nommés
+ * par `--agent` : écrire dans le `~` de quelqu'un qui n'utilise pas l'outil
+ * serait une surprise, pas un service.
+ *
+ * `--status` ne fait que regarder : c'est la question qu'on se pose quand rien
+ * ne s'injecte.
+ */
+async function cmdInstall(flags: Flags): Promise<number> {
+  const asked = str(flags.agent);
+  const statuses = await agentStatus(process.cwd());
+
+  if (flags.status) {
+    for (const a of statuses) {
+      const state = a.wired ? 'câblé' : a.detected ? 'à câbler' : 'non détecté';
+      process.stdout.write(`${state.padEnd(12)} ${a.label}\n`);
+      for (const f of a.files) process.stdout.write(`             ${shorten(f)}\n`);
+    }
+    process.stdout.write(`\nRoutage : ${describeEngine()}\n`);
+    return 0;
+  }
+
+  if (asked && asked !== 'all' && !AGENTS.some(a => a.id === asked)) {
+    process.stderr.write(
+      `Agent inconnu : ${asked} (${AGENTS.map(a => a.id).join(', ')}, all)\n`,
+    );
+    return 1;
+  }
+
+  const targets = statuses.filter(a =>
+    asked ? asked === 'all' || asked === a.id : a.detected || a.id === 'claude-code',
+  );
+
+  // Le bloc `AGENTS.md` n'est calculé que si un agent en veut un : sans arbre,
+  // `install` doit rester possible pour câbler d'abord et créer ensuite.
+  let block: string | undefined;
+  if (targets.some(a => a.id === 'codex')) {
+    const dir = await findTreeDir();
+    if (dir) block = renderAgentsBlock(await loadTree(dir));
+  }
+
+  const report: InstallReport = [];
+  for (const a of targets) report.push(...(await installAgent(a.id, process.cwd(), block)));
+
+  for (const r of report) process.stdout.write(`${r.action.padEnd(9)} ${shorten(r.file)}\n`);
+
+  // Seulement quand on n'a rien demandé de précis : sur `--agent cursor`, les
+  // autres ne sont pas « non détectés », ils ne sont pas le sujet.
+  const skipped = asked ? [] : statuses.filter(s => !targets.includes(s));
+  if (skipped.length) {
+    process.stdout.write(
+      `\nNon câblé (non détecté) : ${skipped.map(s => s.id).join(', ')}` +
+        ` — \`--agent <id>\` pour forcer.\n`,
+    );
+  }
   process.stdout.write(
-    `${DIR_NAME}/ créé avec 4 branches de départ.\n` +
-      `Prochaine étape : édite les fichiers, puis \`contextree install\`.\n`,
+    "\nRelance ton agent pour prendre en compte le hook et le serveur MCP.\n" +
+      "Aucune de ces surfaces (Claude sur le web, ChatGPT…) : `contextree render --copy`,\n" +
+      "ou `contextree route \"<ta demande>\" --copy`, et tu colles.\n" +
+      `Routage : ${describeEngine()}\n`,
   );
   return 0;
 }
 
-async function cmdInstall(flags: Flags): Promise<number> {
-  const report: InstallReport = [];
-  const only = flags.mcp || flags.hook;
-  if (!only || flags.mcp) await installMcp(process.cwd(), report);
-  if (!only || flags.hook) await installHook(process.cwd(), report);
-  for (const r of report) {
-    process.stdout.write(`${r.action.padEnd(9)} ${path.relative(process.cwd(), r.file)}\n`);
-  }
-  process.stdout.write(
-    "\nRelance Claude Code pour prendre en compte le hook et le serveur MCP.\n" +
-      "Le routage a besoin d'ANTHROPIC_API_KEY dans l'environnement.\n",
-  );
-  return 0;
+/** Un chemin lisible : relatif au projet quand il en vient, `~` sinon. */
+function shorten(file: string): string {
+  if (file.startsWith(process.cwd())) return path.relative(process.cwd(), file);
+  const home = os.homedir();
+  return file.startsWith(home) ? `~${file.slice(home.length)}` : file;
 }
 
 async function cmdList(): Promise<number> {
@@ -256,26 +300,66 @@ async function cmdMove(from: string | undefined, to: string | undefined): Promis
   }
 }
 
-async function cmdRoute(prompt: string): Promise<number> {
+async function cmdRoute(prompt: string, flags: Flags): Promise<number> {
   if (!prompt.trim()) {
     process.stderr.write('Usage : contextree route "<prompt>"\n');
     return 1;
   }
   const { tree } = await open();
   const started = Date.now();
+  process.stderr.write(`${describeEngine()}\n`);
   const { selected, reason, error } = await route(tree, prompt);
   process.stderr.write(
     `${renderTrace(tree, selected, reason)} — ${Date.now() - started} ms${error ? ` — ${error}` : ''}\n\n` +
       `${formatTree(tree, selected)}\n\n`,
   );
-  process.stdout.write(`${renderContext(tree, selected)}\n`);
+  return emit(renderContext(tree, selected), Boolean(flags.copy));
+}
+
+async function cmdRender(flags: Flags): Promise<number> {
+  const { tree } = await open();
+  if (flags.agents) return emit(renderAgentsBlock(tree), Boolean(flags.copy));
+  return emit(renderContext(tree, new Set(tree.order)), Boolean(flags.copy));
+}
+
+/**
+ * La sortie, sur stdout ou dans le presse-papier.
+ *
+ * Le presse-papier est la surface d'injection des agents qui n'en ont aucune —
+ * Claude sur le web, ChatGPT, un chat quelconque : on ne peut rien y installer,
+ * mais on peut coller. C'est le même bloc que partout ailleurs, pas un format
+ * de plus. Échec de la copie ⇒ on écrit quand même sur stdout : mieux vaut du
+ * texte à sélectionner que rien.
+ */
+async function emit(text: string, copy: boolean): Promise<number> {
+  if (copy && (await toClipboard(text))) {
+    process.stderr.write(`${text.length} caractères copiés dans le presse-papier.\n`);
+    return 0;
+  }
+  if (copy) process.stderr.write('Presse-papier indisponible — sortie sur stdout.\n');
+  process.stdout.write(`${text}\n`);
   return 0;
 }
 
-async function cmdRender(): Promise<number> {
-  const { tree } = await open();
-  process.stdout.write(`${renderContext(tree, new Set(tree.order))}\n`);
-  return 0;
+/** Le presse-papier du système, sans dépendance : l'outil natif de la plateforme. */
+function toClipboard(text: string): Promise<boolean> {
+  const [bin, args] =
+    process.platform === 'darwin'
+      ? ['pbcopy', [] as string[]]
+      : process.platform === 'win32'
+        ? ['clip', []]
+        : ['xclip', ['-selection', 'clipboard']];
+  return new Promise(resolve => {
+    try {
+      const child = spawn(bin, args, { stdio: ['pipe', 'ignore', 'ignore'] });
+      child.on('error', () => resolve(false));
+      child.on('close', code => resolve(code === 0));
+      child.stdin.on('error', () => resolve(false));
+      child.stdin.end(text, 'utf8');
+    } catch {
+      resolve(false);
+    }
+  });
 }
 
 async function cmdExport(flags: Flags): Promise<number> {
@@ -492,6 +576,9 @@ async function remote(run: () => Promise<void>): Promise<number> {
 
 async function cmdHook(): Promise<number> {
   try {
+    // Le routeur peut lancer `claude -p` : si ce process relançait le hook, on
+    // partirait en boucle. Il se tait.
+    if (process.env['CONTEXTREE_ROUTING']) return 0;
     const raw = (await readStdin()) ?? '';
     const payload = raw.trim() ? (JSON.parse(raw) as Record<string, unknown>) : {};
     const prompt = typeof payload['prompt'] === 'string' ? payload['prompt'] : '';
@@ -505,8 +592,24 @@ async function cmdHook(): Promise<number> {
     if (!tree.order.length && !tree.rootContent.trim()) return 0;
 
     const previous = await readSelection(dir, sessionId);
-    const { selected, reason, error } = await route(tree, prompt, { previousSelection: previous });
-    await writeSelection(dir, sessionId, selected);
+
+    // Le routage par le CLI coûte entre 5 et 60 s : hors de question de le
+    // mettre devant le prompt. Ce tour part avec la sélection du tour précédent
+    // (l'arbre entier au premier tour), et le routage de *ce* prompt tourne
+    // derrière — il servira au tour suivant. `CONTEXTREE_ROUTER_BLOCKING=1`
+    // rend la main à l'attente si on préfère payer la latence.
+    const deferred =
+      isCliEngine(pickEngine()) && process.env['CONTEXTREE_ROUTER_BLOCKING'] !== '1';
+
+    const { selected, reason, error } = deferred
+      ? { selected: withoutRouting(tree, previous), reason: 'deferred' as const, error: undefined }
+      : await route(tree, prompt, { previousSelection: previous });
+
+    // En différé, c'est le process de fond qui écrira la sélection : l'écraser
+    // ici reviendrait à effacer le routage avant qu'il n'arrive.
+    if (deferred) routeInBackground(dir, sessionId, prompt);
+    else await writeSelection(dir, sessionId, selected);
+
     await appendTurn(dir, {
       at: Date.now(),
       prompt,
@@ -524,6 +627,74 @@ async function cmdHook(): Promise<number> {
     // bloqué est une panne.
   }
   return 0;
+}
+
+/**
+ * Le routage de ce prompt, lancé derrière et laissé seul.
+ *
+ * Détaché et sans stdio : il survit à la sortie du hook — c'est tout l'intérêt.
+ * Le prompt passe en base64, un `argv` n'a pas à deviner ce qu'un utilisateur
+ * peut écrire. Toute panne ici est un routage en moins, jamais un prompt bloqué.
+ */
+function routeInBackground(dir: string, sessionId: string, prompt: string): void {
+  try {
+    const entry = process.argv[1];
+    if (!entry) return;
+    const child = spawn(
+      process.execPath,
+      [
+        entry,
+        'route-bg',
+        '--dir', dir,
+        '--session', sessionId,
+        '--prompt64', Buffer.from(prompt.slice(0, 4000), 'utf8').toString('base64'),
+      ],
+      { detached: true, stdio: 'ignore' },
+    );
+    child.unref();
+  } catch {
+    // Pas de routage de fond : le tour suivant repartira du tour précédent.
+  }
+}
+
+/**
+ * Le routage de fond lui-même. Personne ne l'attend, donc il a le droit d'être
+ * lent — et il n'écrit que s'il a vraiment routé : un repli n'a rien à mettre
+ * dans le cache, il en sort.
+ */
+async function cmdRouteBackground(flags: Flags): Promise<number> {
+  try {
+    const dir = str(flags.dir);
+    const encoded = str(flags.prompt64);
+    if (!dir || !encoded) return 0;
+    const sessionId = str(flags.session) ?? 'default';
+    process.env['CONTEXTREE_ROUTER_TIMEOUT_MS'] ??= '120000';
+
+    const tree = await loadTree(dir);
+    const previous = await readSelection(dir, sessionId);
+    const prompt = Buffer.from(encoded, 'base64').toString('utf8');
+    const { selected, reason } = await route(tree, prompt, { previousSelection: previous });
+    if (reason === 'routed') await writeSelection(dir, sessionId, selected);
+  } catch {
+    // Même contrat que le hook : silencieux, code 0.
+  }
+  return 0;
+}
+
+/** D'où vient le routage sur cette machine — dit une fois, en clair : c'est la
+ *  question qu'on se pose quand rien ne se charge. */
+function describeEngine(): string {
+  const engine = pickEngine();
+  switch (engine) {
+    case 'anthropic':
+      return 'clé API Anthropic';
+    case 'openai':
+      return `endpoint compatible OpenAI — ${process.env['OPENAI_BASE_URL'] ?? 'api.openai.com'}`;
+    case 'none':
+      return 'aucun moteur — arbre entier injecté (installe un CLI `claude`/`codex`/`gemini`, ou pose ANTHROPIC_API_KEY / OPENAI_API_KEY)';
+    default:
+      return `CLI \`${engine}\` (ton abonnement) — ${engineBin(engine) ?? 'introuvable'}`;
+  }
 }
 
 // ── plomberie ────────────────────────────────────────────────────────────────

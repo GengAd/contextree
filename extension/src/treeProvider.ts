@@ -2,7 +2,8 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 // Le paquet est ESM, ce fichier est compilé en CommonJS : les types doivent
 // être résolus en mode `import`, et le module chargé par `import()` dynamique.
-import type { AiWrite, Branch, BranchType, ContextTree } from '@gengad/contextree' with { 'resolution-mode': 'import' };
+import type { AiWrite, Branch, BranchType, ContextTree } from '@gengad/contextree/view' with { 'resolution-mode': 'import' };
+import { LOADED_COLOR } from './turn.js';
 
 /** `root.md` — toujours injecté, jamais routé. Ce n'est pas une branche, mais
  *  il doit se lire et s'éditer comme les autres, donc il a sa ligne. */
@@ -20,7 +21,7 @@ export const FRESH_MS = 15 * 60 * 1000;
 
 /** Les écritures de l'IA encore fraîches, la plus récente par branche. */
 export async function freshWrites(
-  core: typeof import('@gengad/contextree', { with: { 'resolution-mode': 'import' } }),
+  core: Core,
   treeDir: string,
 ): Promise<Map<string, AiWrite>> {
   const cutoff = Date.now() - FRESH_MS;
@@ -42,15 +43,32 @@ export function ago(at: number): string {
   return `il y a ${Math.round(seconds / 60)} min`;
 }
 
-type Core = typeof import('@gengad/contextree', { with: { 'resolution-mode': 'import' } });
+export type Core = typeof import('@gengad/contextree/view', { with: { 'resolution-mode': 'import' } });
 
 let corePromise: Promise<Core> | undefined;
 
-/** Chargement paresseux et unique du cœur, partagé par les deux vues. */
+/**
+ * Chargement paresseux et unique du cœur, partagé par les deux vues.
+ *
+ * Le cœur est **copié** dans `out/core/` (`npm run bundle:core`), pas résolu
+ * depuis `node_modules` : un lien `file:..` fait suivre à `vsce` tout le
+ * `node_modules` du repo, avec des chemins qui sortent du dossier — un `.vsix`
+ * impossible à produire. Ici, c'est un chemin relatif dans le paquet.
+ *
+ * `view.js` et pas `index.js` : le barillet complet tire le routeur et le
+ * serveur MCP, donc les trois dépendances du projet. Une vue n'en a aucune.
+ */
 export function loadCore(): Promise<Core> {
-  corePromise ??= import('@gengad/contextree');
+  // Spécificateur non littéral : `out/core/` est rempli après la compilation
+  // (`npm run bundle:core`), donc tsc n'a rien à résoudre ici. Le `.js` copié
+  // est ESM et le dit (un `package.json` de deux lignes est copié à côté) ;
+  // `module: node16` préserve l'`import()`, seule façon de charger de l'ESM
+  // depuis ce fichier compilé en CommonJS.
+  corePromise ??= import(CORE_ENTRY) as Promise<Core>;
   return corePromise;
 }
+
+const CORE_ENTRY = './core/view.js';
 
 const ICONS: Record<BranchType, string> = {
   identity: 'account',
@@ -65,10 +83,20 @@ const ICONS: Record<BranchType, string> = {
 export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
   private tree: ContextTree | null = null;
   private writes = new Map<string, AiWrite>();
+  /** Les `.md` injectés au dernier tour, tenus à jour par l'observateur du
+   *  journal. Sert à teindre l'icône : la décoration de fichier ne peint que le
+   *  libellé et la pastille, et une ligne à moitié teinte se lit mal. */
+  private loaded: (file: string) => boolean = () => false;
   private readonly changed = new vscode.EventEmitter<string | undefined>();
   readonly onDidChangeTreeData = this.changed.event;
 
   constructor(private readonly searchFrom: string) {}
+
+  /** Rebranche la source du surlignage et redessine les lignes. */
+  setLoaded(loaded: (file: string) => boolean): void {
+    this.loaded = loaded;
+    this.changed.fire(undefined);
+  }
 
   get treeDir(): string | null {
     return this.tree?.dir ?? null;
@@ -109,9 +137,12 @@ export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
     if (element === ROOT_ELEMENT) {
       const item = new vscode.TreeItem('Racine', vscode.TreeItemCollapsibleState.None);
       item.description = 'toujours injectée';
-      item.iconPath = new vscode.ThemeIcon('symbol-namespace');
       item.tooltip = tooltip('Racine', 'toujours injectée, jamais routée', tree.rootContent);
       item.resourceUri = vscode.Uri.file(path.join(tree.dir, ROOT_FILE));
+      item.iconPath = new vscode.ThemeIcon(
+        'symbol-namespace',
+        this.loaded(item.resourceUri.fsPath) ? LOADED_COLOR : undefined,
+      );
       item.command = open(item.resourceUri);
       item.contextValue = 'contextree.root';
       return item;
@@ -136,12 +167,18 @@ export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
     if (branch.layer === 'local') bits.push('local');
     if (write) bits.push(`IA ${ago(write.at)}`);
     item.description = bits.join(' · ');
-    item.iconPath = new vscode.ThemeIcon(
-      ICONS[branch.type] ?? 'circle-outline',
-      write ? new vscode.ThemeColor('gitDecoration.modifiedResourceForeground') : undefined,
-    );
     item.tooltip = tooltip(branch.title, branch.loadWhen, branch.content, branch, write);
     item.resourceUri = vscode.Uri.file(fileForBranch(tree, branch.path));
+    // Une écriture fraîche l'emporte sur le surlignage du tour : elle vient de
+    // se produire, l'injection est l'état permanent.
+    item.iconPath = new vscode.ThemeIcon(
+      ICONS[branch.type] ?? 'circle-outline',
+      write
+        ? new vscode.ThemeColor('gitDecoration.modifiedResourceForeground')
+        : this.loaded(item.resourceUri.fsPath)
+          ? LOADED_COLOR
+          : undefined,
+    );
     item.command = open(item.resourceUri);
     item.contextValue = 'contextree.branch';
     return item;

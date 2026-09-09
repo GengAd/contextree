@@ -2,8 +2,9 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { CanvasPanel } from './canvasPanel.js';
 import { ContextTreeProvider, ROOT_ELEMENT, freshWrites, loadCore } from './treeProvider.js';
-import { StatusBar, lastTurn, watchJournal } from './statusBar.js';
+import { LoadedDecorations, lastTurn, turnDescription, watchJournal } from './turn.js';
 import * as edit from './edit.js';
+import { wireAgent, initFromView } from './wire.js';
 
 /** Les opérations de structure exposées par les deux vues. Une seule liste :
  *  la barre latérale et la toile appellent le même code. */
@@ -13,23 +14,45 @@ export function activate(context: vscode.ExtensionContext): void {
   const folder = vscode.workspace.workspaceFolders?.[0];
   const searchFrom = folder?.uri.fsPath ?? process.cwd();
   const provider = new ContextTreeProvider(searchFrom);
-  const status = new StatusBar();
+  const view = vscode.window.createTreeView('contextree.tree', { treeDataProvider: provider });
+  const decorations = new LoadedDecorations();
 
-  /** Ce qui a réellement été chargé au dernier tour : la barre d'état et la
-   *  toile lisent le même journal, elles ne peuvent pas se contredire. */
+  /**
+   * Ce qui a réellement été chargé au dernier tour, montré là où on regarde
+   * déjà : les branches lues sont surlignées dans la barre latérale, et le
+   * titre de la vue porte l'état du routage. La vue et la toile lisent le même
+   * journal, elles ne peuvent pas se contredire.
+   */
   const refreshTurn = async (): Promise<void> => {
     try {
       const core = await loadCore();
       const dir = await core.findTreeDir(searchFrom);
-      if (!dir) return status.hide();
+      if (!dir) {
+        view.description = undefined;
+        decorations.set([], null);
+        provider.setLoaded(() => false);
+        return;
+      }
       const tree = await core.loadTree(dir);
       const total = tree.order.length;
       const last = await lastTurn(core, dir, total);
-      status.show(last, total);
+      view.description = turnDescription(last, total);
+      // `root.md` est toujours injecté : il fait partie de ce qui a été lu.
+      decorations.set(
+        last
+          ? [
+              vscode.Uri.joinPath(vscode.Uri.file(dir), core.ROOT_FILE).fsPath,
+              ...last.turn.selected.map(p => core.branchFile(dir, p)),
+            ]
+          : [],
+        last?.turn.reason ?? null,
+      );
+      provider.setLoaded(file => decorations.has(file));
       await CanvasPanel.setTurn(last);
     } catch {
-      // La barre d'état est un badge, pas un chemin critique.
-      status.hide();
+      // Le surlignage est un confort, pas un chemin critique.
+      decorations.set([], null);
+      provider.setLoaded(() => false);
     }
   };
 
@@ -119,11 +142,58 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
+  /**
+   * L'autre moitié : écrire le `load_when` et le corps depuis la toile.
+   *
+   * Même discipline que `runEdit` — l'arbre est relu juste avant (les `.md`
+   * sont la source de vérité et ont pu changer), le cœur écrit, les vues
+   * rechargent après. Le booléen remonte jusqu'à la toile : elle ne jette son
+   * brouillon que si quelque chose a vraiment été écrit.
+   */
+  const runSave = async (target: string, patch: edit.SavePatch): Promise<boolean> => {
+    const core = await loadCore();
+    const dir = await core.findTreeDir(searchFrom);
+    if (!dir) return false;
+    const written = await edit.saveBranch(core, await core.loadTree(dir), target, patch);
+    if (written) reloadViews();
+    return written;
+  };
+
   CanvasPanel.onEdit(runEdit);
+  CanvasPanel.onSave(runSave);
+
+  // Le surlignage des branches lues est un confort, et `FileDecorationProvider`
+  // est l'API la plus susceptible de manquer dans un fork de VS Code. Absente,
+  // la vue perd la pastille et garde tout le reste — jamais une extension qui
+  // ne s'active pas.
+  if (typeof vscode.window.registerFileDecorationProvider === 'function') {
+    context.subscriptions.push(vscode.window.registerFileDecorationProvider(decorations));
+  }
 
   context.subscriptions.push(
-    status.disposable,
-    vscode.window.registerTreeDataProvider('contextree.tree', provider),
+    view,
+    vscode.commands.registerCommand('contextree.init', async () => {
+      try {
+        if (!folder) {
+          vscode.window.showErrorMessage('contextree : ouvre un dossier pour y créer un arbre.');
+          return;
+        }
+        if (await initFromView(await loadCore(), folder.uri.fsPath)) reloadViews();
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `contextree : ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }),
+    vscode.commands.registerCommand('contextree.wire', async () => {
+      try {
+        if (await wireAgent(await loadCore(), searchFrom)) reloadViews();
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `contextree : ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }),
     vscode.commands.registerCommand('contextree.openCanvas', () =>
       CanvasPanel.show(context, loadCore, searchFrom),
     ),

@@ -24,16 +24,6 @@ export function withAncestors(tree: ContextTree, selected: Iterable<string>): Se
   return out;
 }
 
-/** Les branches garanties : `identity` + `rule`. C'est le filet du routeur —
- *  jamais un ensemble vide quand l'appel de routage échoue. */
-export function guaranteedBranches(tree: ContextTree): Set<string> {
-  const ids = new Set<string>();
-  for (const b of allBranches(tree)) {
-    if (b.type === 'identity' || b.type === 'rule') ids.add(b.path);
-  }
-  return withAncestors(tree, ids);
-}
-
 /** Rendu arborescent pour la CLI. */
 export function formatTree(tree: ContextTree, highlight?: Set<string>): string {
   const lines: string[] = [];

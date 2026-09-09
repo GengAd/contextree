@@ -7,8 +7,8 @@ Comme un `CLAUDE.md` — mais au lieu de charger tout le fichier à chaque fois,
 ```
 .contextree/
 ├── root.md                    toujours injecté
-├── identite.md                (identity) — garanti si le routage échoue
-├── regles.md                  (rule)     — garanti si le routage échoue
+├── identite.md                (identity) — chargé si pertinent
+├── regles.md                  (rule)     — chargé si pertinent
 ├── architecture.md            (context)  — chargé si pertinent
 │   └── commandes.md           (reference)
 └── revue-de-code.md           (skill)
@@ -26,7 +26,7 @@ load_when: quand on touche à un composant ou du CSS
 - Tous les textes affichés sont en anglais.
 ```
 
-À chaque prompt, un appel IA léger lit ces conditions et retient les branches qui comptent. **Si un enfant est retenu, ses parents le sont aussi** — une branche profonde n'a de sens qu'avec le chemin qui y mène. Si le routage échoue, on retombe sur `identity` + `rule` : jamais un contexte vide, jamais un prompt bloqué.
+À chaque prompt, un appel IA léger lit ces conditions et retient les branches qui comptent. **Si un enfant est retenu, ses parents le sont aussi** — une branche profonde n'a de sens qu'avec le chemin qui y mène. Aucun type n'est privilégié : c'est le `load_when` qui décide, ou personne. Si le routage échoue, on retombe sur la sélection du tour précédent, sinon sur l'arbre entier — jamais un contexte vide, jamais un prompt bloqué.
 
 ## Démarrer
 
@@ -36,16 +36,38 @@ npx @gengad/contextree init      # crée .contextree/ avec un arbre de départ
 npx @gengad/contextree install   # câble le serveur MCP + le hook Claude Code
 ```
 
-Puis relance Claude Code. Le routage utilise l'API Anthropic — `ANTHROPIC_API_KEY` dans l'environnement, ou un profil `ant auth login`.
+Puis relance Claude Code. **Aucune clé API n'est nécessaire** : si un CLI d'agent (`claude`, `codex`, `gemini`) est installé, c'est ton abonnement qui route. Une clé (`ANTHROPIC_API_KEY`, ou `OPENAI_API_KEY` avec au besoin `OPENAI_BASE_URL` pour Groq, OpenRouter, Ollama, LM Studio) est utilisée si elle est là — c'est juste plus rapide.
 
-## Deux surfaces
+Le routage par le CLI coûte entre 5 et 60 s : le hook ne l'attend donc jamais. Le tour part avec la sélection du tour précédent et le routage tourne derrière, pour le tour suivant — le hook rend la main en ~150 ms. `contextree route "<prompt>"` montre à tout moment ce que le routeur retiendrait.
+
+## Trois surfaces
+
+Tous les agents n'ont pas de hook. Par ordre de qualité — c'est l'ordre dans lequel `install` câble :
 
 | | Comment | Où |
 |---|---|---|
 | **Hook** `UserPromptSubmit` | Injection **déterministe** à chaque prompt, sans que l'agent ait à décider | Claude Code |
-| **Serveur MCP** | L'agent appelle `get_context` ; sert aussi à lire et éditer l'arbre depuis la conversation | Claude Code, Cursor, Windsurf, tout client MCP |
+| **Serveur MCP** | L'agent appelle `get_context` ; sert aussi à lire et éditer l'arbre depuis la conversation | Claude Code, Codex, Cursor, Windsurf, tout client MCP |
+| **`AGENTS.md`** | Un bloc borné : la racine et le catalogue, pas l'arbre entier — l'agent route lui-même | Codex, et tout agent sans hook |
 
-Les deux lisent le même arbre et le même routeur.
+Les trois lisent le même arbre et le même routeur.
+
+Cinq agents sont câblables : **Claude Code**, **Cursor**, **Codex**, **Windsurf**, **Claude Desktop**.
+
+```bash
+npx @gengad/contextree install            # tout ce qui est détecté
+npx @gengad/contextree install --status   # câblé / à câbler / non détecté, sans rien écrire
+npx @gengad/contextree install --agent cursor
+```
+
+Ce qui se configure hors du projet (Codex, Windsurf, Claude Desktop) n'est câblé que si l'agent est détecté, ou nommé explicitement. Depuis l'extension, le même geste est un bouton — **contextree : ajouter à une IA** — qui montre l'état de chaque agent avant d'écrire, et dit ensuite quels fichiers ont bougé.
+
+**Un agent sans aucune surface** — Claude sur le web, ChatGPT, un chat quelconque ? On ne peut rien y installer, mais on peut coller :
+
+```bash
+npx @gengad/contextree render --copy                # l'arbre entier dans le presse-papier
+npx @gengad/contextree route "<ta demande>" --copy  # seulement la fraction routée
+```
 
 ## CLI
 
@@ -76,6 +98,25 @@ Les groupes, les arbres publics et les hiérarchies d'entreprise sont les phases
 `get_context` · `list_branches` · `read_branch` · `upsert_branch` · `delete_branch` · `export_pack` · `import_pack`
 
 `upsert_branch` est le levier participatif : quand l'IA découvre un fait durable sur le projet, elle le propose comme branche. L'arbitrage se fait en relisant un diff git.
+
+## Voir son arbre dans l'éditeur
+
+Une extension (`extension/`) montre l'arbre dans la barre latérale, en surligne les branches réellement lues au dernier tour, et ouvre une toile 2D pour essayer un prompt sans lancer de conversation. La structure s'édite depuis la vue — créer, renommer, changer le type, déplacer ; le contenu reste dans le `.md` ouvert à côté.
+
+Sur un projet sans arbre, la vue propose de le **créer** puis de le **brancher à une IA** : le démarrage complet sans passer par un terminal.
+
+```bash
+npm run package:ext    # produit extension/contextree-vscode-0.1.0.vsix
+```
+
+Puis, selon l'éditeur :
+
+```bash
+code   --install-extension extension/contextree-vscode-0.1.0.vsix
+cursor --install-extension extension/contextree-vscode-0.1.0.vsix
+```
+
+(ou la palette de commandes → « Extensions: Install from VSIX »). Rien n'est publié tant que le repo est privé ; le jour venu, ce sera **Open VSX** d'abord — c'est le registre que lisent Cursor, Windsurf et VSCodium.
 
 ## Transparence
 

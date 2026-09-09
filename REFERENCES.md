@@ -88,18 +88,52 @@ Ce que ça invalide : le cache de session et le journal des tours référencent 
 
 Un appel IA léger reçoit le catalogue des branches — index, type, titre, `load_when` — plus le message de l'utilisateur, et renvoie les indices retenus. Les indices 0-based évitent au modèle de recopier des chemins, source classique d'échec.
 
-Points de conception, chacun payé par une leçon :
+### Les moteurs, dans cet ordre (`pickEngine`)
 
-- **Sortie structurée** (`output_config.format` + JSON Schema) : le routeur ne peut pas renvoyer autre chose qu'un tableau d'entiers. Le parseur reste tolérant (tableau nu, JSON encadré de texte) au cas où un modèle ou un proxy n'appliquerait pas le schéma.
+Le routeur ne demande qu'un **tableau d'entiers** : n'importe quel modèle correct sait le rendre, donc rien ici n'est propre à Claude. Deux familles, et un ordre — une clé explicite (le chemin le plus court), sinon un CLI d'agent déjà authentifié sur la machine.
+
+| Moteur | Quand | Latence mesurée |
+|---|---|---|
+| `anthropic` | une clé est là (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, ou passée en argument) | ~1 s, budget 2,5 s |
+| `openai` | sinon, si `OPENAI_API_KEY` est posée — endpoint compatible OpenAI | ~1 s, budget 2,5 s |
+| `claude`, `codex`, `gemini` | sinon, le premier binaire trouvé — **c'est l'abonnement de l'utilisateur** | 5 à 60 s (voir plus bas) |
+| `none` | rien de tout ça : l'arbre entier est injecté, et `error` le dit | 0 |
+
+**Personne ne devrait avoir à sortir une clé API** pour router son propre arbre alors que sa machine sait déjà parler à un modèle. Les moteurs CLI partagent la même mécanique (`CliSpec`) : prompt sur stdin — un catalogue d'arbre n'a rien à faire dans un `argv` — et process réduit au strict nécessaire.
+
+- `claude -p` : `--tools ''`, `--strict-mcp-config --mcp-config '{"mcpServers":{}}'`, `--setting-sources ''` (donc **aucun hook** — sinon le routage relancerait le hook qui l'a appelé), `--no-session-persistence`, `--disable-slash-commands`, consigne système par `--system-prompt`.
+- `codex exec - --sandbox read-only --skip-git-repo-check` : un routeur n'écrit rien, et tourne parfois hors d'un dépôt.
+- `gemini` sans TTY : lit son prompt sur stdin et rend la main.
+
+`CONTEXTREE_ROUTING=1` dans l'environnement du fils est le second garde-fou anti-récursion : `cmdHook` sort immédiatement s'il le voit.
+
+**Le modèle n'est deviné pour personne.** `claude` route sur `haiku` (mesuré), les autres CLI partent sur le défaut de l'utilisateur sauf si `CONTEXTREE_ROUTER_MODEL` tranche : inventer un identifiant de modèle pour un CLI qu'on ne maîtrise pas, c'est un moteur qui échoue au premier appel.
+
+Le moteur `openai` est **un `fetch`, pas un SDK** : la quatrième dépendance du projet ne se justifie pas pour trois lignes de POST, et le même dialecte couvre OpenAI, Groq, OpenRouter, Ollama et LM Studio (`OPENAI_BASE_URL`). Le corps est volontairement minimal — modèle et messages, rien d'autre : `temperature`, `max_tokens` et `response_format` sont refusés par une partie de ces endpoints (modèles de raisonnement, serveurs locaux), et c'est le timeout qui borne l'appel.
+
+**Un moteur forcé n'est pas vérifié.** `CONTEXTREE_ROUTER=codex` sur une machine sans `codex` échoue et tombe dans le fallback — plutôt qu'un repli silencieux sur un moteur que l'utilisateur n'a pas demandé.
+
+Deux détails payés par la mesure :
+
+- **Pas de `--json-schema`** sur le chemin CLI : la sortie structurée y coûte un tour de plus et double la latence. On demande le tableau en toutes lettres et on garde un parseur tolérant — mais **strict sur le contenu** : un tableau qui n'est pas fait d'entiers n'est pas une réponse de routeur, c'est du texte avec des crochets, et on préfère le repli à une sélection vide obtenue en filtrant des chaînes. Comme un CLI d'agent préfixe volontiers sa réponse (bannière, horodatage, session), c'est le **dernier** tableau d'entiers de la sortie qui compte : la réponse est à la fin, le bruit est devant.
+- **L'environnement est nettoyé** (`cleanEnv`) de tout `CLAUDE*` sauf `CLAUDE_CONFIG_DIR` : le hook tourne *dans* Claude Code, et le fils héritait sinon de `CLAUDE_EFFORT` — un routeur qui n'a rien à réfléchir se mettait à réfléchir. (`CLAUDE_CONFIG_DIR` reste : les identifiants de l'abonnement sont là.)
+
+### Le hook ne l'attend pas : routage différé
+
+Un moteur CLI est trop lent pour être mis devant un prompt. `cmdHook` ne l'attend donc **jamais** : le tour part avec la sélection du tour précédent (l'arbre entier au premier tour, `reason: 'deferred'`), et le routage de *ce* prompt part en tâche de fond — `contextree route-bg`, détaché, sans stdio, qui survit à la sortie du hook et n'écrit le cache de session que s'il a vraiment routé. Le tour suivant en profite. Mesuré : **hook à ~150 ms**, routage utile dès le deuxième prompt.
+
+C'est le prix assumé : le routage est décalé d'un tour. Dans une conversation, deux prompts consécutifs portent presque toujours sur la même tâche — et un tour de retard coûte infiniment moins cher que 12 s d'attente avant chaque prompt. `CONTEXTREE_ROUTER_BLOCKING=1` rend l'attente à qui la préfère ; avec une clé API (moteur `anthropic` ou `openai`, ~1 s) le hook route en direct, sans différé.
+
+### Les autres points de conception
+
+- **Sortie structurée côté SDK** (`output_config.format` + JSON Schema) : là, elle est gratuite.
 - **Pas de thinking, `effort: low`** : le routeur a un budget latence, pas un budget réflexion. Les deux pièges connus du mode thinking-off ne s'appliquent pas ici — aucun outil déclaré, et la sortie est contrainte par un schéma.
-- **Timeout 2,5 s, `maxRetries: 0`** : au-delà, on tombe en fallback. L'appel principal ne doit jamais attendre après le routeur.
-- **Fallback jamais vide** : sélection précédente (sticky, cache de session) + `identity` + `rule`, ancêtres inclus. Un échec transitoire ne doit pas retirer d'un coup le contexte que le tour d'avant avait.
+- **Fallback jamais vide, et jamais typé** (`withoutRouting`) : la sélection précédente (sticky, cache de session), sinon l'arbre entier. Aucun type n'est privilégié — un `identity` n'est pas plus « garanti » qu'un `reference`, c'est le `load_when` qui décide, ou personne. (Avant le 8 septembre 2026, le filet était `identity` + `rule` : une règle invisible qui décidait à la place du `load_when`, et qui faisait mentir la vue.)
 - **Court-circuit ≤ 3 branches** : en dessous, l'aller-retour de routage coûte plus que d'injecter tout l'arbre.
-- **Pas de garde sur `ANTHROPIC_API_KEY`** : le SDK résout aussi `ANTHROPIC_AUTH_TOKEN` et les profils `ant auth login`. Une absence d'identifiants remonte comme n'importe quelle autre erreur, et tombe dans le même fallback.
 
-Variables : `CONTEXTREE_ROUTER_MODEL` (défaut `claude-opus-5`), `CONTEXTREE_ROUTER_TIMEOUT_MS` (défaut `2500`).
+Variables : `CONTEXTREE_ROUTER` (`auto` | `anthropic` | `openai` | `claude` | `codex` | `gemini` | `off` ; `sdk` et `cli` restent compris), `CONTEXTREE_ROUTER_MODEL` (défaut `claude-opus-5` sur clé Anthropic, `gpt-4o-mini` sur endpoint OpenAI, `haiku` sur le CLI `claude`, celui de l'utilisateur ailleurs), `CONTEXTREE_ROUTER_TIMEOUT_MS` (défaut `2500` sur API, `20000` en CLI), `CONTEXTREE_ROUTER_BLOCKING`, `OPENAI_API_KEY` / `OPENAI_BASE_URL`, `CONTEXTREE_CLAUDE_BIN`.
 
-> **Choix de modèle à trancher.** Le défaut est `claude-opus-5`. Pour un routeur appelé à chaque prompt, un modèle plus petit (`claude-haiku-4-5`, `claude-sonnet-5`) diviserait le coût et la latence — la tâche est une classification sur un catalogue court. À arbitrer en mesurant la qualité de sélection sur de vrais prompts avant de changer le défaut.
+> **Choix de modèle à trancher.** Le défaut sur clé Anthropic est `claude-opus-5`. Pour un routeur appelé à chaque prompt, un modèle plus petit (`claude-haiku-4-5`, `claude-sonnet-5`) diviserait le coût et la latence — la tâche est une classification sur un catalogue court. À arbitrer en mesurant la qualité de sélection sur de vrais prompts avant de changer le défaut. (Le moteur CLI, lui, est déjà sur `haiku`.)
 
 ## Injection (`src/core/render.ts`)
 
@@ -107,9 +141,14 @@ Le bloc est encadré par `<contextree>…</contextree>` et assemblé dans cet or
 
 1. le contenu de `root.md` (toujours),
 2. `## Rules` — les branches `identity` et `rule` retenues,
-3. `## Context` — tout le reste.
+3. `## Context` — tout le reste,
+4. `## Catalogue — branches non chargées` — une ligne par branche **écartée** : titre, type, `load_when`.
 
-Les règles passent avant le contexte parce que ce sont des contraintes : le modèle doit les avoir en tête avant de lire la doc de domaine. Chaque branche devient `### <title>` suivi de son corps.
+Les règles passent avant le contexte parce que ce sont des contraintes : le modèle doit les avoir en tête avant de lire la doc de domaine. Chaque branche devient `### <title>` suivi de son corps. Le catalogue passe en dernier — on le lit une fois qu'on sait ce qu'on a reçu.
+
+**Le catalogue est ce qui rend le modèle « pull » possible** (8 septembre 2026). Le routage se fait sur le **prompt seul**, et un prompt comme « prends la prochaine tâche » ne dit rien de la tâche — elle est dans une carte Trello qu'on n'a pas encore lue. Sans catalogue, l'agent qui reçoit une branche n'a aucun moyen de savoir qu'il en existe onze autres : `renderTrace` part sur stderr, qu'il ne voit pas. On ne tire pas ce dont on ignore l'existence.
+
+Le push devient donc une **avance**, pas un remplacement : le bloc invite à rappeler `get_context` dès que la tâche se précise, et les instructions du serveur MCP disent la même chose — elles disaient jusque-là l'inverse (« sous Claude Code, ne rappelle pas `get_context` »). C'est aussi ce qui aligne cette surface sur `renderAgentsBlock`, qui donne le catalogue depuis toujours : les trois surfaces sont des adaptateurs au-dessus du même moteur, et celle-ci en divergeait. Un **seul rendu de catalogue** est partagé par les deux, pour qu'elles ne redivergent pas.
 
 `renderTrace` produit la ligne de transparence (nombre de branches, lesquelles, routé/fallback/tout). Le hook l'écrit sur stderr, l'outil MCP en commentaire HTML. **Jamais de boîte noire** — c'est un engagement produit, pas un détail de debug.
 
@@ -122,6 +161,46 @@ Les règles passent avant le contexte parce que ce sont des contraintes : le mod
 C'est le seul chemin *déterministe* : il ne dépend pas de la décision de l'agent d'appeler un outil. Le serveur MCP est le chemin *portable*. Les deux lisent le même arbre et le même routeur.
 
 `contextree install` fusionne les entrées dans `.mcp.json` et `.claude/settings.json` — jamais d'écrasement, idempotent, et on ne touche pas à une entrée existante qui ne vient pas de nous.
+
+### Les autres agents (`src/install.ts`)
+
+Tous les agents n'ont pas de hook. Trois surfaces, par ordre de qualité — c'est l'ordre dans lequel on câble :
+
+| Surface | Où | Qualité |
+|---|---|---|
+| Hook par prompt | `.claude/settings.json` | **déterministe** — l'agent ne décide de rien |
+| Serveur MCP | `.mcp.json`, `~/.codex/config.toml` | portable, mais l'agent doit vouloir appeler `get_context` |
+| Fichier de consignes | `AGENTS.md` | dernier recours, pour qui n'a ni l'un ni l'autre |
+
+**Codex** n'a pas d'équivalent de `UserPromptSubmit` : il reçoit le serveur MCP (`[mcp_servers.contextree]` ajouté **à la fin** de `~/.codex/config.toml` — pas de parseur TOML, ce serait la 4e dépendance pour six lignes, et une table finale ne peut être avalée par aucune table précédente) et un bloc dans `AGENTS.md`.
+
+**Ce bloc n'est jamais l'arbre entier** (`renderAgentsBlock`) : la racine, plus le catalogue — titre et `load_when`, les mêmes lignes que lit le routeur — et la consigne d'appeler `get_context` pour le reste. Y déverser le contenu des branches reconstituerait exactement le gros fichier de consignes que contextree existe pour remplacer. Le bloc est borné par `<!-- contextree:start -->` / `<!-- contextree:end -->`, remplacé à l'identique d'une resynchronisation à l'autre, et ce qui est dehors appartient à l'utilisateur.
+
+**Les agents sans aucune surface** (Claude sur le web, ChatGPT, un chat quelconque) : on ne peut rien y installer, mais on peut coller. `contextree render --copy` met l'arbre entier dans le presse-papier, `contextree route "<demande>" --copy` seulement la fraction routée, `contextree render --agents` le bloc court. C'est le même bloc que partout ailleurs — surtout pas un format de plus.
+
+Un jeton d'export (`export --token`) **n'est pas** une réponse ici : c'est du base64 compressé, fait pour greffer un arbre dans une autre installation de contextree, illisible pour un modèle.
+
+Ce qui est câblé hors du projet (le home de l'utilisateur) ne l'est **que si l'agent est détecté**, ou nommé par `--agent` : écrire dans le `~` de quelqu'un qui n'utilise pas l'outil serait une surprise, pas un service.
+
+### Le registre des agents (`AGENTS`)
+
+Cinq agents, une table. Chacun répond à trois questions **sans rien modifier** — est-il là (`marks`), est-il déjà câblé (`wired`), qu'est-ce qu'on écrirait (`files`) — plus une quatrième qui écrit (`install`).
+
+| Agent | Où | Surface |
+|---|---|---|
+| Claude Code | `.claude/settings.json` + `.mcp.json` | hook + MCP |
+| Cursor | `.cursor/mcp.json` (le projet, pas le home) | MCP |
+| Codex | `~/.codex/config.toml` + `AGENTS.md` | MCP + consignes |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | MCP |
+| Claude Desktop | `~/Library/Application Support/Claude/…` (selon l'OS) | MCP |
+
+Quatre des cinq partagent la forme `{ "mcpServers": … }` : une seule fonction (`installMcpJson`) et une table de chemins, plutôt qu'un adaptateur par agent qui divergerait au premier correctif.
+
+**Séparer « regarder » de « écrire » est le point de toute cette table.** `agentStatus()` rend l'état sans toucher au disque, ce qui permet à `contextree install --status` et au bouton de l'extension de **montrer** « câblé / à câbler / non détecté » au lieu de tenter l'écriture pour découvrir le résultat.
+
+**Câblé = tous ses fichiers le sont.** Un serveur MCP posé sans le hook est un câblage à moitié fait : l'annoncer comme terminé serait mentir sur la seule surface déterministe.
+
+La détection d'un hook déjà posé cherche `contextree` dans la commande — ce que `install` écrit toujours (`npx -y @gengad/contextree hook`). Un câblage écrit à la main avec un chemin local (`node dist/cli.js hook`, comme dans ce dépôt) n'est donc pas reconnu ; c'est le cas du développeur du projet, pas celui d'un utilisateur.
 
 ## MCP (`src/mcp/server.ts`)
 
@@ -145,7 +224,7 @@ Un `ContextPack` est un objet plat autonome (`v: 1`, `rootContent`, `branches[]`
 
 Ce qui a été chargé, tour après tour — la donnée que `renderTrace` envoyait sur `stderr`, gardée pour que la vue puisse montrer ce qui a **réellement** servi.
 
-Par tour : horodatage, extrait du prompt (200 caractères, mis à plat), branches retenues, `reason` (`routed` / `all` / `fallback` — c'est lui l'indicateur de repli, pas un booléen en double), `source` (`hook` ou `mcp`) et l'erreur du routeur s'il y en a eu une.
+Par tour : horodatage, extrait du prompt (200 caractères, mis à plat), branches retenues, `reason` (`routed` / `all` / `fallback` / `deferred` — c'est lui l'indicateur de repli, pas un booléen en double), `source` (`hook` ou `mcp`) et l'erreur du routeur s'il y en a eu une.
 
 - **Séparé du cache sticky.** `session.ts` a un contrat dont dépend le fallback du tour suivant : un journal corrompu ne doit jamais pouvoir abîmer le routage.
 - **Clé par dossier d'arbre, pas par session.** Un arbre, un journal, toutes sessions confondues — la vue ne connaît pas le `session_id` et n'a pas à deviner quel fichier lire.
@@ -153,25 +232,39 @@ Par tour : horodatage, extrait du prompt (200 caractères, mis à plat), branche
 - **50 derniers tours**, écriture par fichier temporaire renommé — un lecteur ne tombe jamais sur un JSON à moitié écrit.
 - **`appendTurn` ne rejette jamais.** Même invariant que le hook : écrire le journal ne peut pas bloquer un prompt.
 
-Côté vue (`extension/src/statusBar.ts`), le journal alimente deux choses, à partir de la même lecture — elles ne peuvent donc pas se contredire :
+Côté vue (`extension/src/turn.ts`), le journal alimente deux choses, à partir de la même lecture — elles ne peuvent donc pas se contredire :
 
-- **la barre d'état** — `contextree · 4/9 branches`, clic pour ouvrir la toile. Une extension ne peut rien afficher dans le fil de conversation de Cursor ou de Claude Code : c'est le seul endroit à la fois permanent et jamais dans le chemin. Un repli passe l'icône en `$(warning)` et le fond en `statusBarItem.warningBackground` — un repli doit se voir, pas se lire ;
-- **la toile** — les branches du dernier tour en `●`, les autres estompées, l'extrait du prompt dans le bandeau. En repli, les cartes allumées perdent leur couleur de type : ce sont les branches garanties, pas un choix.
+- **la barre latérale** — un `FileDecorationProvider` pose une pastille `•` sur les `.md` lus au dernier tour, **sans couleur** : `FileDecoration.color` teint le libellé entier, et une moitié d'arbre colorée se lit comme une alerte alors qu'il ne s'est rien passé d'anormal. Le titre de la vue porte l'état (`4/9 · routé`), c'est là que se lit la différence entre un routage et un repli. Décorateur de *fichier* et pas couleur d'icône : la même marque apparaît dans l'explorateur et sur l'onglet ouvert. (Il a remplacé le badge de barre d'état le 8 septembre 2026 : personne ne regarde en bas à droite.)
+- **la toile** — un **point dans la couleur du type** sur les cartes lues, à côté du badge ; le reste de l'arbre est intact. En repli, le point perd sa couleur de type et passe au gris.
+
+Deux marches manquées avant d'arriver là, le 8 septembre 2026, et elles disent la même chose : **une lecture est un fait ordinaire, pas un événement.** Estomper le non-lu (opacité 0,32) rendait illisible la moitié de l'arbre — or c'est justement dans les branches *non* lues qu'on va corriger un `load_when`. Puis l'entourer de rouge criait pour rien. Un point dans une couleur déjà présente se remarque sans agresser, et n'ajoute rien à la palette.
 
 La toile porte deux surlignages, jamais mélangés : le **dernier tour** (le journal, permanent) et la **sonde** (« que chargerait le routeur pour ce prompt ? », à la demande). La sonde l'emporte tant qu'elle est active ; ✕ ou Échap rend la toile au dernier vrai tour — on ne peut pas effacer un fait, seulement une question.
 
-L'observateur du journal est **non récursif** (`*.json` sur le dossier), seul motif que VS Code supporte hors du dossier ouvert. C'est lui qui fait bouger le badge pendant une conversation : aucun `.md` ne change quand un tour est routé.
+L'observateur du journal est **non récursif** (`*.json` sur le dossier), seul motif que VS Code supporte hors du dossier ouvert. C'est lui qui fait bouger le surlignage pendant une conversation : aucun `.md` ne change quand un tour est routé.
 
-## Édition de la structure depuis la vue (`extension/src/edit.ts`)
+## Édition depuis la vue (`extension/src/edit.ts`)
 
-Créer, renommer, changer le type, déplacer, supprimer. Le **contenu** reste édité dans le `.md` qui s'ouvre à côté — c'est la ligne de `perimetre.md` : ces cinq opérations-là ne se font pas en ouvrant un fichier, ce sont des opérations sur des fichiers et des dossiers.
+Deux moitiés. La **structure** — créer, renommer, changer le type, déplacer, supprimer — parce que ce sont des opérations sur des fichiers et des dossiers, pas des choses qu'on fait en ouvrant un `.md`. Et depuis le 8 septembre 2026 le **contenu** — le `load_when` et le corps, dans la carte de la toile.
 
 Une seule implémentation, deux appelants : le menu contextuel de la barre latérale et les boutons de la carte ouverte sur la toile. Tout passe par `runEdit(op, target)` dans `extension.ts`, qui relit l'arbre juste avant (les `.md` sont la source de vérité et ont pu changer) et recharge les vues après.
 
-- **Le protocole webview → extension porte des écritures**, pas seulement des ouvertures : la toile envoie `{type:'edit', op, path}`. C'est la couture prévue pour que l'édition du contenu vienne s'y brancher sans réécrire l'existant.
+- **Le protocole webview → extension porte des écritures**, pas seulement des ouvertures : la toile envoie `{type:'edit', op, path}` pour la structure, `{type:'save', path, loadWhen, content}` pour le contenu. La seconde est venue se brancher sur la couture posée par la première, sans réécrire l'existant.
 - **`load_when` est demandé à la création**, pas plus tard : c'est le seul champ que le modèle ne peut pas deviner, et sans lui la branche ne sera jamais routée.
 - **Renommer change le titre.** Le fichier ne suit que si son nom venait du titre précédent ; un slug choisi à la main n'est pas touché. Le `path` est l'identité d'une branche — on ne le change pas dans le dos de qui l'a écrit.
 - **Supprimer est toujours confirmé**, avec le nombre d'enfants qui partent avec.
+### Écrire le contenu dans la carte (`saveBranch`)
+
+Ce point **renverse** la ligne du 7 septembre 2026, qui plaçait l'édition du contenu dans une webview maison hors périmètre. La raison du renversement : le `load_when` est le seul bouton de routage de l'outil, on le corrige en regardant la toile, et l'aller-retour vers un onglet suffisait à ce qu'on ne le corrige pas.
+
+Ce que la carte **n'est pas** : un éditeur. Pas de coloration, pas de recherche, pas de multi-curseur — le `.md` reste la source de vérité et reste à un clic, bouton compris à côté de « Enregistrer ». Trois garde-fous tiennent la ligne, et se cassent ensemble si on les oublie :
+
+- **Le cœur sérialise, jamais la webview.** La toile envoie deux chaînes ; `writeBranch` (ou `writeRoot` pour la racine) fabrique le fichier. Il n'existe pas de second code d'écriture qui pourrait diverger de `parseFrontmatter` — un frontmatter invalide n'a pas de chemin jusqu'au disque.
+- **Le `load_when` est aplati sur une ligne** avant l'écriture. C'est un scalaire de frontmatter, et `parseFrontmatter` ne déséchappe pas ce qu'un multi-ligne produirait. Vide, il est refusé : une branche sans condition ne serait plus jamais routée.
+- **Un onglet aux modifications non enregistrées gagne sur la carte.** C'est le seul endroit où quelque chose que la toile ne voit pas serait perdu. Modale, l'onglet est proposé à l'ouverture, et l'écrasement se demande.
+
+Côté toile, ce sont des **brouillons** (`drafts`, dans `canvas.js`) et pas un champ lié : ils survivent au changement de sélection et aux rechargements de l'arbre — le watcher se réveille au moindre `.md` touché, et ce qu'on a écrit ne doit pas partir parce qu'un autre fichier a bougé. Une carte fermée qui porte un brouillon le montre (trait discontinu, `✎ brouillon non enregistré`). Si le fichier change sur le disque pendant qu'on tape, la carte le dit et propose de repartir du disque plutôt que d'écraser en silence. Le brouillon n'est jeté que sur l'**accusé** `{type:'saved', ok}` : un refus le garde intact. Et `Échap` ne jette rien — un brouillon modifié se règle avec « Enregistrer » ou « Abandonner », pas avec une touche qu'on presse par réflexe pour sortir d'un champ.
+
 - Les commandes de branche sont masquées de la palette (`commandPalette` / `when: false`) : elles ont besoin d'une branche sélectionnée, que seul le menu contextuel fournit.
 
 Il n'y a **pas** de commande « recharger l'arbre » : l'observateur le fait déjà, et un bouton qui refait ce qui se fait tout seul est du bruit. L'observateur porte sur le dossier **réellement trouvé** par `findTreeDir`, pas sur le dossier ouvert — un `.contextree/` au-dessus de la racine du workspace était sinon jamais rechargé. Le motif `**/*.md` reste complexe, donc récursif même hors du dossier ouvert. Tant qu'aucun arbre n'existe, on retombe sur `**/.contextree/**/*.md` dans le workspace : c'est ce qui rattrape un `contextree init` fait après coup, et l'observateur bascule tout seul.
@@ -237,6 +330,27 @@ Une version et ses branches partent en deux appels — PostgREST n'a pas de tran
 ### L'état local
 
 `~/.contextree/` (surchargeable par `CONTEXTREE_STATE_DIR`) porte `journal/`, `tracking/` (à quel arbre distant chaque copie de travail se rattache), `config.json` (url + clé anon) et `session.json` (jetons, en 0600). Rien de tout ça dans le repo.
+## Démarrer sur un dossier vide (`initTree`)
+
+Sans `.contextree/`, l'extension n'avait rien à montrer et il fallait un terminal : le premier geste de l'outil échappait à l'outil. La vue est donc **toujours visible**, et une `viewsWelcome` (`when: !contextree.hasTree`) porte deux boutons — « Créer l'arbre » et « Ajouter contextree à une IA ». Les boutons qui n'ont de sens qu'avec un arbre (nouvelle branche, toile) sont gardés par `contextree.hasTree`.
+
+**Le tronc de départ vit dans le cœur** (`initTree`, dans `store.ts`), pas dans la CLI : la vue le crée aussi, et deux copies auraient divergé au premier ajustement de `load_when` — le champ dont dépend tout le routage. Quatre branches, pas quarante : un arbre entier deviné d'un coup n'est relu par personne. Ce sont des amorces à corriger, et leur `load_when` est écrit comme une condition, parce que c'est la forme qu'on veut voir imitée.
+
+**Le démarrage à froid n'est pas une panne.** Mesuré sur un arbre neuf : le routeur *tourne* dès la 4ᵉ branche (le court-circuit s'arrête à ≤ 3), mais il retient les 4 — les `load_when` de départ sont volontairement larges (« toujours pertinent », « quand la demande touche au code »). On voit donc `routé — 4 branche(s)` et rien qui ressemble à un tri. C'est le comportement attendu : le routage se met à payer quand l'arbre grossit et que les conditions se resserrent, pas avant.
+
+## Packaging de l'extension (`npm run package:ext`)
+
+L'extension vit dans `extension/`, se compile en **CommonJS** et charge un cœur **ESM** : c'est ce qui contraint tout le reste.
+
+**Le cœur est copié, pas lié.** `npm run bundle:core` copie `dist/` dans `extension/out/core/` et y dépose un `package.json` de deux lignes (`{"type":"module"}`) — sans lui, Node lirait ces `.js` comme du CommonJS, l'extension ne s'activerait pas. `@gengad/contextree` reste en **devDependency** (`file:..`) pour les types seulement : en dépendance de production, `vsce` suit le lien symbolique et tente d'embarquer les 48 Mo de `node_modules` du repo, avec des chemins qui sortent du dossier — le paquet ne se construit pas du tout.
+
+`loadCore()` importe donc `./core/view.js` par un **spécificateur non littéral** : le dossier n'existe pas au moment de la compilation, tsc n'a rien à résoudre. `module: node16` préserve l'`import()` dans la sortie CommonJS — seule façon de charger de l'ESM depuis là.
+
+**`view.js`, pas `index.js`.** Le barillet complet tire le serveur MCP (`@modelcontextprotocol/sdk`, `zod`). `src/view.ts` n'expose que ce qu'une vue utilise — store, tree, journal, routeur — et **ne dépend que de Node**. C'est ce qui permet un `.vsix` de 81 Ko sans aucun `node_modules`. Le routeur en fait partie parce que la toile essaie des prompts ; il charge le SDK Anthropic **à la demande**, et `pickEngine` ne choisit `anthropic` que si le SDK est réellement résolvable (`hasSdk`) — dans l'extension il ne l'est pas, donc une clé posée là ne mène pas à un moteur mort : on route par le CLI. Bénéfice collatéral côté hook : plus de SDK de 10 Mo chargé à chaque prompt quand on route par le CLI.
+
+**Compatibilité Cursor.** `engines.vscode` est à `^1.85.0` — aucune API utilisée n'est postérieure, et les forks suivent VS Code avec du retard. `FileDecorationProvider` est l'API la plus susceptible de manquer : sa présence est testée avant enregistrement, et sans elle la vue perd la pastille des branches lues et garde tout le reste.
+
+**Publication.** Rien n'est publié tant que le repo est privé : `npm run package:ext` produit un `.vsix` qu'on installe à la main (`code --install-extension`, `cursor --install-extension`, ou la palette « Install from VSIX »). Le jour où ça s'ouvre, c'est **Open VSX d'abord** — c'est le registre que lisent Cursor, Windsurf et VSCodium, et le Marketplace de Microsoft ne les sert pas.
 
 ## Pièges connus
 

@@ -7,3 +7,7 @@ dist/
 
 # Le calque personnel : à moi, jamais poussé (ROADMAP.md § Phase 2).
 .contextree.local/
+
+# Le paquet de l'extension : un produit de build, jamais versionné.
+*.vsix
+extension/out/core/

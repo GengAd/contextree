@@ -1,15 +1,13 @@
+import * as path from 'node:path';
 import * as vscode from 'vscode';
-import type { Branch, BranchType, ContextTree } from '@gengad/contextree' with { 'resolution-mode': 'import' };
+import type { Branch, BranchType, ContextTree } from '@gengad/contextree/view' with { 'resolution-mode': 'import' };
 
-type Core = typeof import('@gengad/contextree', { with: { 'resolution-mode': 'import' } });
+import { ROOT_ELEMENT, type Core } from './treeProvider.js';
 
 /**
- * Édition de la **structure** de l'arbre : créer, renommer, changer le type,
- * déplacer, supprimer.
- *
- * Le contenu, lui, reste édité dans le `.md` qui s'ouvre à côté — c'est la ligne
- * de `perimetre.md`. Ce ne sont pas des choses qu'on fait en ouvrant un
- * fichier : ce sont des opérations sur des fichiers et des dossiers.
+ * Édition de l'arbre depuis la vue : la **structure** — créer, renommer,
+ * changer le type, déplacer, supprimer — et le **contenu**, `load_when` et
+ * corps (`saveBranch`, en bas de ce fichier).
  *
  * Une seule implémentation, deux appelants : le menu contextuel de la barre
  * latérale et les boutons de la carte sélectionnée sur la toile. Toutes
@@ -162,6 +160,101 @@ export async function deleteBranch(core: Core, tree: ContextTree, branch: Branch
   if (answer !== 'Supprimer') return null;
   await core.deleteBranch(tree.dir, branch.path);
   return branch.path;
+}
+
+/** Ce que la toile envoie pour une écriture : deux chaînes, jamais un fichier. */
+export type SavePatch = { loadWhen: string; content: string };
+
+/**
+ * Écrit le `load_when` et le corps d'une branche depuis la vue.
+ *
+ * C'est la ligne de `perimetre.md` qui a bougé le 8 septembre 2026 : le contenu
+ * s'édite aussi dans la carte, pas seulement dans le `.md` ouvert à côté. Trois
+ * choses tiennent la promesse que ça reste sûr.
+ *
+ * **Le cœur écrit, pas la webview.** La toile n'envoie que deux chaînes ;
+ * `writeBranch` sérialise le frontmatter. Un frontmatter invalide n'a donc
+ * aucun chemin pour arriver sur le disque — il n'y a pas de code d'écriture à
+ * côté du cœur qui pourrait diverger de son parseur.
+ *
+ * **Le `load_when` tient sur une ligne.** C'est un scalaire de frontmatter, et
+ * `parseFrontmatter` ne déséchappe pas ce qu'un multi-ligne produirait : un
+ * retour à la ligne collé dans le champ est aplati ici, avant l'écriture.
+ *
+ * **L'onglet gagne s'il est sale.** Voir `tabAgrees` — c'est le seul endroit où
+ * quelque chose que la toile ne voit pas pourrait être perdu.
+ */
+export async function saveBranch(
+  core: Core,
+  tree: ContextTree,
+  branchPath: string,
+  patch: SavePatch,
+): Promise<boolean> {
+  // La racine n'est pas une branche : pas de frontmatter, pas de `load_when`,
+  // et son propre point d'écriture dans le cœur.
+  if (branchPath === ROOT_ELEMENT) {
+    if (!(await tabAgrees(path.join(tree.dir, core.ROOT_FILE)))) return false;
+    await core.writeRoot(tree.dir, patch.content);
+    return true;
+  }
+
+  const branch = tree.branches.get(branchPath);
+  if (!branch) {
+    vscode.window.showErrorMessage(`Branche inconnue : ${branchPath}`);
+    return false;
+  }
+
+  const loadWhen = oneLine(patch.loadWhen);
+  if (!loadWhen) {
+    vscode.window.showErrorMessage(
+      `« ${branch.title} » : sans « charger quand », la branche ne serait plus jamais routée.`,
+    );
+    return false;
+  }
+  if (!(await tabAgrees(core.branchFile(tree.dir, branch.path)))) return false;
+
+  await core.writeBranch(tree.dir, {
+    path: branch.path,
+    type: branch.type,
+    title: branch.title,
+    loadWhen,
+    content: patch.content,
+  });
+  return true;
+}
+
+/**
+ * Le même `.md` ouvert dans un onglet avec des modifications non enregistrées :
+ * le seul cas où écrire depuis la toile ferait perdre quelque chose.
+ *
+ * Rien n'est réellement détruit — l'onglet garde sa version en mémoire et
+ * signalerait un conflit à son propre enregistrement — mais personne ne veut
+ * découvrir ça plus tard. L'onglet gagne par défaut ; l'écrasement existe, il
+ * se demande.
+ */
+async function tabAgrees(file: string): Promise<boolean> {
+  const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === file);
+  if (!doc?.isDirty) return true;
+
+  const answer = await vscode.window.showWarningMessage(
+    `${path.basename(file)} est ouvert avec des modifications non enregistrées.`,
+    {
+      modal: true,
+      detail:
+        "Écrire depuis la toile passerait par-dessus le fichier. L'onglet garderait sa version et signalerait un conflit à son propre enregistrement.",
+    },
+    "Voir l'onglet",
+    'Écrire quand même',
+  );
+  if (answer === 'Écrire quand même') return true;
+  if (answer === "Voir l'onglet") await vscode.window.showTextDocument(doc);
+  return false;
+}
+
+/** Un scalaire de frontmatter tient sur une ligne — on aplatit plutôt que de
+ *  produire un échappement que le parseur ne relira pas. */
+function oneLine(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
 }
 
 async function pickType(current?: BranchType): Promise<BranchType | undefined> {

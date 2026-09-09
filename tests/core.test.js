@@ -5,9 +5,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
-import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths } from '../dist/core/store.js';
-import { withAncestors, guaranteedBranches, allBranches } from '../dist/core/tree.js';
-import { renderContext } from '../dist/core/render.js';
+import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree } from '../dist/core/store.js';
+import { withAncestors, allBranches } from '../dist/core/tree.js';
+import { route, pickEngine, isCliEngine } from '../dist/core/router.js';
+import { renderContext, renderAgentsBlock } from '../dist/core/render.js';
+import { syncAgentsFile, installCodexMcp, agentStatus, installAgent } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
 import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites } from '../dist/core/journal.js';
 import {
@@ -95,14 +97,205 @@ test('tree : sélectionner un enfant remonte tous ses parents', async () => {
   assert.deepEqual([...withAncestors(tree, ['a/b/c'])].sort(), ['a', 'a/b', 'a/b/c']);
 });
 
-test('tree : le filet du routeur, ce sont identity + rule (avec leurs parents)', async () => {
+test("routeur : sans moteur, tout l'arbre — et aucun type privilégié", async () => {
   const dir = await scratch();
   await writeBranch(dir, { path: 'zone', type: 'context', title: 'Zone', loadWhen: 'x', content: '' });
   await writeBranch(dir, { path: 'zone/r', type: 'rule', title: 'R', loadWhen: 'x', content: '' });
   await writeBranch(dir, { path: 'i', type: 'identity', title: 'I', loadWhen: 'x', content: '' });
   await writeBranch(dir, { path: 'doc', type: 'reference', title: 'D', loadWhen: 'x', content: '' });
   const tree = await loadTree(dir);
-  assert.deepEqual([...guaranteedBranches(tree)].sort(), ['i', 'zone', 'zone/r']);
+
+  const previous = process.env.CONTEXTREE_ROUTER;
+  process.env.CONTEXTREE_ROUTER = 'off';
+  try {
+    assert.equal(pickEngine(), 'none');
+    const { selected, reason, error } = await route(tree, 'peu importe', {
+      previousSelection: ['i'],
+    });
+    // Pas de moteur : on injecte tout, et on le dit. Surtout pas une sélection
+    // décidée par le type des branches.
+    assert.deepEqual([...selected].sort(), ['doc', 'i', 'zone', 'zone/r']);
+    assert.equal(reason, 'all');
+    assert.match(error, /aucun moteur/);
+  } finally {
+    if (previous === undefined) delete process.env.CONTEXTREE_ROUTER;
+    else process.env.CONTEXTREE_ROUTER = previous;
+  }
+});
+
+test('routeur : le moteur forcé est respecté, anciens noms compris', () => {
+  const saved = { ...process.env };
+  const only = keys => {
+    for (const k of ['CONTEXTREE_ROUTER', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY']) {
+      delete process.env[k];
+    }
+    Object.assign(process.env, keys);
+  };
+  try {
+    // Un moteur forcé n'est pas vérifié : s'il manque, c'est le fallback qui
+    // rattrape — jamais un repli silencieux sur un moteur non demandé.
+    only({ CONTEXTREE_ROUTER: 'openai' });
+    assert.equal(pickEngine(), 'openai');
+    only({ CONTEXTREE_ROUTER: 'codex' });
+    assert.equal(pickEngine(), 'codex');
+    only({ CONTEXTREE_ROUTER: 'gemini' });
+    assert.equal(pickEngine(), 'gemini');
+    // Les noms d'avant l'ouverture aux autres IA restent compris.
+    only({ CONTEXTREE_ROUTER: 'sdk' });
+    assert.equal(pickEngine(), 'anthropic');
+    only({ CONTEXTREE_ROUTER: 'cli' });
+    assert.equal(pickEngine(), 'claude');
+
+    // Sans rien de forcé : une clé gagne, Anthropic avant OpenAI.
+    only({ OPENAI_API_KEY: 'x' });
+    assert.equal(pickEngine(), 'openai');
+    only({ OPENAI_API_KEY: 'x', ANTHROPIC_API_KEY: 'y' });
+    assert.equal(pickEngine(), 'anthropic');
+    // Une clé passée en argument gagne aussi.
+    only({});
+    assert.equal(pickEngine('z'), 'anthropic');
+
+    // Seuls les moteurs CLI sont lents : c'est ce qui décide du différé.
+    assert.ok(isCliEngine('claude') && isCliEngine('codex') && isCliEngine('gemini'));
+    assert.ok(!isCliEngine('anthropic') && !isCliEngine('openai') && !isCliEngine('none'));
+  } finally {
+    for (const k of ['CONTEXTREE_ROUTER', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY']) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
+});
+
+test("AGENTS.md : la racine et le catalogue, jamais l'arbre entier", async () => {
+  const dir = await scratch();
+  await writeRoot(dir, 'RACINE');
+  await writeBranch(dir, {
+    path: 'r',
+    type: 'rule',
+    title: 'Une règle',
+    loadWhen: 'quand on touche au code',
+    content: 'LE CONTENU DE LA REGLE',
+  });
+  const block = renderAgentsBlock(await loadTree(dir));
+
+  assert.match(block, /RACINE/);
+  // Le catalogue, celui que lit le routeur — titre et condition.
+  assert.match(block, /Une règle.*charger quand : quand on touche au code/);
+  assert.match(block, /get_context/);
+  // Surtout pas le contenu des branches : ce serait le gros fichier de
+  // consignes que contextree existe pour remplacer.
+  assert.ok(!block.includes('LE CONTENU DE LA REGLE'));
+});
+
+test('AGENTS.md : le bloc est borné, resynchronisé, et ne duplique rien', async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-agents-'));
+  const file = path.join(projectDir, 'AGENTS.md');
+  await fs.writeFile(file, '# Mes consignes\n\nÀ moi.\n', 'utf8');
+
+  const report = [];
+  await syncAgentsFile(projectDir, 'PREMIER', report);
+  let body = await fs.readFile(file, 'utf8');
+  assert.match(body, /# Mes consignes/);
+  assert.match(body, /PREMIER/);
+  assert.equal(report[0].action, 'updated');
+
+  // Resynchronisation : le bloc est remplacé, pas ajouté à la suite.
+  await syncAgentsFile(projectDir, 'SECOND', report);
+  body = await fs.readFile(file, 'utf8');
+  assert.equal(body.match(/contextree:start/g).length, 1);
+  assert.ok(!body.includes('PREMIER'));
+  assert.match(body, /SECOND/);
+  assert.match(body, /# Mes consignes/);
+
+  // Rien à faire : un install répété ne salit pas un diff.
+  await syncAgentsFile(projectDir, 'SECOND', report);
+  assert.equal(report[2].action, 'unchanged');
+});
+
+test('codex : la table MCP est ajoutée à la fin, jamais réécrite', async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-codex-'));
+  const saved = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = home;
+  try {
+    await fs.writeFile(path.join(home, 'config.toml'), '[projects."/x"]\ntrust_level = "trusted"\n', 'utf8');
+    const report = [];
+    await installCodexMcp(report);
+    const body = await fs.readFile(path.join(home, 'config.toml'), 'utf8');
+    // Ce qui était là est intact, et la nouvelle table est bien à la fin :
+    // aucune table précédente ne peut l'avaler.
+    assert.match(body, /\[projects\."\/x"\]\ntrust_level = "trusted"/);
+    assert.match(body, /\[mcp_servers\.contextree\]\ncommand = "npx"/);
+    assert.ok(body.indexOf('[mcp_servers.contextree]') > body.indexOf('[projects."/x"]'));
+
+    await installCodexMcp(report);
+    assert.equal(report[1].action, 'unchanged');
+    assert.equal((await fs.readFile(path.join(home, 'config.toml'), 'utf8')), body);
+  } finally {
+    if (saved === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = saved;
+  }
+});
+
+test("install : l'état d'un agent se lit sans rien écrire, et le câblage est idempotent", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-wire-'));
+
+  const before = await agentStatus(projectDir);
+  const cursor = () => before.find(a => a.id === 'cursor');
+  assert.equal(cursor().wired, false);
+  // Regarder n'écrit rien : c'est ce qui permet à un bouton de montrer l'état
+  // plutôt que de tenter et d'échouer en silence.
+  assert.deepEqual(await fs.readdir(projectDir), []);
+
+  const report = await installAgent('cursor', projectDir);
+  assert.equal(report[0].action, 'created');
+  const written = JSON.parse(await fs.readFile(path.join(projectDir, '.cursor', 'mcp.json'), 'utf8'));
+  assert.equal(written.mcpServers.contextree.command, 'npx');
+
+  const after = await agentStatus(projectDir);
+  assert.equal(after.find(a => a.id === 'cursor').wired, true);
+
+  const again = await installAgent('cursor', projectDir);
+  assert.equal(again[0].action, 'unchanged');
+});
+
+test('install : Claude Code est câblé quand le hook ET le serveur MCP y sont', async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-wire-cc-'));
+  const wired = async () => (await agentStatus(projectDir)).find(a => a.id === 'claude-code').wired;
+
+  // Un serveur MCP seul n'est pas un câblage : le hook est la moitié qui rend
+  // l'injection déterministe. L'annoncer comme fait serait mentir.
+  await fs.mkdir(path.join(projectDir, '.claude'), { recursive: true });
+  await fs.writeFile(
+    path.join(projectDir, '.mcp.json'),
+    JSON.stringify({ mcpServers: { contextree: {} } }),
+    'utf8',
+  );
+  assert.equal(await wired(), false);
+
+  await installAgent('claude-code', projectDir);
+  assert.equal(await wired(), true);
+
+  // Ce qui était déjà là n'est pas réécrit.
+  const report = await installAgent('claude-code', projectDir);
+  assert.ok(report.every(r => r.action === 'unchanged'));
+});
+
+test("init : le tronc de départ est le même pour la CLI et pour la vue", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-init-'));
+
+  const { dir, branches } = await initTree(projectDir);
+  assert.equal(branches, 4);
+  const tree = await loadTree(dir);
+  assert.deepEqual(tree.order, ['architecture', 'architecture/commandes', 'identite', 'regles']);
+  assert.match(tree.rootContent, /Contexte/);
+  // Le `load_when` est écrit comme une condition : c'est la forme qu'on veut
+  // voir imitée, et c'est de lui que dépend tout le routage.
+  assert.match(tree.branches.get('architecture/commandes').loadWhen, /^quand /);
+
+  // Un arbre existant n'est pas écrasé sans qu'on le demande.
+  await assert.rejects(() => initTree(projectDir), /existe déjà/);
+  await initTree(projectDir, { force: true });
+  assert.equal((await loadTree(dir)).order.length, 4);
 });
 
 test('render : racine toujours là, Rules avant Context, non sélectionné exclu', async () => {
@@ -116,6 +309,36 @@ test('render : racine toujours là, Rules avant Context, non sélectionné exclu
   assert.ok(out.indexOf('RACINE') < out.indexOf('## Rules'));
   assert.ok(out.indexOf('## Rules') < out.indexOf('## Context'));
   assert.ok(!out.includes('EXCLU'));
+});
+
+test('render : le catalogue liste ce qui n\'a pas été chargé, sans son contenu', async () => {
+  const dir = await scratch();
+  await writeRoot(dir, 'RACINE');
+  await writeBranch(dir, { path: 'r', type: 'rule', title: 'R', loadWhen: 'x', content: 'REGLE' });
+  await writeBranch(dir, {
+    path: 'z',
+    type: 'context',
+    title: 'Z',
+    loadWhen: 'quand on touche à Z',
+    content: 'CONTENU DE Z',
+  });
+  const tree = await loadTree(dir);
+  const out = renderContext(tree, new Set(['r']));
+
+  // Une branche écartée reste visible en une ligne : titre, type, condition.
+  // Sans ça, on ne peut pas tirer ce dont on ignore l'existence.
+  assert.match(out, /\*\*Z\*\* \(context\) — charger quand : quand on touche à Z/);
+  // Mais surtout pas son contenu : ce serait le gros fichier de consignes.
+  assert.ok(!out.includes('CONTENU DE Z'));
+  // Et l'invitation à tirer, sinon le catalogue n'est qu'une liste.
+  assert.match(out, /get_context/);
+  // Le catalogue passe en dernier : on le lit une fois qu'on sait ce qu'on a reçu.
+  assert.ok(out.indexOf('## Context') < out.indexOf('## Catalogue') || !out.includes('## Context'));
+  assert.ok(out.indexOf('## Rules') < out.indexOf('## Catalogue'));
+
+  // Tout chargé : plus rien à annoncer, pas de section vide.
+  const full = renderContext(tree, new Set(['r', 'z']));
+  assert.ok(!full.includes('## Catalogue'));
 });
 
 test('render : arbre vide → chaîne vide (rien à injecter)', async () => {

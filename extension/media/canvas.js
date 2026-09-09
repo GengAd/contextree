@@ -44,8 +44,24 @@
   let probe = null;
   let view = { x: 0, y: 0, k: 1 };
 
+  // Les brouillons en cours, par branche — `{loadWhen, content}` plus la version
+  // du disque au moment où on a commencé à taper.
+  //
+  // Ils survivent au changement de sélection *et* aux rechargements de l'arbre :
+  // le watcher se réveille au moindre `.md` touché, et ce qu'on a écrit ne doit
+  // pas disparaître parce qu'un autre fichier a bougé. `editing` dit seulement
+  // quelle carte a ses champs ouverts ; fermer la carte ne jette rien.
+  const drafts = new Map();
+  let editing = null;
+  /** Le champ à mettre sous le curseur au prochain rendu. */
+  let focusNext = null;
+
   function overlay() {
     return probe ?? turn;
+  }
+
+  function dirty(d) {
+    return d.loadWhen !== d.baseLoadWhen || d.content !== d.baseContent;
   }
 
   // ── Données ───────────────────────────────────────────────────────────────
@@ -84,6 +100,18 @@
     for (const o of [turn, probe]) {
       if (o) o.selected = new Set([...o.selected].filter(p => byId.has(p)));
     }
+    // Le disque a bougé sous un brouillon : on ne l'écrase pas en silence, on le
+    // signale dans la carte. Une écriture en vol est exclue — c'est la nôtre.
+    for (const [id, d] of drafts) {
+      const node = byId.get(id);
+      if (!node) {
+        drafts.delete(id);
+        continue;
+      }
+      if (d.saving) continue;
+      if (node.loadWhen !== d.baseLoadWhen || node.content !== d.baseContent) d.stale = true;
+    }
+    if (editing && !byId.has(editing)) editing = null;
     count.textContent = `${tree.branches.length} branche(s)`;
   }
 
@@ -95,6 +123,9 @@
 
   function heightOf(n) {
     if (n.id !== selected) return NODE_H;
+    // En écriture, la carte prend une taille fixe et généreuse : elle ne doit
+    // pas grandir sous les doigts au fil de la frappe.
+    if (editing === n.id) return n.id === ROOT_ID ? 400 : 470;
     const body = (n.content || '').trim();
     const lines = body ? Math.max(body.split('\n').length, Math.ceil(body.length / 62)) : 0;
     return Math.max(210, Math.min(560, 172 + lines * 19));
@@ -268,47 +299,182 @@
     return seconds < 60 ? "à l'instant" : `il y a ${Math.round(seconds / 60)} min`;
   }
 
-  /** Les boutons de la carte ouverte. La structure s'édite ici ; le contenu
-   *  s'édite dans le `.md`, qui s'ouvre à côté. */
+  function buttonInto(row, label, title, onClick) {
+    const b = document.createElement('button');
+    b.className = 'act';
+    b.textContent = label;
+    b.title = title;
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      onClick();
+    });
+    row.append(b);
+    return b;
+  }
+
+  /** Les boutons de la carte ouverte, en lecture. */
   function actions(n) {
     const row = document.createElement('div');
     row.className = 'actions';
 
-    const button = (label, title, onClick) => {
-      const b = document.createElement('button');
-      b.className = 'act';
-      b.textContent = label;
-      b.title = title;
-      b.addEventListener('click', e => {
-        e.stopPropagation();
-        onClick();
-      });
-      row.append(b);
-      return b;
-    };
-
-    button('ouvrir le .md', "Éditer le contenu dans l'éditeur", () =>
+    buttonInto(row, 'éditer', 'Écrire le « charger quand » et le corps ici', () => beginEdit(n));
+    buttonInto(row, 'ouvrir le .md', "Éditer dans l'éditeur, à côté", () =>
       vscode.postMessage({ type: 'open', path: n.id }),
     );
     const edit = op => vscode.postMessage({ type: 'edit', op, path: n.id });
-    button('+ enfant', 'Créer une branche sous celle-ci', () => edit('child'));
+    buttonInto(row, '+ enfant', 'Créer une branche sous celle-ci', () => edit('child'));
     if (n.id !== ROOT_ID) {
-      button('renommer', 'Changer le titre', () => edit('rename'));
-      button('type', 'Changer le type de branche', () => edit('type'));
-      button('déplacer', 'Changer de parent', () => edit('move'));
-      button('supprimer', 'Supprimer la branche et ses enfants', () => edit('delete')).classList.add(
-        'danger',
-      );
+      buttonInto(row, 'renommer', 'Changer le titre', () => edit('rename'));
+      buttonInto(row, 'type', 'Changer le type de branche', () => edit('type'));
+      buttonInto(row, 'déplacer', 'Changer de parent', () => edit('move'));
+      buttonInto(row, 'supprimer', 'Supprimer la branche et ses enfants', () =>
+        edit('delete'),
+      ).classList.add('danger');
     }
     return row;
+  }
+
+  // ── Écriture ──────────────────────────────────────────────────────────────
+  //
+  // Le `load_when` et le corps s'écrivent dans la carte. Rien n'est sérialisé
+  // ici : la toile envoie deux chaînes, le cœur fabrique le `.md`. C'est ce qui
+  // garantit qu'un frontmatter invalide n'a pas de chemin jusqu'au disque.
+
+  function beginEdit(n, field) {
+    if (!drafts.has(n.id)) {
+      drafts.set(n.id, {
+        loadWhen: n.loadWhen,
+        content: n.content,
+        baseLoadWhen: n.loadWhen,
+        baseContent: n.content,
+        stale: false,
+        saving: false,
+        error: null,
+      });
+    }
+    editing = n.id;
+    focusNext = field || (n.id === ROOT_ID ? 'content' : 'loadWhen');
+    if (selected !== n.id) return select(n.id, n);
+    render();
+  }
+
+  function endEdit(id, discard) {
+    if (discard) drafts.delete(id);
+    if (editing === id) editing = null;
+    render();
+  }
+
+  function saveDraft(id) {
+    const d = drafts.get(id);
+    if (!d || d.saving) return;
+    d.saving = true;
+    d.error = null;
+    render();
+    vscode.postMessage({ type: 'save', path: id, loadWhen: d.loadWhen, content: d.content });
+  }
+
+  /**
+   * La carte en écriture : deux champs, pas un éditeur.
+   *
+   * Tout ce que cette boîte ne sait pas faire — la coloration, la recherche, le
+   * multi-curseur — reste à un clic dans le `.md`. Le bouton est là, à côté de
+   * « Enregistrer », et c'est volontaire : la carte n'essaie pas de remplacer
+   * l'éditeur, elle évite d'avoir à y aller pour trois mots de `load_when`.
+   */
+  function editor(n, d) {
+    const wrap = document.createElement('div');
+    wrap.className = 'edit';
+    // Ni le clic ni le glisser ne doivent atteindre la toile : l'un
+    // désélectionnerait la carte, l'autre déplacerait le fond pendant qu'on
+    // sélectionne du texte.
+    for (const type of ['click', 'dblclick', 'mousedown', 'wheel']) {
+      wrap.addEventListener(type, e => e.stopPropagation());
+    }
+
+    const field = (caption, key, rows, mono) => {
+      const label = document.createElement('label');
+      label.className = 'field';
+      const cap = document.createElement('span');
+      cap.className = 'caption';
+      cap.textContent = caption;
+      const ta = document.createElement('textarea');
+      ta.value = d[key];
+      ta.rows = rows;
+      ta.spellcheck = false;
+      if (mono) ta.className = 'mono';
+      // Frapper ne redessine pas : la carte se reconstruit à chaque rendu, et le
+      // champ y perdrait son curseur à chaque touche.
+      ta.addEventListener('input', () => {
+        d[key] = ta.value;
+      });
+      ta.addEventListener('keydown', e => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+          e.preventDefault();
+          saveDraft(n.id);
+        }
+      });
+      label.append(cap, ta);
+      wrap.append(label);
+      if (focusNext === key) {
+        focusNext = null;
+        requestAnimationFrame(() => {
+          ta.focus();
+          ta.setSelectionRange(ta.value.length, ta.value.length);
+        });
+      }
+    };
+
+    if (n.id !== ROOT_ID) field('charger quand…', 'loadWhen', 2, false);
+    field(n.id === ROOT_ID ? 'racine — toujours injectée' : 'corps', 'content', 8, true);
+
+    const note = document.createElement('div');
+    note.className = 'note';
+    if (d.error) {
+      note.classList.add('warn');
+      note.textContent = d.error;
+    } else if (d.saving) {
+      note.textContent = 'écriture…';
+    } else if (d.stale) {
+      note.classList.add('warn');
+      note.textContent = 'le fichier a changé sur le disque — enregistrer écrasera cette version';
+    } else if (dirty(d)) {
+      note.textContent = 'modifié, non enregistré — ⌘/Ctrl + Entrée écrit le .md';
+    } else {
+      note.textContent = '⌘/Ctrl + Entrée écrit le .md';
+    }
+
+    const row = document.createElement('div');
+    row.className = 'actions';
+    buttonInto(row, 'Enregistrer', 'Écrire le .md (⌘/Ctrl + Entrée)', () =>
+      saveDraft(n.id),
+    ).classList.add('primary');
+    buttonInto(row, 'Abandonner', 'Jeter le brouillon', () => endEdit(n.id, true));
+    if (d.stale) {
+      buttonInto(row, 'reprendre le disque', 'Repartir de la version du fichier', () => {
+        d.loadWhen = n.loadWhen;
+        d.content = n.content;
+        d.baseLoadWhen = n.loadWhen;
+        d.baseContent = n.content;
+        d.stale = false;
+        render();
+      });
+    }
+    buttonInto(row, 'ouvrir le .md', "Continuer dans l'éditeur", () =>
+      vscode.postMessage({ type: 'open', path: n.id }),
+    );
+    for (const b of row.children) b.disabled = d.saving;
+
+    wrap.append(note, row);
+    return wrap;
   }
 
   function card(n) {
     const el = document.createElement('div');
     const o = overlay();
+    const lu = Boolean(o) && kept(n.id);
     el.className = `node${n.id === selected ? ' selected' : ''}${
-      o ? (kept(n.id) ? ' kept' : ' dropped') : ''
-    }${o && o.reason === 'fallback' && kept(n.id) ? ' fallback' : ''}`;
+      lu && o.reason === 'fallback' ? ' fallback' : ''
+    }`;
     el.style.left = `${n.x}px`;
     el.style.top = `${n.y}px`;
     el.style.width = `${n.w}px`;
@@ -329,13 +495,47 @@
     const badge = document.createElement('span');
     badge.className = 'badge';
     badge.textContent = n.type;
-    head.append(title, badge);
+    head.append(title);
+    // Le point de lecture, avant le badge de type : c'est la marque la plus
+    // discrète qui se remarque quand même, et elle emprunte la couleur du type
+    // plutôt que d'en ajouter une.
+    if (lu) {
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.title = "lue par l'IA au dernier tour";
+      head.append(dot);
+    }
+    head.append(badge);
 
-    const when = document.createElement('div');
-    when.className = 'when';
-    when.textContent = n.loadWhen;
+    const draft = drafts.get(n.id);
+    body.append(head);
 
-    body.append(head, when);
+    // En écriture, le `load_when` est dans son champ : l'afficher deux fois, une
+    // version disque et une version brouillon, ne dirait rien de bon.
+    if (editing !== n.id) {
+      const when = document.createElement('div');
+      when.className = 'when';
+      when.textContent = n.loadWhen;
+      if (n.id === selected && n.id !== ROOT_ID) {
+        when.title = 'double-clic pour éditer';
+        when.addEventListener('dblclick', e => {
+          e.stopPropagation();
+          beginEdit(n, 'loadWhen');
+        });
+      }
+      body.append(when);
+    }
+
+    // Un brouillon qui dort dans une carte fermée doit se voir, sinon on croit
+    // avoir enregistré.
+    if (draft && editing !== n.id && dirty(draft)) {
+      el.classList.add('drafted');
+      const mark = document.createElement('div');
+      mark.className = 'draft-mark';
+      mark.textContent = '✎ brouillon non enregistré';
+      mark.title = 'ouvrir la carte pour le reprendre';
+      body.append(mark);
+    }
 
     // La trace d'une écriture de l'IA, tant qu'elle est fraîche. L'arbre lui est
     // réinjecté ensuite : ce qu'elle y met doit se voir, sinon personne ne peut
@@ -356,12 +556,19 @@
       }
     }
 
-    if (n.id === selected) {
+    if (n.id === selected && editing === n.id) {
+      body.append(editor(n, draft));
+    } else if (n.id === selected) {
       const content = document.createElement('div');
       content.className = 'content';
-      const md = (n.content || '').trim();
+      const md = n.content.trim();
       if (md) markdown(content, md);
       else content.textContent = '(vide)';
+      content.title = 'double-clic pour éditer';
+      content.addEventListener('dblclick', e => {
+        e.stopPropagation();
+        beginEdit(n, 'content');
+      });
       body.append(content, actions(n));
     }
 
@@ -386,7 +593,6 @@
       for (const c of n.children) {
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('d', edgePath(n, c));
-        if (overlay() && !kept(c.id)) path.classList.add('dropped');
         if (c.id === selected || n.id === selected) {
           path.classList.add('lit');
           path.style.setProperty('--ribbon', COLORS[selected === n.id ? n.type : c.type]);
@@ -410,7 +616,17 @@
    *  la carte cliquée ne saute pas sous le curseur. */
   function select(id, node) {
     const before = node ? { x: node.x + node.w / 2, y: node.y } : null;
+    // Quitter une carte ferme ses champs sans jeter ce qui y a été écrit — sauf
+    // s'il n'y a rien à garder, auquel cas le brouillon vide ne doit pas
+    // ressusciter l'éditeur au prochain clic.
+    if (editing && editing !== id) {
+      const d = drafts.get(editing);
+      if (d && !dirty(d)) drafts.delete(editing);
+    }
     selected = id;
+    // Une carte qui porte un brouillon se rouvre en écriture : c'est là qu'on
+    // l'avait laissée.
+    editing = id && drafts.has(id) ? id : null;
     layout();
     if (before && node) {
       view.x += (before.x - (node.x + node.w / 2)) * view.k;
@@ -479,6 +695,14 @@
   document.getElementById('fit').addEventListener('click', fit);
   window.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
+    if (editing) {
+      // Échap ne jette rien. Un brouillon modifié se règle avec « Enregistrer »
+      // ou « Abandonner » — pas avec une touche qu'on presse par réflexe pour
+      // sortir d'un champ.
+      const d = drafts.get(editing);
+      if (d && dirty(d)) return;
+      return endEdit(editing, true);
+    }
     if (selected !== null) return select(null, null);
     if (probe) clearProbe();
   });
@@ -491,7 +715,12 @@
   // Un `load_when` ne se vérifie qu'en le confrontant à un prompt ; le bandeau
   // dit toujours laquelle des deux on regarde.
 
-  const LABELS = { routed: 'routé', all: 'tout chargé', fallback: 'repli' };
+  const LABELS = {
+    routed: 'routé',
+    all: 'tout chargé',
+    fallback: 'repli',
+    deferred: 'différé — routage en tâche de fond',
+  };
 
   function askProbe() {
     const prompt = promptInput.value.trim();
@@ -527,9 +756,12 @@
     trace.textContent = bits.join(' · ');
     // Un repli n'est pas un routage : il doit se voir sans être lu.
     trace.className = o.reason === 'fallback' ? 'warn' : '';
-    excerpt.textContent = o.reason === 'fallback'
-      ? `repli sur les branches garanties${o.error ? ` — ${o.error}` : ''}`
-      : o.prompt || '';
+    excerpt.textContent =
+      o.reason === 'fallback'
+        ? `repli sur la sélection précédente${o.error ? ` — ${o.error}` : ''}`
+        : o.reason === 'deferred'
+          ? `sélection du tour précédent — le routage de « ${(o.prompt || '').slice(0, 60)} » tourne derrière`
+          : o.prompt || '';
     excerpt.className = o.reason === 'fallback' ? 'warn' : '';
   }
 
@@ -549,9 +781,29 @@
     chip.append(swatch, document.createTextNode(type));
     legend.append(chip);
   }
+  const readChip = document.createElement('span');
+  const mark = document.createElement('i');
+  mark.className = 'mark';
+  readChip.append(mark, document.createTextNode('lu au dernier tour'));
+  legend.append(readChip);
 
   window.addEventListener('message', e => {
     const msg = e.data;
+    if (msg.type === 'saved') {
+      const d = drafts.get(msg.path);
+      if (!d) return;
+      d.saving = false;
+      // Le brouillon ne part que sur un accusé. Un refus — `load_when` vide,
+      // onglet sale qu'on a préféré garder — le laisse intact et le dit.
+      if (msg.ok) {
+        drafts.delete(msg.path);
+        if (editing === msg.path) editing = null;
+      } else {
+        d.error = msg.error || "rien n'a été écrit — le brouillon est gardé";
+      }
+      render();
+      return;
+    }
     if (msg.type === 'routed') {
       probe = msg.selected
         ? {
