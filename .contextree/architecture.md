@@ -9,7 +9,7 @@ src/core/     le moteur, sans I/O externe autre que le disque
   types.ts        les 5 types de branche, Branch, ContextTree, ContextPack
   frontmatter.ts  parseur maison, scalaires seulement
   store.ts        chargement/écriture de .contextree/, findTreeDir
-  tree.ts         withAncestors, guaranteedBranches, formatTree
+  tree.ts         withAncestors, allBranches, formatTree
   render.ts       le bloc injecté, le bloc AGENTS.md, la ligne de transparence
   router.ts       l'appel IA de routage et son fallback
   pack.ts         export/import pour le partage

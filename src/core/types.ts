@@ -1,5 +1,7 @@
-/** Les 5 types de branche. `identity` et `rule` sont garanties en fallback si
- *  le routage échoue ; les autres sont purement routées. */
+/** Les 5 types de branche. Le type ne décide que d'une chose — la section du
+ *  bloc injecté : `identity` et `rule` sous « Rules », avant « Context », où
+ *  vont les trois autres. Aucun type n'est privilégié au chargement, c'est le
+ *  `load_when` qui décide, ou personne. */
 export const BRANCH_TYPES = ['identity', 'rule', 'context', 'reference', 'skill'] as const;
 export type BranchType = (typeof BRANCH_TYPES)[number];
 
