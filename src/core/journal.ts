@@ -132,7 +132,11 @@ export function journalDir(): string {
 }
 
 /**
- * La clé porte sur le chemin **réel**, liens symboliques résolus.
+ * La clé d'un arbre : son chemin **réel**, liens symboliques résolus, haché.
+ *
+ * Partagée par tout ce qui range de l'état par arbre — le journal, les
+ * écritures de l'IA, le cache de sélection. Deux clés différentes pour le même
+ * arbre, et les surfaces cessent de se parler.
  *
  * Sans ça, deux écrivains du même arbre écrivent dans deux fichiers : la vue
  * reçoit de VS Code le chemin tel qu'ouvert, alors qu'un serveur MCP lancé avec
@@ -140,7 +144,7 @@ export function journalDir(): string {
  * macOS, tout projet rangé derrière un lien symbolique ailleurs). Mesuré : le
  * même arbre donnait deux journaux.
  */
-function key(treeDir: string): string {
+export function treeKey(treeDir: string): string {
   let resolved = path.resolve(treeDir);
   try {
     resolved = realpathSync(resolved);
@@ -151,14 +155,14 @@ function key(treeDir: string): string {
 }
 
 export function journalFile(treeDir: string): string {
-  return path.join(journalDir(), `${key(treeDir)}.json`);
+  return path.join(journalDir(), `${treeKey(treeDir)}.json`);
 }
 
 /** Les écritures de l'IA dans l'arbre. Fichier distinct du journal de routage :
  *  ce sont deux histoires différentes, et l'une ne doit pas pouvoir abîmer
  *  l'autre. */
 export function writesFile(treeDir: string): string {
-  return path.join(journalDir(), `${key(treeDir)}-writes.json`);
+  return path.join(journalDir(), `${treeKey(treeDir)}-writes.json`);
 }
 
 /** Les tours du plus ancien au plus récent. Un journal absent ou illisible est

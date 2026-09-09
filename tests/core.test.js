@@ -12,6 +12,7 @@ import { renderContext, renderAgentsBlock } from '../dist/core/render.js';
 import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
 import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites, turnLabelKey } from '../dist/core/journal.js';
+import { readSelection, writeSelection } from '../dist/core/session.js';
 import {
   RemoteError, clearSession, createGroup, currentSession, me, myGroups,
   readSession, remoteConfig, setRemoteConfig, signIn, signOut,
@@ -425,6 +426,71 @@ const turn = (over = {}) => ({
   reason: 'routed',
   source: 'hook',
   ...over,
+});
+
+test("session : une session neuve hérite de la dernière sélection routée", async () => {
+  const dir = await scratch();
+  // Sous un moteur CLI, le premier tour d'une session n'est jamais routé : sans
+  // second niveau, chaque nouvelle conversation repartait de l'arbre entier
+  // (12/12 mesuré) alors que le routeur avait déjà répondu la veille.
+  await writeSelection(dir, 'session-a', ['identite', 'regles'], { at: 1000, routed: true });
+  assert.deepEqual(await readSelection(dir, 'session-b'), ['identite', 'regles']);
+
+  // La session qui a la sienne garde la sienne : le niveau arbre est un repli,
+  // pas une autorité.
+  await writeSelection(dir, 'session-b', ['architecture'], { at: 2000 });
+  assert.deepEqual(await readSelection(dir, 'session-b'), ['architecture']);
+  assert.deepEqual(await readSelection(dir, 'session-a'), ['identite', 'regles']);
+
+  // Un repli n'alimente pas le niveau arbre : il y recopierait ce qui s'y
+  // trouve déjà, ou y figerait l'arbre entier.
+  await writeSelection(dir, 'session-c', ['tout', 'l', 'arbre'], { at: 3000 });
+  assert.deepEqual(await readSelection(dir, 'session-neuve'), ['identite', 'regles']);
+});
+
+test("session : une sélection plus ancienne n'écrase pas une plus récente", async () => {
+  const dir = await scratch();
+  // Le routage de fond finit après le tour suivant : sans horodatage du prompt,
+  // c'est le dernier à *finir* qui gagnait, pas le dernier *lancé*.
+  await writeSelection(dir, 's', ['recente'], { at: 2000, routed: true });
+  await writeSelection(dir, 's', ['ancienne'], { at: 1000, routed: true });
+  assert.deepEqual(await readSelection(dir, 's'), ['recente']);
+  assert.deepEqual(await readSelection(dir, 'autre'), ['recente']);
+
+  // À `at` égal, la dernière écriture passe : deux tours du même prompt.
+  await writeSelection(dir, 's', ['egalite'], { at: 2000 });
+  assert.deepEqual(await readSelection(dir, 's'), ['egalite']);
+});
+
+test('session : un cache illisible vaut un cache vide, jamais une exception', async () => {
+  // Un état à soi : les noms de fichiers sont des empreintes, et on veut
+  // pouvoir désigner *celui de cette session* sans le deviner.
+  const saved = process.env.CONTEXTREE_STATE_DIR;
+  process.env.CONTEXTREE_STATE_DIR = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-sel-'));
+  try {
+    const dir = await scratch();
+    await writeSelection(dir, 's', ['identite'], { at: 1000, routed: true });
+    const cache = path.join(process.env.CONTEXTREE_STATE_DIR, 'selection');
+    const own = (await fs.readdir(cache)).find(f => !f.endsWith('-last.json'));
+
+    // Un JSON tronqué (deux écritures concurrentes, avant le rename atomique)
+    // ne doit pas faire échouer un prompt — il fait retomber d'un niveau.
+    await fs.writeFile(path.join(cache, own), '{"selected": [', 'utf8');
+    assert.deepEqual(await readSelection(dir, 's'), ['identite']);
+
+    // Les deux niveaux perdus : vide, et l'appelant injectera tout l'arbre.
+    for (const f of await fs.readdir(cache)) {
+      await fs.writeFile(path.join(cache, f), 'pas du JSON', 'utf8');
+    }
+    assert.deepEqual(await readSelection(dir, 's'), []);
+
+    // Et l'ancien format — un tableau nu — reste lu : une mise à jour ne doit
+    // pas coûter un tour à l'arbre entier à chaque session ouverte.
+    await fs.writeFile(path.join(cache, own), JSON.stringify(['ancien', 'format']), 'utf8');
+    assert.deepEqual(await readSelection(dir, 's'), ['ancien', 'format']);
+  } finally {
+    process.env.CONTEXTREE_STATE_DIR = saved;
+  }
 });
 
 test('journal : les tours s\'empilent, du plus ancien au plus récent', async () => {

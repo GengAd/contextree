@@ -629,7 +629,7 @@ async function cmdHook(): Promise<number> {
     // En différé, c'est le process de fond qui écrira la sélection : l'écraser
     // ici reviendrait à effacer le routage avant qu'il n'arrive.
     if (deferred) routeInBackground(dir, sessionId, prompt, at);
-    else await writeSelection(dir, sessionId, selected);
+    else await writeSelection(dir, sessionId, selected, { at, routed: reason === 'routed' });
 
     await appendTurn(dir, {
       at,
@@ -702,9 +702,10 @@ async function cmdRouteBackground(flags: Flags): Promise<number> {
     const prompt = Buffer.from(encoded, 'base64').toString('utf8');
     const { selected, reason } = await route(tree, prompt, { previousSelection: previous });
     if (reason !== 'routed') return 0;
-    await writeSelection(dir, sessionId, selected);
+    const at = Number(str(flags.at)) || Date.now();
+    await writeSelection(dir, sessionId, selected, { at, routed: true });
     await appendTurn(dir, {
-      at: Number(str(flags.at)) || Date.now(),
+      at,
       prompt,
       selected: [...selected],
       reason,
