@@ -6,6 +6,8 @@ load_when: quand on propose une nouvelle feature, ou qu'on se demande si quelque
 
 Ce repo fait **une seule chose** : maintenir un arbre de contexte et n'en injecter que la fraction utile.
 
+**Pour qui, et jusqu'où** (posé le 9 septembre 2026) : d'abord Adrien lui-même, sur ses propres projets, avec n'importe quel agent — Claude Code, Codex, Gemini, Cursor, VS Code et son IA intégrée. Le partage avec d'autres viendra bien plus tard ; pas d'objectif de popularité, pas de communication. Ce qui compte maintenant : que l'arbre soit la **seule** documentation de ce repo pour l'IA (aucun `.md` de consignes à côté), qu'un projet vierge se dote d'un arbre proprement quand on le demande à l'IA — et que l'IA le propose d'elle-même si le MCP est là et l'arbre absent —, et que ça marche sur chaque agent. Et au bout : **le présenter à son entreprise** — une démo de dix minutes, sur l'éditeur que la boîte utilise, où l'IA construit l'arbre depuis zéro, où l'on voit ce qui est routé, et où l'équipe partage un arbre par git. Le partage et la publication ne servent qu'à ça, et passent après.
+
 Hors périmètre, assumé :
 
 - l'arbre de **conversation** (c'est Lacis, dans `../ai-tree`) ;
