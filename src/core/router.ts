@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { allBranches, withAncestors } from './tree.js';
 import type { ContextTree } from './types.js';
 
-/** Modèle du routeur. Défaut par moteur — voir REFERENCES.md § Routage. */
+/** Modèle du routeur. Défaut par moteur — voir la branche `architecture/routage`. */
 const ROUTER_MODEL = process.env['CONTEXTREE_ROUTER_MODEL'];
 const ANTHROPIC_MODEL = ROUTER_MODEL ?? 'claude-opus-5';
 /** Endpoint compatible OpenAI : le modèle n'a pas de défaut universel (Groq,
@@ -72,7 +72,7 @@ const ROUTER_SYSTEM =
 /** Hors SDK Anthropic, la sortie structurée n'est pas gratuite (et pas
  *  garantie partout) : on la demande en toutes lettres. (`--json-schema` existe
  *  côté CLI, mais il coûte un tour de plus et double la latence — mesuré, voir
- *  REFERENCES.md § Routage.) */
+ *  la branche `architecture/routage`.) */
 const PLAIN_SYSTEM =
   `${ROUTER_SYSTEM}\n\n` +
   "Format de réponse : UNIQUEMENT un tableau JSON d'indices, par exemple [0,3]. " +
