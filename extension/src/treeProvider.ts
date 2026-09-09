@@ -9,6 +9,11 @@ import { LOADED_COLOR } from './turn.js';
  *  il doit se lire et s'éditer comme les autres, donc il a sa ligne. */
 export const ROOT_ELEMENT = ':root';
 
+/** La teinte d'une écriture fraîche de l'IA. Celle d'un fichier modifié dans
+ *  git : quelque chose vient de changer et mérite d'être relu — pas une
+ *  alerte. Elle l'emporte sur le surlignage du tour, qui est l'état permanent. */
+const WRITTEN_COLOR = new vscode.ThemeColor('gitDecoration.modifiedResourceForeground');
+
 /**
  * Combien de temps une écriture de l'IA reste signalée dans les vues.
  *
@@ -136,12 +141,22 @@ export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
 
     if (element === ROOT_ELEMENT) {
       const item = new vscode.TreeItem('Racine', vscode.TreeItemCollapsibleState.None);
-      item.description = 'toujours injectée';
-      item.tooltip = tooltip('Racine', 'toujours injectée, jamais routée', tree.rootContent);
+      // La racine s'écrit depuis la conversation (`write_root`) comme une
+      // branche : la trace doit s'y voir pareil, sinon la seule écriture que
+      // l'IA fait sur un arbre neuf serait la seule qu'on ne verrait pas.
+      const write = this.writes.get(ROOT_ELEMENT);
+      item.description = write ? `toujours injectée · IA ${ago(write.at)}` : 'toujours injectée';
+      item.tooltip = tooltip(
+        'Racine',
+        'toujours injectée, jamais routée',
+        tree.rootContent,
+        undefined,
+        write,
+      );
       item.resourceUri = vscode.Uri.file(path.join(tree.dir, ROOT_FILE));
       item.iconPath = new vscode.ThemeIcon(
         'symbol-namespace',
-        this.loaded(item.resourceUri.fsPath) ? LOADED_COLOR : undefined,
+        write ? WRITTEN_COLOR : this.loaded(item.resourceUri.fsPath) ? LOADED_COLOR : undefined,
       );
       item.command = open(item.resourceUri);
       item.contextValue = 'contextree.root';
@@ -173,11 +188,7 @@ export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
     // se produire, l'injection est l'état permanent.
     item.iconPath = new vscode.ThemeIcon(
       ICONS[branch.type] ?? 'circle-outline',
-      write
-        ? new vscode.ThemeColor('gitDecoration.modifiedResourceForeground')
-        : this.loaded(item.resourceUri.fsPath)
-          ? LOADED_COLOR
-          : undefined,
+      write ? WRITTEN_COLOR : this.loaded(item.resourceUri.fsPath) ? LOADED_COLOR : undefined,
     );
     item.command = open(item.resourceUri);
     item.contextValue = 'contextree.branch';

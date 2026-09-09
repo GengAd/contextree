@@ -584,6 +584,34 @@ test("éval : un cas mal écrit se saute, il n'emporte pas le fichier", () => {
   assert.deepEqual(parseEvalCases({ pas: 'un tableau' }), []);
 });
 
+test("journal : la racine se trace comme une branche, sous `:root`", async () => {
+  const dir = await scratch();
+  await writeRoot(dir, '# Projet\n\nCe que fait ce repo.');
+
+  // `write_root` écrit la racine et la trace sous le chemin que les vues
+  // emploient déjà. Sans ça, la seule écriture que l'IA fait sur un arbre neuf
+  // serait la seule qu'aucune vue ne montre.
+  await appendAiWrite(dir, {
+    at: Date.now(),
+    op: 'upsert',
+    path: ':root',
+    title: 'Racine',
+    why: "poser qui, quoi, dans quel repo",
+  });
+
+  const writes = await readAiWrites(dir);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].path, ':root');
+  assert.equal(writes[0].title, 'Racine');
+  assert.match(writes[0].why, /poser qui/);
+
+  // Et la racine est bien sur le disque, relisible par loadTree.
+  const tree = await loadTree(dir);
+  assert.match(tree.rootContent, /Ce que fait ce repo\./);
+  // `:root` n'est pas une branche : il ne doit pas apparaître dans l'ordre.
+  assert.ok(!tree.order.includes(':root'));
+});
+
 test('journal : les tours s\'empilent, du plus ancien au plus récent', async () => {
   const dir = await scratch();
   assert.deepEqual(await readJournal(dir), []);

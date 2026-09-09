@@ -4,7 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-import { findTreeDir, loadTree, slugify, writeBranch, deleteBranch, moveBranch } from '../core/store.js';
+import { findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch, ROOT_FILE } from '../core/store.js';
 import { allBranches, formatTree } from '../core/tree.js';
 import { renderContext, renderTrace } from '../core/render.js';
 import { route } from '../core/router.js';
@@ -20,7 +20,8 @@ Avant de travailler sur une tâche non triviale, appelle \`get_context\` avec la
 l'utilisateur : tu récupères uniquement les branches pertinentes. Quand tu découvres un fait
 durable sur ce projet (une convention, une contrainte, un chemin qui compte), écris-le avec
 \`upsert_branch\` — directement, sans demander la permission. L'arbre est fait pour être enrichi
-à l'usage.
+à l'usage. Sur un arbre neuf, commence par \`write_root\` : c'est le seul contenu toujours
+injecté, et aucune branche ne le remplace.
 
 En échange, **dis-le**. Après chaque écriture, annonce en une phrase ce que tu as ajouté ou
 changé dans l'arbre et pourquoi. Écrire en silence est la seule façon de mal faire ici : tu
@@ -35,6 +36,12 @@ ouvres —, rappelle \`get_context\` avec ce que tu sais maintenant. C'est le r�
 un rattrapage exceptionnel : un prompt de départ ne contient presque jamais la tâche entière.`;
 
 const branchTypeSchema = z.enum(BRANCH_TYPES);
+
+/** Le chemin sous lequel la racine se lit et se trace. Ce n'est pas une branche
+ *  — elle n'a ni type ni `load_when` — mais les vues l'adressent déjà ainsi
+ *  (`ROOT_ELEMENT` dans l'extension), et une écriture tracée là s'affiche au bon
+ *  endroit sans cas particulier de plus. */
+const ROOT_PATH = ':root';
 
 export async function createServer(cwd: string = process.cwd()): Promise<McpServer> {
   const server = new McpServer(
@@ -116,11 +123,21 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
     {
       title: 'Lire une branche',
       description: "Contenu complet d'une branche, par son chemin (voir list_branches).",
-      inputSchema: { path: z.string().describe("Chemin logique, ex. 'archi-store/commandes-npm'.") },
+      inputSchema: {
+        path: z
+          .string()
+          .describe("Chemin logique, ex. 'archi-store/commandes-npm'. `:root` pour la racine."),
+      },
       annotations: { readOnlyHint: true },
     },
     async ({ path: branchPath }) => {
       const { tree } = await open();
+      // La racine n'est pas une branche — elle n'a ni type ni `load_when` —
+      // mais elle se relit par le même outil : on ne remplace pas un contenu
+      // qu'on n'a pas pu lire.
+      if (branchPath === ROOT_PATH) {
+        return text(`# Racine\ntoujours injectée, jamais routée\n\n${tree.rootContent}`);
+      }
       const branch = tree.branches.get(branchPath);
       if (!branch) throw new Error(`Branche inconnue : ${branchPath}`);
       return text(
@@ -174,6 +191,39 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         `${existed ? 'Branche mise à jour' : 'Branche écrite'} : ${branchPath} (${type})\n` +
           `${path.relative(process.cwd(), file)}\n\n` +
           "Annonce-le maintenant à l'utilisateur : ce que tu viens d'écrire dans l'arbre, et pourquoi.",
+      );
+    },
+  );
+
+  server.registerTool(
+    'write_root',
+    {
+      title: 'Écrire la racine',
+      description:
+        "Le contenu toujours injecté, jamais routé : qui, quoi, dans quel repo. Court. " +
+        "C'est la première chose à poser sur un arbre neuf, et la seule que `upsert_branch` " +
+        'ne sait pas écrire. Relis-la avec `read_branch` sur `:root` avant de la remplacer.',
+      inputSchema: {
+        content: z.string().describe('Corps markdown de la racine. Quelques lignes, pas une page.'),
+        why: z
+          .string()
+          .describe(
+            'Pourquoi la racine doit dire ça, en une phrase. Elle apparaît dans la vue à côté ' +
+              "de la racine : c'est ce qui permet à l'utilisateur de relire ce que tu as écrit. " +
+              "Dis la même chose à l'utilisateur en clair.",
+          ),
+      },
+    },
+    async ({ content, why }) => {
+      const { dir } = await open();
+      await writeRoot(dir, content);
+      // Tracée comme une branche, sous le chemin que les vues emploient déjà
+      // pour la racine : la pastille « écrite par l'IA » s'allume au même
+      // endroit, sans cas particulier de plus.
+      await appendAiWrite(dir, { at: Date.now(), op: 'upsert', path: ROOT_PATH, title: 'Racine', why });
+      return text(
+        `Racine écrite : ${path.relative(process.cwd(), path.join(dir, ROOT_FILE))}\n\n` +
+          "Annonce-le maintenant à l'utilisateur : ce que tu viens d'écrire dans la racine, et pourquoi.",
       );
     },
   );
