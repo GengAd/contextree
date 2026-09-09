@@ -142,7 +142,10 @@ Jamais de boîte noire.
 
 ## Documentation
 
-- [`CLAUDE.md`](./CLAUDE.md) — carte de navigation pour les assistants IA
+La documentation de ce repo **est son arbre de contexte** (`.contextree/`) : une branche par sujet, chargée quand elle sert. `contextree render` l'affiche en entier, `contextree route "<une question>"` montre ce qu'un agent en recevrait.
+
+Trois fichiers de la racine n'y sont pas encore passés ; ils suivront :
+
 - [`CONTEXT.md`](./CONTEXT.md) — ce qu'on construit et pourquoi
 - [`REFERENCES.md`](./REFERENCES.md) — format, mécanique du routage, pièges
 - [`ROADMAP.md`](./ROADMAP.md) — phases 1 à 4

@@ -9,6 +9,9 @@ npm run build       # tsc -b
 npm run typecheck   # validation rapide
 npm test            # build + node:test sur dist/
 npm run eval        # mesure le routage sur tests/routing.eval.json (opt-in)
+npm run test:sql    # schéma + politiques RLS sur un Postgres jetable (Docker)
+npm run build:ext   # compile l'extension (barre latérale + toile 2D)
+npm run package:ext # produit le .vsix
 
 node dist/cli.js route "<prompt>"   # voir ce que le routeur chargerait
 node dist/cli.js render             # tout l'arbre, sans routage

@@ -1,7 +1,7 @@
 ---
 type: reference
 title: Mécanique du routage
-load_when: quand on touche au routeur, au prompt de routage, au moteur (clé API / CLI, Claude ou autre IA), au fallback ou au choix de modèle
+load_when: quand on touche au routeur, au prompt de routage, au moteur (clé API / CLI, Claude ou autre IA), au fallback, au choix de modèle, au journal des tours ou à la mesure du routage
 ---
 
 Un appel IA léger reçoit le catalogue (index, type, titre, `load_when`) et le message utilisateur, et renvoie les indices retenus. Puis `withAncestors` remonte les parents.

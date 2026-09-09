@@ -1,7 +1,7 @@
 ---
 type: reference
 title: Surfaces d'injection par agent
-load_when: quand on touche à l'installation, au câblage d'un agent (Claude Code, Cursor, Codex, Windsurf, Claude Desktop), à AGENTS.md, au bouton « ajouter à une IA », ou à la façon dont l'arbre arrive dans un agent sans hook
+load_when: quand on touche à l'installation, au câblage d'un agent (Claude Code, Cursor, Codex, Windsurf, Claude Desktop), au bloc injecté et à l'ordre de ses sections, au catalogue, à AGENTS.md, au bouton « ajouter à une IA », ou à la façon dont l'arbre arrive dans un agent sans hook
 ---
 
 Tous les agents n'ont pas de hook. Trois surfaces, par ordre de qualité — c'est l'ordre dans lequel `contextree install` câble :
