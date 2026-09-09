@@ -46,9 +46,22 @@ const PROMPT_MAX = 200;
  *  se remplit de bruit. */
 const MAX_WRITES = 100;
 
-/** Qui a routé : le hook Claude Code, ou un client MCP (le chat de Cursor et
- *  les autres). Sans les deux, la vue est aveugle la moitié du temps. */
-export type TurnSource = 'hook' | 'mcp';
+/**
+ * Qui a routé : le hook Claude Code, un client MCP (le chat de Cursor et les
+ * autres), ou le routage de fond.
+ *
+ * `bg` est celui qui manquait. Sous un moteur CLI, le hook ne route pas — il
+ * injecte la sélection du tour précédent (`deferred`) et lance le routage
+ * derrière. Sans un tour écrit par ce process, le journal ne contenait *que*
+ * des `deferred` (mesuré le 9 septembre 2026 : 25 tours, 0 `routed`) et la vue
+ * affichait « différé » à vie. On ne voyait jamais ce que le routeur avait
+ * choisi — donc on ne corrigeait jamais un `load_when` sur du réel.
+ *
+ * Un prompt produit alors **deux** entrées, le `deferred` du hook puis le
+ * `routed`/`bg` du fond. C'est la vérité de ce qui s'est passé : on ne les
+ * fusionne pas.
+ */
+export type TurnSource = 'hook' | 'mcp' | 'bg';
 
 export type RoutingTurn = {
   /** Horodatage du tour, en ms epoch. */
@@ -64,6 +77,22 @@ export type RoutingTurn = {
   /** Le message d'erreur du routeur, quand il y en a eu un. */
   error?: string;
 };
+
+/**
+ * La clé d'affichage d'un tour : sa raison, sauf s'il vient du routage de fond.
+ *
+ * Un même `reason: 'routed'` raconte deux choses selon sa source — « voici ce
+ * qui vient d'être lu » pour le hook, « voici ce qui partira au prochain
+ * prompt » pour le fond. C'est une clé et non un booléen de plus : un drapeau
+ * à côté de `reason` finirait par la contredire.
+ *
+ * La règle vit ici, avec le journal, et pas dans une vue : la barre latérale et
+ * la toile doivent dire la même chose du même tour, et c'est du cœur que vient
+ * ce genre d'accord.
+ */
+export function turnLabelKey(turn: Pick<RoutingTurn, 'reason' | 'source'>): string {
+  return turn.source === 'bg' && turn.reason === 'routed' ? 'routed-bg' : turn.reason;
+}
 
 /**
  * Une écriture de l'IA dans l'arbre.
@@ -103,7 +132,11 @@ export function journalDir(): string {
 }
 
 /**
- * La clé porte sur le chemin **réel**, liens symboliques résolus.
+ * La clé d'un arbre : son chemin **réel**, liens symboliques résolus, haché.
+ *
+ * Partagée par tout ce qui range de l'état par arbre — le journal, les
+ * écritures de l'IA, le cache de sélection. Deux clés différentes pour le même
+ * arbre, et les surfaces cessent de se parler.
  *
  * Sans ça, deux écrivains du même arbre écrivent dans deux fichiers : la vue
  * reçoit de VS Code le chemin tel qu'ouvert, alors qu'un serveur MCP lancé avec
@@ -111,7 +144,7 @@ export function journalDir(): string {
  * macOS, tout projet rangé derrière un lien symbolique ailleurs). Mesuré : le
  * même arbre donnait deux journaux.
  */
-function key(treeDir: string): string {
+export function treeKey(treeDir: string): string {
   let resolved = path.resolve(treeDir);
   try {
     resolved = realpathSync(resolved);
@@ -122,14 +155,14 @@ function key(treeDir: string): string {
 }
 
 export function journalFile(treeDir: string): string {
-  return path.join(journalDir(), `${key(treeDir)}.json`);
+  return path.join(journalDir(), `${treeKey(treeDir)}.json`);
 }
 
 /** Les écritures de l'IA dans l'arbre. Fichier distinct du journal de routage :
  *  ce sont deux histoires différentes, et l'une ne doit pas pouvoir abîmer
  *  l'autre. */
 export function writesFile(treeDir: string): string {
-  return path.join(journalDir(), `${key(treeDir)}-writes.json`);
+  return path.join(journalDir(), `${treeKey(treeDir)}-writes.json`);
 }
 
 /** Les tours du plus ancien au plus récent. Un journal absent ou illisible est
@@ -212,6 +245,6 @@ function isTurn(v: unknown): v is RoutingTurn {
     typeof t['prompt'] === 'string' &&
     Array.isArray(t['selected']) &&
     typeof t['reason'] === 'string' &&
-    (t['source'] === 'hook' || t['source'] === 'mcp')
+    (t['source'] === 'hook' || t['source'] === 'mcp' || t['source'] === 'bg')
   );
 }

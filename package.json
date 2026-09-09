@@ -24,6 +24,7 @@
     "build:ext": "npm run build && npm --prefix extension install --silent && npm --prefix extension run build && npm run bundle:core",
     "typecheck": "tsc -b --noEmit",
     "test": "npm run build && node --test \"tests/*.test.js\"",
+    "eval": "npm run build && node dist/cli.js route --eval",
     "dev": "tsc -b --watch",
     "test:sql": "bash supabase/run-tests.sh",
     "bundle:core": "rm -rf extension/out/core && mkdir -p extension/out/core && cp -R dist/ extension/out/core/ && node -e \"require('fs').writeFileSync('extension/out/core/package.json','{\\\"type\\\":\\\"module\\\"}\\n')\"",

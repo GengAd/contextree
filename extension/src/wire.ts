@@ -19,6 +19,10 @@ import type { Core } from './treeProvider.js';
  */
 export async function wireAgent(core: Core, projectDir: string): Promise<boolean> {
   const statuses = await core.agentStatus(projectDir);
+  // La commande qui *serait* écrite, avant de choisir : câbler sur `npx` (le
+  // paquet publié) ou sur le binaire local n'est pas le même geste, et on ne
+  // l'apprenait jusqu'ici qu'en ouvrant le JSON après coup.
+  const command = tildify(core.selfCommand('hook').shell);
 
   const pick = await vscode.window.showQuickPick(
     statuses.map(s => ({
@@ -28,7 +32,7 @@ export async function wireAgent(core: Core, projectDir: string): Promise<boolean
       status: s,
     })),
     {
-      title: 'contextree — ajouter à une IA',
+      title: `contextree — ajouter à une IA · ${command}`,
       placeHolder: 'Quel agent câbler ? (fusion, jamais d’écrasement)',
     },
   );
@@ -66,6 +70,11 @@ export async function wireAgent(core: Core, projectDir: string): Promise<boolean
 function state(s: AgentStatus): string {
   if (s.wired) return '✓ câblé';
   return s.detected ? 'à câbler' : 'non détecté';
+}
+
+/** Les chemins du home en `~` : une commande affichée doit tenir sur une ligne. */
+function tildify(text: string): string {
+  return text.split(os.homedir()).join('~');
 }
 
 /** Un chemin lisible : relatif au projet quand il en vient, `~` sinon. */

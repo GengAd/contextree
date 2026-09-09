@@ -1,0 +1,82 @@
+[
+  {
+    "prompt": "comment fonctionne le fallback du routeur ?",
+    "expect": ["identite", "architecture/routage"]
+  },
+  {
+    "prompt": "et une session toute neuve, elle part de quoi ?",
+    "expect": ["identite", "architecture/routage"]
+  },
+  {
+    "prompt": "test hook latency",
+    "expect": ["identite", "architecture/routage"]
+  },
+  {
+    "prompt": "prends la prochaine tâche",
+    "expect": ["identite", "workflow"]
+  },
+  {
+    "prompt": "Fais moi le merge de main avec la branche actuelle",
+    "expect": ["identite", "workflow"]
+  },
+  {
+    "prompt": "où vit le chargement de .contextree/ dans le code ?",
+    "expect": ["identite", "architecture", "architecture/format-disque"]
+  },
+  {
+    "prompt": "quel est le format du frontmatter d'une branche sur le disque ?",
+    "expect": ["identite", "architecture/format-disque"]
+  },
+  {
+    "prompt": "comment je lance les tests et le build ?",
+    "expect": ["identite", "architecture/commandes"]
+  },
+  {
+    "prompt": "comment je package l'extension en .vsix et je l'installe dans Cursor ?",
+    "expect": ["identite", "architecture/packaging-extension"]
+  },
+  {
+    "prompt": "comment câbler contextree à Codex, il n'a pas de hook ?",
+    "expect": ["identite", "architecture/surfaces-injection"]
+  },
+  {
+    "prompt": "le bouton « ajouter contextree à cette IA » écrit quoi exactement ?",
+    "expect": ["identite", "architecture/surfaces-injection"]
+  },
+  {
+    "prompt": "comment marche le pull depuis Supabase, et que se passe-t-il en cas de conflit ?",
+    "expect": ["identite", "architecture/arbres-distants"]
+  },
+  {
+    "prompt": "un membre d'une équipe fille doit-il voir les arbres de l'entreprise ?",
+    "expect": ["identite", "architecture/arbres-distants"]
+  },
+  {
+    "prompt": "sur un arbre tout neuf le routeur ne trie rien, c'est un bug ?",
+    "expect": ["identite", "architecture/demarrage"]
+  },
+  {
+    "prompt": "le serveur MCP et le hook n'écrivent pas dans le même journal, pourquoi ?",
+    "expect": ["identite", "pieges"]
+  },
+  {
+    "prompt": "quel format pour mes messages de commit, et où vont les types ?",
+    "expect": ["identite", "conventions"]
+  },
+  {
+    "prompt": "je peux ajouter une dépendance pour parser le TOML proprement ?",
+    "expect": ["identite", "regles"]
+  },
+  {
+    "prompt": "est-ce qu'on devrait ajouter un chat avec l'IA dans l'extension ?",
+    "expect": ["identite", "perimetre"]
+  },
+  {
+    "prompt": "relis mon diff et dis-moi ce qui cloche avant que je committe",
+    "expect": ["identite", "revue-de-code"]
+  },
+  {
+    "prompt": "qu'est-ce qui vient après le palier en cours, et pourquoi dans cet ordre ?",
+    "expect": ["identite", "roadmap"]
+  }
+]

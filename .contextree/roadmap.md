@@ -12,7 +12,7 @@ Chaque palier n'ouvre que quand le précédent est **utilisé pour de vrai**, pa
 
 | Palier | Branche | But | Porte de sortie |
 |---|---|---|---|
-| P1 usage perso | `p1-usage-perso` | l'outil marche sur les autres projets d'Adrien, et la vue dit la vérité sur le routage | le journal montre des tours *routés*, sur un autre repo que celui-ci |
+| ~~P1 usage perso~~ **fait le 9 septembre 2026** | `p1-usage-perso` (mergée) | l'outil marche sur les autres projets d'Adrien, et la vue dit la vérité sur le routage | **franchie** — voir plus bas |
 | P2 dogfooding | `p2-dogfooding` | plus aucun `.md` de consignes hors de l'arbre dans ce repo (`README.md` = procédure, seule exception) | une session neuve prend une carte Trello sans `CLAUDE.md` et la fait bien |
 | P3 depuis zéro | `p3-depuis-zero` | sur un dossier vierge, l'IA propose l'arbre, le construit proprement, renvoie à la toile | le scénario « depuis zéro » passe sous Claude Code |
 | P4 tous les agents | `p4-tous-les-agents` | Claude Code, VS Code + Copilot (cible probable de l'entreprise), Cursor, Codex, Gemini ; ChatGPT web = presse-papier | la matrice est cochée ligne par ligne |
@@ -23,6 +23,19 @@ Chaque palier n'ouvre que quand le précédent est **utilisé pour de vrai**, pa
 | P9 entreprise | `p9-entreprise` | groupes hiérarchiques, héritage descendant, accès par nœud, rôles et propositions, audit | une équipe voit la chaîne entreprise → équipe → projet ; une autre ne voit pas la sienne |
 
 Les anciennes « phases » du `ROADMAP.md` : phase 1 (pack, git) livrée ; phase 2 = P7 ; phase 3 = P8 ; phase 4 = P9. Le détail technique de P7 à P9 est dans *Arbres distants : calques, montages, hiérarchie*.
+
+## P1, constaté le 9 septembre 2026
+
+La porte de sortie était « le journal montre des tours *routés*, sur un autre repo que celui-ci ». Elle est franchie : sur un dossier hors du dépôt, câblé par `contextree install`, le journal porte `bg | routed | 2 branches` — un vrai tri, 4 branches ramenées à `identite, regles` sur « quelles sont les règles de ce projet ? ».
+
+Ce que le palier a changé, dans l'ordre où ça se remarque :
+
+- `install` inscrit **la commande qui tourne**, pas `npx` : l'outil marche là où le paquet n'est pas publié, c'est-à-dire partout aujourd'hui ;
+- le routage de fond **écrit son tour**, donc la vue montre enfin ce que le routeur a choisi au lieu de « différé » à vie ;
+- une session neuve **hérite** de la dernière sélection routée : plus de premier prompt à l'arbre entier ;
+- `npm run eval` donne un chiffre à comparer avant/après une retouche.
+
+Ce qui reste ouvert et qu'on sait maintenant : la mesure dit que **toute la perte de rappel tient au `load_when` d'`identite`** (« toujours pertinent » n'est pas une condition). Hors cette branche, le rappel est de 100 %. C'est le premier `load_when` à corriger.
 
 ## Décisions tranchées le 9 septembre 2026
 

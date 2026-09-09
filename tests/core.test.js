@@ -7,11 +7,13 @@ import * as path from 'node:path';
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
 import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
-import { route, pickEngine, isCliEngine } from '../dist/core/router.js';
+import { route, pickEngine, isCliEngine, parseIndices } from '../dist/core/router.js';
+import { evaluateRouting, parseEvalCases } from '../dist/core/eval.js';
 import { renderContext, renderAgentsBlock } from '../dist/core/render.js';
-import { syncAgentsFile, installCodexMcp, agentStatus, installAgent } from '../dist/install.js';
+import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
-import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites } from '../dist/core/journal.js';
+import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites, turnLabelKey } from '../dist/core/journal.js';
+import { readSelection, writeSelection } from '../dist/core/session.js';
 import {
   RemoteError, clearSession, createGroup, currentSession, me, myGroups,
   readSession, remoteConfig, setRemoteConfig, signIn, signOut,
@@ -212,6 +214,36 @@ test('AGENTS.md : le bloc est borné, resynchronisé, et ne duplique rien', asyn
   assert.equal(report[2].action, 'unchanged');
 });
 
+test("install : on inscrit la commande qui tourne, pas npx en dur", async () => {
+  const saved = process.argv[1];
+  try {
+    // Lancé depuis un cache npx : la forme npx est la bonne pour cet
+    // utilisateur — le paquet est là où npx sait le retrouver.
+    process.argv[1] = path.join(os.homedir(), '.npm', '_npx', 'abc123', 'node_modules', '@gengad', 'contextree', 'dist', 'cli.js');
+    const viaNpx = selfCommand('hook');
+    assert.equal(viaNpx.command, 'npx');
+    assert.deepEqual(viaNpx.args, ['-y', '@gengad/contextree', 'hook']);
+    assert.equal(viaNpx.shell, 'npx -y @gengad/contextree hook');
+
+    // Sinon : node + le script, en absolu et entre guillemets. Sans ça, un
+    // paquet non publié échoue en silence sur tout autre projet que celui-ci.
+    process.argv[1] = path.join('dist', 'cli.js');
+    const local = selfCommand('mcp');
+    assert.equal(local.command, process.execPath);
+    assert.deepEqual(local.args, [path.resolve('dist', 'cli.js'), 'mcp']);
+    assert.ok(path.isAbsolute(local.args[0]));
+    assert.equal(local.shell, `"${process.execPath}" "${path.resolve('dist', 'cli.js')}" mcp`);
+
+    // La détection « déjà câblé » cherche `contextree` dans la commande : elle
+    // doit rester vraie sur les deux formes.
+    process.argv[1] = path.join(path.sep, 'opt', 'node_modules', '@gengad', 'contextree', 'dist', 'cli.js');
+    assert.ok(selfCommand('hook').shell.includes('contextree'));
+    assert.ok(viaNpx.shell.includes('contextree'));
+  } finally {
+    process.argv[1] = saved;
+  }
+});
+
 test('codex : la table MCP est ajoutée à la fin, jamais réécrite', async () => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-codex-'));
   const saved = process.env.CODEX_HOME;
@@ -224,7 +256,7 @@ test('codex : la table MCP est ajoutée à la fin, jamais réécrite', async () 
     // Ce qui était là est intact, et la nouvelle table est bien à la fin :
     // aucune table précédente ne peut l'avaler.
     assert.match(body, /\[projects\."\/x"\]\ntrust_level = "trusted"/);
-    assert.match(body, /\[mcp_servers\.contextree\]\ncommand = "npx"/);
+    assert.ok(body.includes(`[mcp_servers.contextree]\ncommand = ${JSON.stringify(selfCommand('mcp').command)}`));
     assert.ok(body.indexOf('[mcp_servers.contextree]') > body.indexOf('[projects."/x"]'));
 
     await installCodexMcp(report);
@@ -249,7 +281,8 @@ test("install : l'état d'un agent se lit sans rien écrire, et le câblage est 
   const report = await installAgent('cursor', projectDir);
   assert.equal(report[0].action, 'created');
   const written = JSON.parse(await fs.readFile(path.join(projectDir, '.cursor', 'mcp.json'), 'utf8'));
-  assert.equal(written.mcpServers.contextree.command, 'npx');
+  assert.equal(written.mcpServers.contextree.command, selfCommand('mcp').command);
+  assert.deepEqual(written.mcpServers.contextree.args, selfCommand('mcp').args);
 
   const after = await agentStatus(projectDir);
   assert.equal(after.find(a => a.id === 'cursor').wired, true);
@@ -396,6 +429,161 @@ const turn = (over = {}) => ({
   ...over,
 });
 
+test("session : une session neuve hérite de la dernière sélection routée", async () => {
+  const dir = await scratch();
+  // Sous un moteur CLI, le premier tour d'une session n'est jamais routé : sans
+  // second niveau, chaque nouvelle conversation repartait de l'arbre entier
+  // (12/12 mesuré) alors que le routeur avait déjà répondu la veille.
+  await writeSelection(dir, 'session-a', ['identite', 'regles'], { at: 1000, routed: true });
+  assert.deepEqual(await readSelection(dir, 'session-b'), ['identite', 'regles']);
+
+  // La session qui a la sienne garde la sienne : le niveau arbre est un repli,
+  // pas une autorité.
+  await writeSelection(dir, 'session-b', ['architecture'], { at: 2000 });
+  assert.deepEqual(await readSelection(dir, 'session-b'), ['architecture']);
+  assert.deepEqual(await readSelection(dir, 'session-a'), ['identite', 'regles']);
+
+  // Un repli n'alimente pas le niveau arbre : il y recopierait ce qui s'y
+  // trouve déjà, ou y figerait l'arbre entier.
+  await writeSelection(dir, 'session-c', ['tout', 'l', 'arbre'], { at: 3000 });
+  assert.deepEqual(await readSelection(dir, 'session-neuve'), ['identite', 'regles']);
+});
+
+test("session : une sélection plus ancienne n'écrase pas une plus récente", async () => {
+  const dir = await scratch();
+  // Le routage de fond finit après le tour suivant : sans horodatage du prompt,
+  // c'est le dernier à *finir* qui gagnait, pas le dernier *lancé*.
+  await writeSelection(dir, 's', ['recente'], { at: 2000, routed: true });
+  await writeSelection(dir, 's', ['ancienne'], { at: 1000, routed: true });
+  assert.deepEqual(await readSelection(dir, 's'), ['recente']);
+  assert.deepEqual(await readSelection(dir, 'autre'), ['recente']);
+
+  // À `at` égal, la dernière écriture passe : deux tours du même prompt.
+  await writeSelection(dir, 's', ['egalite'], { at: 2000 });
+  assert.deepEqual(await readSelection(dir, 's'), ['egalite']);
+});
+
+test('session : un cache illisible vaut un cache vide, jamais une exception', async () => {
+  // Un état à soi : les noms de fichiers sont des empreintes, et on veut
+  // pouvoir désigner *celui de cette session* sans le deviner.
+  const saved = process.env.CONTEXTREE_STATE_DIR;
+  process.env.CONTEXTREE_STATE_DIR = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-sel-'));
+  try {
+    const dir = await scratch();
+    await writeSelection(dir, 's', ['identite'], { at: 1000, routed: true });
+    const cache = path.join(process.env.CONTEXTREE_STATE_DIR, 'selection');
+    const own = (await fs.readdir(cache)).find(f => !f.endsWith('-last.json'));
+
+    // Un JSON tronqué (deux écritures concurrentes, avant le rename atomique)
+    // ne doit pas faire échouer un prompt — il fait retomber d'un niveau.
+    await fs.writeFile(path.join(cache, own), '{"selected": [', 'utf8');
+    assert.deepEqual(await readSelection(dir, 's'), ['identite']);
+
+    // Les deux niveaux perdus : vide, et l'appelant injectera tout l'arbre.
+    for (const f of await fs.readdir(cache)) {
+      await fs.writeFile(path.join(cache, f), 'pas du JSON', 'utf8');
+    }
+    assert.deepEqual(await readSelection(dir, 's'), []);
+
+    // Et l'ancien format — un tableau nu — reste lu : une mise à jour ne doit
+    // pas coûter un tour à l'arbre entier à chaque session ouverte.
+    await fs.writeFile(path.join(cache, own), JSON.stringify(['ancien', 'format']), 'utf8');
+    assert.deepEqual(await readSelection(dir, 's'), ['ancien', 'format']);
+  } finally {
+    process.env.CONTEXTREE_STATE_DIR = saved;
+  }
+});
+
+test('routeur : la réponse est le dernier tableau d\'entiers, quel que soit le bruit devant', () => {
+  // Les trois formes qu'on voit vraiment sortir d'un moteur.
+  assert.deepEqual(parseIndices('[0,3]'), [0, 3]);
+  assert.deepEqual(parseIndices('{"indices":[1]}'), [1]);
+  assert.deepEqual(parseIndices('```json\n[2]\n```'), [2]);
+
+  // Un CLI d'agent préfixe sa réponse : bannière, version, horodatage. La
+  // réponse est à la fin, le bruit est devant.
+  assert.deepEqual(parseIndices('Bannière v1.2\n2026-09-09T10:00\n[0, 4]'), [0, 4]);
+  assert.deepEqual(parseIndices('je réfléchis…\n[1]\nvoilà\n[2, 3]'), [2, 3]);
+
+  // Sélection vide et repli se ressemblent et n'ont rien à voir : `[]` est une
+  // réponse (rien à charger), `null` dit « ce n'est pas une réponse de routeur ».
+  assert.deepEqual(parseIndices('[]'), []);
+  assert.equal(parseIndices('["a","b"]'), null);
+  assert.equal(parseIndices('aucune branche pertinente'), null);
+  assert.equal(parseIndices(''), null);
+
+  // Limite connue et assumée : un tableau cité gagne s'il est le dernier. Le
+  // cas reste théorique — le catalogue n'est jamais recopié dans la réponse.
+  assert.deepEqual(parseIndices('voir [1] et [2] plus haut'), [2]);
+});
+
+test("éval : le score compte les ancêtres du bon côté, et dit ce qui manque", async () => {
+  const dir = await scratch();
+  await writeBranch(dir, { path: 'architecture', title: 'Architecture', type: 'context', loadWhen: 'q', content: 'a' });
+  await writeBranch(dir, { path: 'architecture/routage', title: 'Routage', type: 'reference', loadWhen: 'q', content: 'r' });
+  await writeBranch(dir, { path: 'regles', title: 'Règles', type: 'rule', loadWhen: 'q', content: 'g' });
+  const tree = await loadTree(dir);
+
+  // Un moteur factice : la mesure de la comparaison n'a pas à dépendre d'un
+  // modèle, sinon elle ne serait pas dans `npm test`.
+  const answers = {
+    'un': { selected: new Set(['architecture', 'architecture/routage']), reason: 'routed' },
+    'deux': { selected: new Set(['regles']), reason: 'routed' },
+  };
+  const report = await evaluateRouting(
+    tree,
+    [
+      // `expect` ne cite que la branche qui compte : son parent est chargé
+      // d'office, le compter « en trop » ferait mentir le score.
+      { prompt: 'un', expect: ['architecture/routage'] },
+      { prompt: 'deux', expect: ['architecture/routage', 'branche-disparue'] },
+    ],
+    async p => answers[p],
+  );
+
+  assert.deepEqual(report.cases[0].extra, []);
+  assert.deepEqual(report.cases[0].missing, []);
+  assert.equal(report.cases[0].hit.length, 2);
+
+  // Le second cas rate tout : 1 chargé pour rien, 2 attendus manquants.
+  assert.deepEqual(report.cases[1].extra, ['regles']);
+  assert.deepEqual(report.cases[1].missing.sort(), ['architecture', 'architecture/routage']);
+  // Un `expect` qui ne correspond à aucune branche : le jeu d'éval a vieilli,
+  // on le dit au lieu de le compter comme un échec du routeur.
+  assert.deepEqual(report.cases[1].unknown, ['branche-disparue']);
+
+  // Micro-moyenne : 2 justes sur 3 chargés, 2 sur 4 attendus.
+  assert.equal(report.precision, 2 / 3);
+  assert.equal(report.recall, 2 / 4);
+});
+
+test("éval : un moteur qui échoue est un cas raté, pas une mesure interrompue", async () => {
+  const dir = await scratch();
+  await writeBranch(dir, { path: 'regles', title: 'Règles', type: 'rule', loadWhen: 'q', content: 'g' });
+  const tree = await loadTree(dir);
+
+  const report = await evaluateRouting(tree, [{ prompt: 'x', expect: ['regles'] }], async () => {
+    throw new Error('CLI introuvable');
+  });
+  assert.equal(report.cases[0].error, 'CLI introuvable');
+  assert.deepEqual(report.cases[0].missing, ['regles']);
+  assert.equal(report.recall, 0);
+});
+
+test("éval : un cas mal écrit se saute, il n'emporte pas le fichier", () => {
+  const cases = parseEvalCases([
+    { prompt: 'bon', expect: ['regles'] },
+    { prompt: '   ', expect: ['regles'] },
+    { expect: ['regles'] },
+    { prompt: 'sans expect' },
+    { prompt: 'expect sale', expect: ['regles', 42, null] },
+    'pas un objet',
+  ]);
+  assert.deepEqual(cases.map(c => c.prompt), ['bon', 'sans expect', 'expect sale']);
+  assert.deepEqual(cases[2].expect, ['regles']);
+  assert.deepEqual(parseEvalCases({ pas: 'un tableau' }), []);
+});
+
 test('journal : les tours s\'empilent, du plus ancien au plus récent', async () => {
   const dir = await scratch();
   assert.deepEqual(await readJournal(dir), []);
@@ -406,6 +594,35 @@ test('journal : les tours s\'empilent, du plus ancien au plus récent', async ()
   assert.equal(turns[1].reason, 'fallback');
   assert.equal(turns[1].source, 'mcp');
   assert.equal(turns[1].error, 'timeout');
+});
+
+test("journal : le routage de fond est un tour à part, et il se lit comme tel", async () => {
+  const dir = await scratch();
+  // Sous un moteur CLI, un prompt produit deux entrées : le `deferred` du hook,
+  // puis le verdict du routage de fond. On ne les fusionne pas — c'est ce qui
+  // s'est passé, et sans la seconde la vue affichait « différé » à vie.
+  const at = Date.now();
+  await appendTurn(dir, turn({ at, prompt: 'un prompt', reason: 'deferred', selected: ['a', 'b'] }));
+  await appendTurn(dir, turn({ at, prompt: 'un prompt', source: 'bg', selected: ['a'] }));
+  const turns = await readJournal(dir);
+  assert.equal(turns.length, 2);
+  assert.equal(turns[1].source, 'bg');
+  // Le même `at` : les deux entrées d'un prompt se lisent ensemble.
+  assert.equal(turns[0].at, turns[1].at);
+
+  // Une source inconnue reste écartée : le journal ne gagne pas un champ libre.
+  await fs.writeFile(journalFile(dir), JSON.stringify([turn({ source: 'ailleurs' })]), 'utf8');
+  assert.deepEqual(await readJournal(dir), []);
+});
+
+test("journal : un routage de fond ne se dit pas « routé » tout court", () => {
+  // La barre latérale et la toile lisent la même clé : un tour du fond a bien
+  // routé, mais ses branches partiront au prochain prompt, pas à celui-ci.
+  assert.equal(turnLabelKey({ reason: 'routed', source: 'bg' }), 'routed-bg');
+  assert.equal(turnLabelKey({ reason: 'routed', source: 'hook' }), 'routed');
+  assert.equal(turnLabelKey({ reason: 'routed', source: 'mcp' }), 'routed');
+  // Un repli venu du fond reste un repli : la source ne renomme que `routed`.
+  assert.equal(turnLabelKey({ reason: 'fallback', source: 'bg' }), 'fallback');
 });
 
 test('journal : borné aux 50 derniers tours', async () => {

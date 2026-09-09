@@ -720,7 +720,12 @@
     all: 'tout chargé',
     fallback: 'repli',
     deferred: 'différé — routage en tâche de fond',
+    // Le routage de fond a rendu son verdict : ces branches partiront au tour
+    // suivant. Un `routed` comme un autre pour la couleur des cartes, mais on
+    // ne laisse pas croire qu'il s'agit du tour qui vient de passer.
+    'routed-bg': 'routé (prochain tour)',
   };
+
 
   function askProbe() {
     const prompt = promptInput.value.trim();
@@ -751,7 +756,10 @@
     }
     const total = Math.max(0, all.length - 1);
     const head = probe ? 'sonde' : `dernier tour · ${o.source}`;
-    const bits = [head, `${o.selected.size}/${total}`, LABELS[o.reason] ?? o.reason];
+    // La clé vient du cœur (`turnLabelKey`) pour un tour du journal ; une sonde
+    // n'en a pas, sa raison suffit.
+    const key = o.key ?? o.reason;
+    const bits = [head, `${o.selected.size}/${total}`, LABELS[key] ?? key];
     if (o.ms) bits.push(`${o.ms} ms`);
     trace.textContent = bits.join(' · ');
     // Un repli n'est pas un routage : il doit se voir sans être lu.
@@ -761,7 +769,9 @@
         ? `repli sur la sélection précédente${o.error ? ` — ${o.error}` : ''}`
         : o.reason === 'deferred'
           ? `sélection du tour précédent — le routage de « ${(o.prompt || '').slice(0, 60)} » tourne derrière`
-          : o.prompt || '';
+          : key === 'routed-bg'
+            ? `choisi pour « ${(o.prompt || '').slice(0, 60)} » — injecté au prochain prompt`
+            : o.prompt || '';
     excerpt.className = o.reason === 'fallback' ? 'warn' : '';
   }
 
@@ -832,6 +842,7 @@
         ? {
             selected: new Set(t.turn.selected),
             reason: t.turn.reason,
+            key: t.key,
             prompt: t.turn.prompt,
             source: t.turn.source,
             error: t.turn.error,

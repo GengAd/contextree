@@ -11,6 +11,7 @@ import { route, pickEngine, isCliEngine, engineBin, withoutRouting } from './cor
 import { encodePack, extractPack, applyPack } from './core/pack.js';
 import { readSelection, writeSelection } from './core/session.js';
 import { appendTurn } from './core/journal.js';
+import { evaluateRouting, parseEvalCases, type EvalReport } from './core/eval.js';
 import {
   RemoteError,
   createGroup,
@@ -22,7 +23,7 @@ import {
 } from './core/remote.js';
 import { link, pull, push, readTracking } from './core/sync.js';
 import { isBranchType, type BranchType } from './core/types.js';
-import { AGENTS, agentStatus, installAgent, type InstallReport } from './install.js';
+import { AGENTS, agentStatus, installAgent, selfCommand, type InstallReport } from './install.js';
 import { resolvePack, runStdio } from './mcp/server.js';
 
 const HELP = `contextree — un arbre de contexte partageable, routé, injecté à chaque appel IA.
@@ -34,6 +35,7 @@ const HELP = `contextree — un arbre de contexte partageable, routé, injecté 
   contextree rm <chemin>             supprime une branche et ses enfants
   contextree mv <de> <vers>          déplace ou renomme une branche (ses enfants suivent)
   contextree route "<prompt>"        montre ce que le routeur chargerait
+  contextree route --eval [fichier]  mesure le routage sur un jeu de prompts
   contextree render [--agents]       affiche tout l'arbre assemblé (sans routage)
                                      --agents : le bloc court pour un AGENTS.md
                                      --copy   : dans le presse-papier (render, route)
@@ -158,6 +160,21 @@ async function cmdInit(force: boolean): Promise<number> {
  * `--status` ne fait que regarder : c'est la question qu'on se pose quand rien
  * ne s'injecte.
  */
+/**
+ * Les deux commandes que `install` inscrirait — hook et serveur MCP.
+ *
+ * Affichées avant comme après l'écriture : c'est le seul endroit d'où l'on
+ * apprend, sans ouvrir un JSON, si l'agent a été câblé sur `npx` (paquet
+ * publié) ou sur le binaire local. Voir `selfCommand`.
+ */
+function wiredCommands(): string {
+  const mcp = selfCommand('mcp');
+  return (
+    `Commande écrite : ${selfCommand('hook').shell}\n` +
+    `                  ${[mcp.command, ...mcp.args].join(' ')}\n`
+  );
+}
+
 async function cmdInstall(flags: Flags): Promise<number> {
   const asked = str(flags.agent);
   const statuses = await agentStatus(process.cwd());
@@ -168,7 +185,8 @@ async function cmdInstall(flags: Flags): Promise<number> {
       process.stdout.write(`${state.padEnd(12)} ${a.label}\n`);
       for (const f of a.files) process.stdout.write(`             ${shorten(f)}\n`);
     }
-    process.stdout.write(`\nRoutage : ${describeEngine()}\n`);
+    process.stdout.write(`\n${wiredCommands()}`);
+    process.stdout.write(`Routage : ${describeEngine()}\n`);
     return 0;
   }
 
@@ -205,8 +223,9 @@ async function cmdInstall(flags: Flags): Promise<number> {
         ` — \`--agent <id>\` pour forcer.\n`,
     );
   }
+  process.stdout.write(`\n${wiredCommands()}`);
   process.stdout.write(
-    "\nRelance ton agent pour prendre en compte le hook et le serveur MCP.\n" +
+    "Relance ton agent pour prendre en compte le hook et le serveur MCP.\n" +
       "Aucune de ces surfaces (Claude sur le web, ChatGPT…) : `contextree render --copy`,\n" +
       "ou `contextree route \"<ta demande>\" --copy`, et tu colles.\n" +
       `Routage : ${describeEngine()}\n`,
@@ -301,6 +320,7 @@ async function cmdMove(from: string | undefined, to: string | undefined): Promis
 }
 
 async function cmdRoute(prompt: string, flags: Flags): Promise<number> {
+  if (flags.eval) return cmdEval(typeof flags.eval === 'string' ? flags.eval : str(flags._[0]));
   if (!prompt.trim()) {
     process.stderr.write('Usage : contextree route "<prompt>"\n');
     return 1;
@@ -314,6 +334,76 @@ async function cmdRoute(prompt: string, flags: Flags): Promise<number> {
       `${formatTree(tree, selected)}\n\n`,
   );
   return emit(renderContext(tree, selected), Boolean(flags.copy));
+}
+
+/** Le jeu de prompts par défaut : dans le dépôt, à côté des tests — c'est du
+ *  code de mise au point, pas du contexte, donc il n'a rien à faire dans
+ *  l'arbre. Résolu depuis le dossier qui contient `.contextree/`. */
+const EVAL_FILE = path.join('tests', 'routing.eval.json');
+
+/**
+ * Mesurer le routage sur de vrais prompts.
+ *
+ * Opt-in, jamais dans `npm test` : il faut un moteur, la réponse d'un modèle
+ * varie d'un appel à l'autre, et un mauvais score dit « le routage s'est
+ * dégradé », pas « le code est cassé ». D'où le **code de sortie 0 même quand
+ * c'est mauvais** : c'est une mesure qu'on lit, pas une porte qui claque.
+ */
+async function cmdEval(file: string | undefined): Promise<number> {
+  // Personne n'attend une mesure : on laisse au moteur le temps de répondre,
+  // comme le routage de fond. Sans ça, un CLI d'agent expire à 20 s, la moitié
+  // des cas tombent dans le repli « arbre entier », et on mesure le timeout au
+  // lieu du routeur — 9 cas sur 20 à la première mesure, le 9 septembre 2026.
+  process.env['CONTEXTREE_ROUTER_TIMEOUT_MS'] ??= '120000';
+  const { dir, tree } = await open();
+  const target = path.resolve(path.dirname(dir), file ?? EVAL_FILE);
+
+  let cases;
+  try {
+    cases = parseEvalCases(JSON.parse(await fs.readFile(target, 'utf8')));
+  } catch {
+    process.stderr.write(`Jeu d'éval illisible : ${shorten(target)}\n`);
+    return 1;
+  }
+  if (!cases.length) {
+    process.stderr.write(`Aucun cas dans ${shorten(target)}\n`);
+    return 1;
+  }
+
+  process.stderr.write(
+    `${cases.length} cas · ${tree.order.length} branches · ${describeEngine()}\n\n`,
+  );
+
+  const report = await evaluateRouting(tree, cases, p => route(tree, p));
+  process.stdout.write(formatEval(report));
+  return 0;
+}
+
+/** Une ligne par cas — `●` attendu et obtenu, `+` en trop, `−` manquant — puis
+ *  le total. Les titres, pas les chemins : c'est ce que montrent les vues. */
+function formatEval(report: EvalReport): string {
+  const out: string[] = [];
+  for (const c of report.cases) {
+    const bits = [
+      `${c.hit.length}/${c.hit.length + c.missing.length}`,
+      `${String(c.ms).padStart(5)} ms`,
+      c.reason === 'routed' ? '' : c.reason,
+    ].filter(Boolean);
+    out.push(`${bits.join(' · ')}  ${c.prompt}`);
+    if (c.missing.length) out.push(`   − ${c.missing.join(', ')}`);
+    if (c.extra.length) out.push(`   + ${c.extra.join(', ')}`);
+    if (c.unknown.length) out.push(`   ? ${c.unknown.join(', ')} — absent de l'arbre`);
+    if (c.error) out.push(`   ! ${c.error}`);
+  }
+  const pct = (n: number): string => `${Math.round(n * 100)} %`;
+  out.push('');
+  out.push(
+    `précision ${pct(report.precision)} · rappel ${pct(report.recall)} · ${report.avgMs} ms en moyenne`,
+  );
+  out.push(
+    'précision = ce qui a été chargé et servait ; rappel = ce qui servait et a été chargé.',
+  );
+  return `${out.join('\n')}\n`;
 }
 
 async function cmdRender(flags: Flags): Promise<number> {
@@ -592,6 +682,10 @@ async function cmdHook(): Promise<number> {
     if (!tree.order.length && !tree.rootContent.trim()) return 0;
 
     const previous = await readSelection(dir, sessionId);
+    // Un seul horodatage pour ce prompt : le tour du hook et celui que le
+    // routage de fond écrira portent le même `at`, sinon on ne peut plus les
+    // lire ensemble.
+    const at = Date.now();
 
     // Le routage par le CLI coûte entre 5 et 60 s : hors de question de le
     // mettre devant le prompt. Ce tour part avec la sélection du tour précédent
@@ -607,11 +701,11 @@ async function cmdHook(): Promise<number> {
 
     // En différé, c'est le process de fond qui écrira la sélection : l'écraser
     // ici reviendrait à effacer le routage avant qu'il n'arrive.
-    if (deferred) routeInBackground(dir, sessionId, prompt);
-    else await writeSelection(dir, sessionId, selected);
+    if (deferred) routeInBackground(dir, sessionId, prompt, at);
+    else await writeSelection(dir, sessionId, selected, { at, routed: reason === 'routed' });
 
     await appendTurn(dir, {
-      at: Date.now(),
+      at,
       prompt,
       selected: [...selected],
       reason,
@@ -636,7 +730,7 @@ async function cmdHook(): Promise<number> {
  * Le prompt passe en base64, un `argv` n'a pas à deviner ce qu'un utilisateur
  * peut écrire. Toute panne ici est un routage en moins, jamais un prompt bloqué.
  */
-function routeInBackground(dir: string, sessionId: string, prompt: string): void {
+function routeInBackground(dir: string, sessionId: string, prompt: string, at: number): void {
   try {
     const entry = process.argv[1];
     if (!entry) return;
@@ -648,6 +742,7 @@ function routeInBackground(dir: string, sessionId: string, prompt: string): void
         '--dir', dir,
         '--session', sessionId,
         '--prompt64', Buffer.from(prompt.slice(0, 4000), 'utf8').toString('base64'),
+        '--at', String(at),
       ],
       { detached: true, stdio: 'ignore' },
     );
@@ -661,6 +756,11 @@ function routeInBackground(dir: string, sessionId: string, prompt: string): void
  * Le routage de fond lui-même. Personne ne l'attend, donc il a le droit d'être
  * lent — et il n'écrit que s'il a vraiment routé : un repli n'a rien à mettre
  * dans le cache, il en sort.
+ *
+ * Il **ajoute aussi son tour au journal** (9 septembre 2026). Sans ça, sous un
+ * moteur CLI le journal ne contenait que des `deferred` : la vue affichait
+ * « différé » à vie et le seul routage réel de la session n'était visible nulle
+ * part. Deux entrées pour un prompt, donc, et le même `at` que celle du hook.
  */
 async function cmdRouteBackground(flags: Flags): Promise<number> {
   try {
@@ -674,7 +774,16 @@ async function cmdRouteBackground(flags: Flags): Promise<number> {
     const previous = await readSelection(dir, sessionId);
     const prompt = Buffer.from(encoded, 'base64').toString('utf8');
     const { selected, reason } = await route(tree, prompt, { previousSelection: previous });
-    if (reason === 'routed') await writeSelection(dir, sessionId, selected);
+    if (reason !== 'routed') return 0;
+    const at = Number(str(flags.at)) || Date.now();
+    await writeSelection(dir, sessionId, selected, { at, routed: true });
+    await appendTurn(dir, {
+      at,
+      prompt,
+      selected: [...selected],
+      reason,
+      source: 'bg',
+    });
   } catch {
     // Même contrat que le hook : silencieux, code 0.
   }

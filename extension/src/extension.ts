@@ -45,7 +45,7 @@ export function activate(context: vscode.ExtensionContext): void {
               ...last.turn.selected.map(p => core.branchFile(dir, p)),
             ]
           : [],
-        last?.turn.reason ?? null,
+        last?.key ?? null,
       );
       provider.setLoaded(file => decorations.has(file));
       await CanvasPanel.setTurn(last);

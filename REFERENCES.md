@@ -9,7 +9,7 @@ Stack, format, mécanique, pièges. À lire quand on touche au code.
 | Runtime | Node ≥ 20, ESM, TypeScript strict (`NodeNext`) |
 | Dépendances | `@anthropic-ai/sdk` (routeur), `@modelcontextprotocol/sdk` (serveur MCP), `zod` (schémas des outils MCP) |
 | Tests | `node:test` sur le build (`tests/*.test.js` → `dist/`) |
-| Distribution | `npx @gengad/contextree` — pas d'install globale requise |
+| Distribution | `npx @gengad/contextree` une fois publié ; d'ici là `npm i -g .` — `install` inscrit la commande qui tourne |
 
 Le frontmatter, la compression des packs et le cache de session sont faits main sur des modules Node (`zlib`, `crypto`, `os`) : trois dépendances, c'est le budget.
 
@@ -128,7 +128,7 @@ C'est le prix assumé : le routage est décalé d'un tour. Dans une conversation
 
 - **Sortie structurée côté SDK** (`output_config.format` + JSON Schema) : là, elle est gratuite.
 - **Pas de thinking, `effort: low`** : le routeur a un budget latence, pas un budget réflexion. Les deux pièges connus du mode thinking-off ne s'appliquent pas ici — aucun outil déclaré, et la sortie est contrainte par un schéma.
-- **Fallback jamais vide, et jamais typé** (`withoutRouting`) : la sélection précédente (sticky, cache de session), sinon l'arbre entier. Aucun type n'est privilégié — un `identity` n'est pas plus « garanti » qu'un `reference`, c'est le `load_when` qui décide, ou personne. (Avant le 8 septembre 2026, le filet était `identity` + `rule` : une règle invisible qui décidait à la place du `load_when`, et qui faisait mentir la vue.)
+- **Fallback jamais vide, et jamais typé** (`withoutRouting`) : la sélection de la session, sinon la dernière sélection routée de l'arbre (toutes sessions confondues), sinon l'arbre entier. Aucun type n'est privilégié — un `identity` n'est pas plus « garanti » qu'un `reference`, c'est le `load_when` qui décide, ou personne. (Avant le 8 septembre 2026, le filet était `identity` + `rule` : une règle invisible qui décidait à la place du `load_when`, et qui faisait mentir la vue.)
 - **Court-circuit ≤ 3 branches** : en dessous, l'aller-retour de routage coûte plus que d'injecter tout l'arbre.
 
 Variables : `CONTEXTREE_ROUTER` (`auto` | `anthropic` | `openai` | `claude` | `codex` | `gemini` | `off` ; `sdk` et `cli` restent compris), `CONTEXTREE_ROUTER_MODEL` (défaut `claude-opus-5` sur clé Anthropic, `gpt-4o-mini` sur endpoint OpenAI, `haiku` sur le CLI `claude`, celui de l'utilisateur ailleurs), `CONTEXTREE_ROUTER_TIMEOUT_MS` (défaut `2500` sur API, `20000` en CLI), `CONTEXTREE_ROUTER_BLOCKING`, `OPENAI_API_KEY` / `OPENAI_BASE_URL`, `CONTEXTREE_CLAUDE_BIN`.
@@ -200,7 +200,7 @@ Quatre des cinq partagent la forme `{ "mcpServers": … }` : une seule fonction 
 
 **Câblé = tous ses fichiers le sont.** Un serveur MCP posé sans le hook est un câblage à moitié fait : l'annoncer comme terminé serait mentir sur la seule surface déterministe.
 
-La détection d'un hook déjà posé cherche `contextree` dans la commande — ce que `install` écrit toujours (`npx -y @gengad/contextree hook`). Un câblage écrit à la main avec un chemin local (`node dist/cli.js hook`, comme dans ce dépôt) n'est donc pas reconnu ; c'est le cas du développeur du projet, pas celui d'un utilisateur.
+La détection d'un hook déjà posé cherche `contextree` dans la commande — vrai des deux formes qu'écrit `selfCommand` : le chemin d'un binaire global (`.../@gengad/contextree/dist/cli.js`) comme la forme `npx -y @gengad/contextree hook`. Un dépôt cloné sous un autre nom que `contextree` échappe encore à la détection ; c'est le cas du développeur du projet, pas celui d'un utilisateur.
 
 ## MCP (`src/mcp/server.ts`)
 
@@ -357,5 +357,5 @@ L'extension vit dans `extension/`, se compile en **CommonJS** et charge un cœur
 - **`process.exit` tue le serveur MCP.** La CLI sort en `process.exit(code)` ; la branche `mcp` ne rend donc jamais la main (`await new Promise(() => {})`). Sans ça, le serveur se coupe juste après le `connect()`.
 - **Un dossier sans `.md` frère** était invisible avant le hub implicite. Si on retouche `walk()`, garder ce comportement.
 - **L'ordre des branches est contractuel** : les indices envoyés au routeur en dépendent. `order` est un parcours en profondeur alphabétique — le rendre instable casserait silencieusement le routage.
-- **Le cache de session vit dans `os.tmpdir()`**, pas dans le repo : c'est de l'état, pas du contenu. Il n'est jamais une dépendance — s'il disparaît, on perd juste la stickiness du fallback.
-- **`os.tmpdir()` n'est pas le même des deux côtés.** Le transport stdio du SDK MCP lance le serveur avec un environnement nettoyé — `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`, mais **pas** `TMPDIR`. Le serveur retombe donc sur `/tmp` pendant que le hook écrit dans le `/var/folders/…` de la session. D'où le journal ancré sur `~/.contextree/journal/` (surchargeable par `CONTEXTREE_STATE_DIR`) : tout état que les deux chemins doivent partager doit l'être aussi. Le cache sticky, lui, n'a qu'un seul écrivain et peut rester dans `tmpdir`.
+- **Le cache de sélection vit sous `~/.contextree/selection/`**, pas dans le repo : c'est de l'état, pas du contenu. Il n'est jamais une dépendance — s'il disparaît, on perd juste la stickiness du fallback.
+- **`os.tmpdir()` n'est pas le même des deux côtés.** Le transport stdio du SDK MCP lance le serveur avec un environnement nettoyé — `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`, mais **pas** `TMPDIR`. Le serveur retombe donc sur `/tmp` pendant que le hook écrit dans le `/var/folders/…` de la session. D'où le journal ancré sur `~/.contextree/journal/` (surchargeable par `CONTEXTREE_STATE_DIR`) : tout état que les deux chemins doivent partager doit l'être aussi. Le cache de sélection l'a rejoint le 9 septembre 2026 — il a bien deux écrivains dès qu'un client MCP route, et le niveau « dernière sélection de l'arbre » n'a de sens que partagé.

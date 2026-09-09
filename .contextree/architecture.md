@@ -13,7 +13,7 @@ src/core/     le moteur, sans I/O externe autre que le disque
   render.ts       le bloc injecté, le bloc AGENTS.md, la ligne de transparence
   router.ts       l'appel IA de routage et son fallback
   pack.ts         export/import pour le partage
-  session.ts      cache de la sélection précédente (os.tmpdir)
+  session.ts      la sélection dont hérite le tour suivant (~/.contextree)
 src/mcp/server.ts serveur MCP stdio, 7 outils
 src/cli.ts        toutes les commandes, dont `hook` et `mcp`
 src/install.ts    câblage par agent : .mcp.json, .claude/settings.json,

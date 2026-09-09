@@ -28,4 +28,13 @@ Le push est donc une **avance**, pas un remplacement du pull. `renderContext` te
 
 **Ce qui vit hors du projet n'est câblé que si l'agent est détecté**, ou nommé par `--agent` : écrire dans le `~` de quelqu'un qui n'utilise pas l'outil serait une surprise, pas un service.
 
-**Détection d'un hook déjà posé** : on cherche `contextree` dans la commande, ce que `install` écrit toujours (`npx -y @gengad/contextree hook`). Un câblage à la main avec un chemin local (`node dist/cli.js hook`, comme dans ce dépôt) n'est donc pas reconnu — c'est le cas du développeur, pas celui d'un utilisateur.
+**On inscrit la commande qui tourne, pas `npx`** (`selfCommand`, 9 septembre 2026). `install` écrivait `npx -y @gengad/contextree <cmd>` en dur. Le paquet n'étant pas publié, tout projet autre que ce dépôt recevait un hook qui échoue **en silence** — l'invariant du code 0 rend la panne invisible. Le processus qui exécute `install` sait comment il a été lancé, alors il l'inscrit :
+
+- `process.argv[1]` dans un cache npx (`/_npx/`, `\_npx\` sous Windows) → la forme `npx -y @gengad/contextree <cmd>` : c'est la bonne pour cet utilisateur, et P6 la pinnera sur une version ;
+- sinon → `"<process.execPath>" "<argv[1]>" <cmd>`, **chemins absolus**. Couvre `npm i -g .`, `npm link`, et `node dist/cli.js` lancé depuis le dépôt.
+
+Jamais `contextree` nu : le PATH d'un hook est plus pauvre que celui d'un shell — même raison que `findBin`, dans `router.ts`. Toujours entre guillemets dans la forme shell : un chemin avec une espace casserait le hook. Les trois écritures (`installHook` en forme shell, `installMcpJson` et `installCodexMcp` en `command` + `args`) passent par la même fonction, sinon elles divergeraient.
+
+`install --status` et le bouton de l'extension **affichent cette commande** avant d'écrire : câbler sur `npx` ou sur un binaire local n'est pas le même geste, et on ne l'apprenait qu'en ouvrant le JSON après coup.
+
+**Détection d'un hook déjà posé** : on cherche `contextree` dans la commande. C'est vrai des deux formes — le chemin d'un binaire global contient `@gengad/contextree`, celui du dépôt contient `contextree`. Un dépôt cloné sous un autre nom y échappe encore ; c'est le cas du développeur, pas celui d'un utilisateur.
