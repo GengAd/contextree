@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
 import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
-import { route, pickEngine, isCliEngine } from '../dist/core/router.js';
+import { route, pickEngine, isCliEngine, parseIndices } from '../dist/core/router.js';
 import { renderContext, renderAgentsBlock } from '../dist/core/render.js';
 import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
@@ -491,6 +491,29 @@ test('session : un cache illisible vaut un cache vide, jamais une exception', as
   } finally {
     process.env.CONTEXTREE_STATE_DIR = saved;
   }
+});
+
+test('routeur : la réponse est le dernier tableau d\'entiers, quel que soit le bruit devant', () => {
+  // Les trois formes qu'on voit vraiment sortir d'un moteur.
+  assert.deepEqual(parseIndices('[0,3]'), [0, 3]);
+  assert.deepEqual(parseIndices('{"indices":[1]}'), [1]);
+  assert.deepEqual(parseIndices('```json\n[2]\n```'), [2]);
+
+  // Un CLI d'agent préfixe sa réponse : bannière, version, horodatage. La
+  // réponse est à la fin, le bruit est devant.
+  assert.deepEqual(parseIndices('Bannière v1.2\n2026-09-09T10:00\n[0, 4]'), [0, 4]);
+  assert.deepEqual(parseIndices('je réfléchis…\n[1]\nvoilà\n[2, 3]'), [2, 3]);
+
+  // Sélection vide et repli se ressemblent et n'ont rien à voir : `[]` est une
+  // réponse (rien à charger), `null` dit « ce n'est pas une réponse de routeur ».
+  assert.deepEqual(parseIndices('[]'), []);
+  assert.equal(parseIndices('["a","b"]'), null);
+  assert.equal(parseIndices('aucune branche pertinente'), null);
+  assert.equal(parseIndices(''), null);
+
+  // Limite connue et assumée : un tableau cité gagne s'il est le dernier. Le
+  // cas reste théorique — le catalogue n'est jamais recopié dans la réponse.
+  assert.deepEqual(parseIndices('voir [1] et [2] plus haut'), [2]);
 });
 
 test('journal : les tours s\'empilent, du plus ancien au plus récent', async () => {

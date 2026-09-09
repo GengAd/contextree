@@ -504,11 +504,25 @@ export function engineBin(engine: RouterEngine): string | null {
  * La sortie structurée garantit le JSON côté SDK, mais un CLI d'agent préfixe
  * volontiers sa réponse (bannière, horodatage, session) : on prend donc le
  * **dernier** tableau d'entiers de la sortie — la réponse est à la fin, le
- * bruit est devant. Un tableau qui n'est pas fait d'entiers n'est pas une
- * réponse de routeur : c'est du texte qui contient des crochets, et mieux vaut
- * le repli qu'une sélection vide obtenue en filtrant des chaînes.
+ * bruit est devant. Trois formes passent : le tableau nu, l'objet
+ * `{ "indices": [...] }`, et le tableau noyé dans du texte ou une clôture
+ * ```json.
+ *
+ * Deux réponses se ressemblent et n'ont rien à voir :
+ *
+ * - `[]` est une **sélection vide** — le routeur a lu le catalogue et n'a rien
+ *   retenu (une question de pure conversation). On la respecte.
+ * - `null` est un **repli** : ce qui est revenu n'est pas une réponse de
+ *   routeur. Un tableau qui n'est pas fait d'entiers, par exemple, est du texte
+ *   qui contient des crochets — mieux vaut l'arbre précédent qu'une sélection
+ *   vide obtenue en filtrant des chaînes.
+ *
+ * **Limite connue** : dans `voir [1] et [2] plus haut`, c'est `[2]` qui est
+ * retenu — la règle « le dernier gagne » ne distingue pas un tableau cité d'une
+ * réponse. Le cas reste théorique : le catalogue n'est jamais recopié dans la
+ * réponse, et la consigne ne demande qu'un tableau.
  */
-function parseIndices(text: string): number[] | null {
+export function parseIndices(text: string): number[] | null {
   const tryParse = (s: string): unknown => {
     try {
       return JSON.parse(s);
