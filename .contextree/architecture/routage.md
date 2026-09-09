@@ -1,10 +1,10 @@
 ---
 type: reference
 title: Mécanique du routage
-load_when: quand on touche au routeur, au prompt de routage, au moteur (clé API / CLI, Claude ou autre IA), au fallback ou au choix de modèle
+load_when: quand on touche au routeur, au prompt de routage, au moteur (clé API / CLI, Claude ou autre IA), au fallback, au choix de modèle, au journal des tours ou à la mesure du routage
 ---
 
-Un appel IA léger reçoit le catalogue (index, type, titre, `load_when`) et le message utilisateur, et renvoie les indices retenus. Puis `withAncestors` remonte les parents.
+Un appel IA léger reçoit le catalogue (index, type, titre, `load_when`) et le message utilisateur, et renvoie les indices retenus. Puis `withAncestors` remonte les parents. Les indices sont **0-based** : ça évite au modèle de recopier des chemins, source classique d'échec.
 
 Le contrat tient en une phrase : **le routeur ne demande qu'un tableau d'entiers**. Rien ici n'est propre à Claude, et c'est ce qui permet d'ouvrir le moteur à n'importe quelle IA.
 
@@ -12,7 +12,7 @@ Le contrat tient en une phrase : **le routeur ne demande qu'un tableau d'entiers
 
 - `anthropic` — une clé est là (`ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`, ou passée en argument). Budget 2,5 s, sortie structurée par JSON Schema.
 - `openai` — sinon `OPENAI_API_KEY` : un simple `fetch` sur `${OPENAI_BASE_URL}/chat/completions`, **pas un SDK** (ce serait la 4e dépendance). Le même dialecte couvre OpenAI, Groq, OpenRouter, Ollama, LM Studio. Corps minimal — modèle et messages : `temperature`, `max_tokens`, `response_format` sont refusés par une partie de ces endpoints, c'est le timeout qui borne.
-- `claude`, `codex`, `gemini` — sinon le premier binaire trouvé sur la machine : **c'est l'abonnement de l'utilisateur, aucune clé requise**. Même mécanique (`CliSpec`) : prompt par stdin, process réduit au strict nécessaire, environnement débarrassé des `CLAUDE*` hérités (`CLAUDE_EFFORT` faisait réfléchir le routeur) sauf `CLAUDE_CONFIG_DIR`. `claude -p` sans outils, sans MCP, sans `--setting-sources` (donc sans hook) ; `codex exec -` en `--sandbox read-only --skip-git-repo-check` ; `gemini` sans TTY lit stdin.
+- `claude`, `codex`, `gemini` — 5 à 60 s mesurées — sinon le premier binaire trouvé sur la machine : **c'est l'abonnement de l'utilisateur, aucune clé requise**. Même mécanique (`CliSpec`) : prompt par stdin, process réduit au strict nécessaire, environnement débarrassé des `CLAUDE*` hérités (`CLAUDE_EFFORT` faisait réfléchir le routeur) sauf `CLAUDE_CONFIG_DIR`. `claude -p` sans outils, sans MCP, sans `--setting-sources` (donc sans hook) ; `codex exec -` en `--sandbox read-only --skip-git-repo-check` ; `gemini` sans TTY lit stdin.
 - `none` — rien de tout ça : arbre entier injecté, et `error` le dit.
 
 **Le hook n'attend jamais un moteur CLI** (5 à 60 s mesurées) : le tour part avec la sélection du tour précédent (`reason: 'deferred'`), et `contextree route-bg` — détaché, sans stdio — route ce prompt derrière pour le tour suivant. Hook à ~150 ms. `CONTEXTREE_ROUTER_BLOCKING=1` rend l'attente.
@@ -32,7 +32,10 @@ Autres contraintes :
 - fallback à **deux niveaux** (9 septembre 2026) : la sélection de la session, sinon la dernière sélection **routée** de l'arbre — toutes sessions confondues, dans `<clé(arbre)>-last.json` —, sinon l'arbre entier. Pas de troisième niveau. Le second existe parce qu'une session neuve repartait de 12/12 : sous un moteur CLI le premier tour n'est jamais routé, donc chaque conversation ouverte coûtait l'arbre entier alors que le routeur avait déjà répondu. Un **repli n'alimente pas** ce niveau : il y recopierait ce qui s'y trouve, ou y figerait l'arbre entier ;
 - le cache s'écrit **tmp + rename**, et porte l'horodatage du **prompt** (`at`, passé au routage de fond) : une sélection plus ancienne n'écrase jamais une plus récente. Sans ça, c'est le dernier à *finir* qui gagnait, pas le dernier *lancé* — et deux `route-bg` qui se chevauchaient pouvaient laisser un JSON tronqué, que le lecteur suivant lisait comme « rien en cache », donc comme l'arbre entier. L'ancien format (tableau nu) reste lu ;
 - **Aucun type privilégié** : plus de « garanties » `identity` + `rule` ;
-- court-circuit à ≤ 3 branches : on injecte tout, le routage ne se rentabilise pas.
+- court-circuit à ≤ 3 branches : on injecte tout, le routage ne se rentabilise pas ;
+- **deux garde-fous anti-récursion**, parce que le hook tourne *dans* Claude Code et que le routeur relance un `claude` : `--setting-sources ''` sur le fils (donc aucun hook), et `CONTEXTREE_ROUTING=1` dans son environnement, que `cmdHook` teste pour sortir immédiatement.
+
+Les budgets par défaut : **2500 ms sur API, 20 000 ms en CLI**. Ce dernier est taillé pour un prompt, pas pour un outil qu'on attend : `route-bg` et `route --eval` le relèvent à 120 s. Un `contextree route` interactif garde les 20 s et montre donc parfois un repli là où le routeur aurait répondu en 25 s.
 
 `CONTEXTREE_ROUTER` (`auto`|`anthropic`|`openai`|`claude`|`codex`|`gemini`|`off` ; `sdk` et `cli` restent compris), `CONTEXTREE_ROUTER_MODEL`, `CONTEXTREE_ROUTER_TIMEOUT_MS`, `OPENAI_BASE_URL`, `CONTEXTREE_CLAUDE_BIN`.
 

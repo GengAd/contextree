@@ -15,12 +15,22 @@ import { ROOT_ELEMENT, type Core } from './treeProvider.js';
  * l'appelant puisse enchaîner — ouvrir le `.md`, resélectionner la carte.
  */
 
+/**
+ * Ce que le type change, et c'est tout : la section du bloc injecté. Les
+ * `identity` et `rule` sont rendues sous « Rules », avant « Context », parce
+ * qu'une contrainte se lit avant la doc de domaine (`render.ts`).
+ *
+ * Le type ne décide **pas** du chargement — c'est le `load_when`, ou personne
+ * (8 septembre 2026). Ces libellés annonçaient l'inverse jusqu'au 9 septembre :
+ * « garantie en repli » pour les deux premiers, « purement routée » pour les
+ * autres. C'était la première chose que lisait qui créait une branche.
+ */
 const TYPES: { type: BranchType; label: string; detail: string }[] = [
-  { type: 'identity', label: 'identity', detail: "Qui est l'assistant sur ce projet. Garantie en repli." },
-  { type: 'rule', label: 'rule', detail: 'Une contrainte à respecter. Garantie en repli.' },
-  { type: 'context', label: 'context', detail: 'Du contexte de domaine. Purement routée.' },
-  { type: 'reference', label: 'reference', detail: 'Une référence à consulter. Purement routée.' },
-  { type: 'skill', label: 'skill', detail: 'Un savoir-faire, une procédure. Purement routée.' },
+  { type: 'identity', label: 'identity', detail: "Qui est l'assistant sur ce projet. Injectée sous « Rules », avant le contexte." },
+  { type: 'rule', label: 'rule', detail: 'Une contrainte à respecter. Injectée sous « Rules », avant le contexte.' },
+  { type: 'context', label: 'context', detail: 'Du contexte de domaine. Injectée sous « Context ».' },
+  { type: 'reference', label: 'reference', detail: 'Une référence à consulter. Injectée sous « Context ».' },
+  { type: 'skill', label: 'skill', detail: 'Un savoir-faire, une procédure. Injectée sous « Context ».' },
 ];
 
 /** Crée une branche, à la racine ou sous `parentPath`. */
