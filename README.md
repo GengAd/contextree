@@ -118,6 +118,18 @@ cursor --install-extension extension/contextree-vscode-0.1.0.vsix
 
 (ou la palette de commandes → « Extensions: Install from VSIX »). Rien n'est publié tant que le repo est privé ; le jour venu, ce sera **Open VSX** d'abord — c'est le registre que lisent Cursor, Windsurf et VSCodium.
 
+## Développement
+
+Le paquet n'est pas encore publié sur npm : `npx @gengad/contextree` ne résout rien. Pour s'en servir sur ses propres projets, on l'installe depuis le dépôt :
+
+```bash
+npm run build
+npm i -g .          # ou npm link
+which contextree
+```
+
+`contextree install` inscrit alors **la commande qui tourne**, pas `npx` : `"<node>" "<chemin/du/cli.js>" hook` en chemins absolus. `contextree install --status` affiche cette commande sans rien écrire. Lancé depuis un cache npx (le paquet publié), `install` retombe sur la forme `npx -y @gengad/contextree <cmd>`.
+
 ## Transparence
 
 À chaque tour, une ligne dit exactement ce qui a été chargé et pourquoi :

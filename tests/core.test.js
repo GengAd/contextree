@@ -9,7 +9,7 @@ import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, fi
 import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { route, pickEngine, isCliEngine } from '../dist/core/router.js';
 import { renderContext, renderAgentsBlock } from '../dist/core/render.js';
-import { syncAgentsFile, installCodexMcp, agentStatus, installAgent } from '../dist/install.js';
+import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
 import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites } from '../dist/core/journal.js';
 import {
@@ -212,6 +212,36 @@ test('AGENTS.md : le bloc est borné, resynchronisé, et ne duplique rien', asyn
   assert.equal(report[2].action, 'unchanged');
 });
 
+test("install : on inscrit la commande qui tourne, pas npx en dur", async () => {
+  const saved = process.argv[1];
+  try {
+    // Lancé depuis un cache npx : la forme npx est la bonne pour cet
+    // utilisateur — le paquet est là où npx sait le retrouver.
+    process.argv[1] = path.join(os.homedir(), '.npm', '_npx', 'abc123', 'node_modules', '@gengad', 'contextree', 'dist', 'cli.js');
+    const viaNpx = selfCommand('hook');
+    assert.equal(viaNpx.command, 'npx');
+    assert.deepEqual(viaNpx.args, ['-y', '@gengad/contextree', 'hook']);
+    assert.equal(viaNpx.shell, 'npx -y @gengad/contextree hook');
+
+    // Sinon : node + le script, en absolu et entre guillemets. Sans ça, un
+    // paquet non publié échoue en silence sur tout autre projet que celui-ci.
+    process.argv[1] = path.join('dist', 'cli.js');
+    const local = selfCommand('mcp');
+    assert.equal(local.command, process.execPath);
+    assert.deepEqual(local.args, [path.resolve('dist', 'cli.js'), 'mcp']);
+    assert.ok(path.isAbsolute(local.args[0]));
+    assert.equal(local.shell, `"${process.execPath}" "${path.resolve('dist', 'cli.js')}" mcp`);
+
+    // La détection « déjà câblé » cherche `contextree` dans la commande : elle
+    // doit rester vraie sur les deux formes.
+    process.argv[1] = path.join(path.sep, 'opt', 'node_modules', '@gengad', 'contextree', 'dist', 'cli.js');
+    assert.ok(selfCommand('hook').shell.includes('contextree'));
+    assert.ok(viaNpx.shell.includes('contextree'));
+  } finally {
+    process.argv[1] = saved;
+  }
+});
+
 test('codex : la table MCP est ajoutée à la fin, jamais réécrite', async () => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-codex-'));
   const saved = process.env.CODEX_HOME;
@@ -224,7 +254,7 @@ test('codex : la table MCP est ajoutée à la fin, jamais réécrite', async () 
     // Ce qui était là est intact, et la nouvelle table est bien à la fin :
     // aucune table précédente ne peut l'avaler.
     assert.match(body, /\[projects\."\/x"\]\ntrust_level = "trusted"/);
-    assert.match(body, /\[mcp_servers\.contextree\]\ncommand = "npx"/);
+    assert.ok(body.includes(`[mcp_servers.contextree]\ncommand = ${JSON.stringify(selfCommand('mcp').command)}`));
     assert.ok(body.indexOf('[mcp_servers.contextree]') > body.indexOf('[projects."/x"]'));
 
     await installCodexMcp(report);
@@ -249,7 +279,8 @@ test("install : l'état d'un agent se lit sans rien écrire, et le câblage est 
   const report = await installAgent('cursor', projectDir);
   assert.equal(report[0].action, 'created');
   const written = JSON.parse(await fs.readFile(path.join(projectDir, '.cursor', 'mcp.json'), 'utf8'));
-  assert.equal(written.mcpServers.contextree.command, 'npx');
+  assert.equal(written.mcpServers.contextree.command, selfCommand('mcp').command);
+  assert.deepEqual(written.mcpServers.contextree.args, selfCommand('mcp').args);
 
   const after = await agentStatus(projectDir);
   assert.equal(after.find(a => a.id === 'cursor').wired, true);

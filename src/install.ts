@@ -26,8 +26,41 @@ export type InstallReport = { file: string; action: 'created' | 'updated' | 'unc
 /** Les agents qu'on sait câbler. */
 export type AgentId = 'claude-code' | 'cursor' | 'codex' | 'windsurf' | 'claude-desktop';
 
-const HOOK_COMMAND = 'npx -y @gengad/contextree hook';
-const MCP_COMMAND = { command: 'npx', args: ['-y', '@gengad/contextree', 'mcp'] };
+const PACKAGE = '@gengad/contextree';
+
+/**
+ * La commande qui **exécute** contextree, telle qu'on l'inscrit dans la
+ * configuration d'un agent.
+ *
+ * On écrivait `npx -y @gengad/contextree <cmd>` en dur. Tant que le paquet
+ * n'est pas publié, ça échoue partout ailleurs que dans ce dépôt — et en
+ * silence, puisque le hook sort toujours en code 0. Donc : **on inscrit ce qui
+ * tourne** (9 septembre 2026). Le processus qui exécute `install` sait comment
+ * il a été lancé.
+ *
+ * - lancé depuis un cache npx (`/_npx/` dans le chemin) → la forme npx, qui est
+ *   la bonne pour cet utilisateur — P6 la pinnera sur une version ;
+ * - sinon → `"<node>" "<cli.js>"`, en chemins **absolus**. Couvre `npm i -g .`,
+ *   `npm link`, et `node dist/cli.js` lancé depuis le dépôt.
+ *
+ * Jamais `contextree` nu : le PATH d'un hook est plus pauvre que celui d'un
+ * shell (même raison que `findBin`, dans `router.ts`). Et toujours entre
+ * guillemets dans la forme shell — un chemin avec une espace casserait le hook.
+ */
+export function selfCommand(cmd: 'hook' | 'mcp'): { command: string; args: string[]; shell: string } {
+  const self = process.argv[1];
+  // `/_npx/` sous Unix, `\_npx\` sous Windows.
+  if (!self || /[\\/]_npx[\\/]/.test(self)) {
+    const args = ['-y', PACKAGE, cmd];
+    return { command: 'npx', args, shell: ['npx', ...args].join(' ') };
+  }
+  const entry = path.resolve(self);
+  return {
+    command: process.execPath,
+    args: [entry, cmd],
+    shell: `"${process.execPath}" "${entry}" ${cmd}`,
+  };
+}
 
 /** Les bornes du bloc synchronisé dans un fichier de consignes. Ce qui est
  *  dehors appartient à l'utilisateur et n'est jamais touché. */
@@ -53,7 +86,8 @@ export async function installMcpJson(file: string, report: InstallReport): Promi
     report.push({ file, action: 'unchanged' });
     return;
   }
-  servers.contextree = { ...MCP_COMMAND };
+  const { command, args } = selfCommand('mcp');
+  servers.contextree = { command, args };
   await writeJson(file, config);
   report.push({ file, action: existed ? 'updated' : 'created' });
 }
@@ -79,7 +113,7 @@ export async function installHook(projectDir: string, report: InstallReport): Pr
     return;
   }
 
-  list.push({ hooks: [{ type: 'command', command: HOOK_COMMAND, timeout: 15 }] });
+  list.push({ hooks: [{ type: 'command', command: selfCommand('hook').shell, timeout: 15 }] });
   await writeJson(file, settings);
   report.push({ file, action: existed ? 'updated' : 'created' });
 }
@@ -112,10 +146,11 @@ export async function installCodexMcp(report: InstallReport): Promise<void> {
     return;
   }
 
+  const self = selfCommand('mcp');
   const table =
     '[mcp_servers.contextree]\n' +
-    `command = ${JSON.stringify(MCP_COMMAND.command)}\n` +
-    `args = [${MCP_COMMAND.args.map(a => JSON.stringify(a)).join(', ')}]\n`;
+    `command = ${JSON.stringify(self.command)}\n` +
+    `args = [${self.args.map(a => JSON.stringify(a)).join(', ')}]\n`;
   const body = existing.trim() ? `${existing.replace(/\n*$/, '')}\n\n${table}` : table;
 
   await fs.mkdir(path.dirname(file), { recursive: true });

@@ -22,7 +22,7 @@ import {
 } from './core/remote.js';
 import { link, pull, push, readTracking } from './core/sync.js';
 import { isBranchType, type BranchType } from './core/types.js';
-import { AGENTS, agentStatus, installAgent, type InstallReport } from './install.js';
+import { AGENTS, agentStatus, installAgent, selfCommand, type InstallReport } from './install.js';
 import { resolvePack, runStdio } from './mcp/server.js';
 
 const HELP = `contextree — un arbre de contexte partageable, routé, injecté à chaque appel IA.
@@ -158,6 +158,21 @@ async function cmdInit(force: boolean): Promise<number> {
  * `--status` ne fait que regarder : c'est la question qu'on se pose quand rien
  * ne s'injecte.
  */
+/**
+ * Les deux commandes que `install` inscrirait — hook et serveur MCP.
+ *
+ * Affichées avant comme après l'écriture : c'est le seul endroit d'où l'on
+ * apprend, sans ouvrir un JSON, si l'agent a été câblé sur `npx` (paquet
+ * publié) ou sur le binaire local. Voir `selfCommand`.
+ */
+function wiredCommands(): string {
+  const mcp = selfCommand('mcp');
+  return (
+    `Commande écrite : ${selfCommand('hook').shell}\n` +
+    `                  ${[mcp.command, ...mcp.args].join(' ')}\n`
+  );
+}
+
 async function cmdInstall(flags: Flags): Promise<number> {
   const asked = str(flags.agent);
   const statuses = await agentStatus(process.cwd());
@@ -168,7 +183,8 @@ async function cmdInstall(flags: Flags): Promise<number> {
       process.stdout.write(`${state.padEnd(12)} ${a.label}\n`);
       for (const f of a.files) process.stdout.write(`             ${shorten(f)}\n`);
     }
-    process.stdout.write(`\nRoutage : ${describeEngine()}\n`);
+    process.stdout.write(`\n${wiredCommands()}`);
+    process.stdout.write(`Routage : ${describeEngine()}\n`);
     return 0;
   }
 
@@ -205,8 +221,9 @@ async function cmdInstall(flags: Flags): Promise<number> {
         ` — \`--agent <id>\` pour forcer.\n`,
     );
   }
+  process.stdout.write(`\n${wiredCommands()}`);
   process.stdout.write(
-    "\nRelance ton agent pour prendre en compte le hook et le serveur MCP.\n" +
+    "Relance ton agent pour prendre en compte le hook et le serveur MCP.\n" +
       "Aucune de ces surfaces (Claude sur le web, ChatGPT…) : `contextree render --copy`,\n" +
       "ou `contextree route \"<ta demande>\" --copy`, et tu colles.\n" +
       `Routage : ${describeEngine()}\n`,

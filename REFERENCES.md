@@ -9,7 +9,7 @@ Stack, format, mécanique, pièges. À lire quand on touche au code.
 | Runtime | Node ≥ 20, ESM, TypeScript strict (`NodeNext`) |
 | Dépendances | `@anthropic-ai/sdk` (routeur), `@modelcontextprotocol/sdk` (serveur MCP), `zod` (schémas des outils MCP) |
 | Tests | `node:test` sur le build (`tests/*.test.js` → `dist/`) |
-| Distribution | `npx @gengad/contextree` — pas d'install globale requise |
+| Distribution | `npx @gengad/contextree` une fois publié ; d'ici là `npm i -g .` — `install` inscrit la commande qui tourne |
 
 Le frontmatter, la compression des packs et le cache de session sont faits main sur des modules Node (`zlib`, `crypto`, `os`) : trois dépendances, c'est le budget.
 
@@ -200,7 +200,7 @@ Quatre des cinq partagent la forme `{ "mcpServers": … }` : une seule fonction 
 
 **Câblé = tous ses fichiers le sont.** Un serveur MCP posé sans le hook est un câblage à moitié fait : l'annoncer comme terminé serait mentir sur la seule surface déterministe.
 
-La détection d'un hook déjà posé cherche `contextree` dans la commande — ce que `install` écrit toujours (`npx -y @gengad/contextree hook`). Un câblage écrit à la main avec un chemin local (`node dist/cli.js hook`, comme dans ce dépôt) n'est donc pas reconnu ; c'est le cas du développeur du projet, pas celui d'un utilisateur.
+La détection d'un hook déjà posé cherche `contextree` dans la commande — vrai des deux formes qu'écrit `selfCommand` : le chemin d'un binaire global (`.../@gengad/contextree/dist/cli.js`) comme la forme `npx -y @gengad/contextree hook`. Un dépôt cloné sous un autre nom que `contextree` échappe encore à la détection ; c'est le cas du développeur du projet, pas celui d'un utilisateur.
 
 ## MCP (`src/mcp/server.ts`)
 
