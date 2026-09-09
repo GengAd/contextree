@@ -119,6 +119,20 @@ export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
       this.writes = new Map();
     }
     await vscode.commands.executeCommand('setContext', 'contextree.hasTree', this.tree !== null);
+    // Sur un projet qui a déjà un CLAUDE.md ou un README nourri, partir des
+    // quatre branches génériques jette ce qui existe : la vue d'accueil met
+    // alors la consigne pour l'IA devant « Créer l'arbre ».
+    let hasInstructions = false;
+    try {
+      hasInstructions = (await core.detectInstructionFiles(this.searchFrom)).length > 0;
+    } catch {
+      // Pas de détection, pas de réordonnancement. Jamais une vue cassée.
+    }
+    await vscode.commands.executeCommand(
+      'setContext',
+      'contextree.hasInstructions',
+      hasInstructions,
+    );
     this.changed.fire(undefined);
   }
 

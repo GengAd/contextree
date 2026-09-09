@@ -8,6 +8,10 @@ load_when: quand on touche à la création de l'arbre (init), à la vue sur un p
 
 Quatre branches, pas quarante : un arbre entier deviné d'un coup n'est relu par personne. Ce sont des amorces à corriger, et leur `load_when` est écrit comme une condition (« quand… »), parce que c'est la forme qu'on veut voir imitée.
 
+**Sur un projet qui a déjà des consignes, on n'initialise pas : on invite** (9 septembre 2026). `detectInstructionFiles` cherche `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursor/rules`, `.github/copilot-instructions.md`, `README.md`, `CONTRIBUTING.md` — dans cet ordre, du plus intentionnel au plus général. S'il en trouve, la vue d'accueil met « Copier la consigne pour l'IA » **devant** « Créer l'arbre » : repartir de quatre branches génériques quand quelqu'un a déjà écrit ses règles est une perte.
+
+La consigne (`renderBootstrapPrompt`) est du texte, pas un moteur : elle dit de lire ces fichiers *et* le dépôt, borne à **6 à 12 branches**, montre un `load_when` en condition avec ses contre-exemples, exige de commencer par `write_root`, **interdit de toucher aux fichiers source**, et finit en renvoyant à la toile pour relire les conditions — jamais sur « c'est fait ». Trois surfaces la servent, une seule copie : le prompt MCP `bootstrap`, `contextree bootstrap [--copy]`, et le bouton de la vue.
+
 **La vue est toujours visible**, même sans `.contextree/` : une `viewsWelcome` (`when: !contextree.hasTree`) porte « Créer l'arbre » et « Ajouter contextree à une IA ». Sans ça, le premier geste de l'outil échappait à l'outil — il fallait un terminal. Les boutons qui n'ont de sens qu'avec un arbre (nouvelle branche, toile) sont gardés par `contextree.hasTree`.
 
 **Le démarrage à froid n'est pas une panne.** Mesuré sur un arbre neuf : le routeur *tourne* dès la 4ᵉ branche (le court-circuit s'arrête à ≤ 3), mais il retient les 4 — les `load_when` de départ sont volontairement larges. On lit donc `routé — 4 branche(s)` sans rien qui ressemble à un tri. Le routage se met à payer quand l'arbre grossit et que les conditions se resserrent, pas avant. Ne pas chercher un bug là.

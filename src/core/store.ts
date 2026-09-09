@@ -317,6 +317,41 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
+/**
+ * Les fichiers de consignes déjà écrits pour une IA dans ce projet.
+ *
+ * Sur un repo qui a un `CLAUDE.md`, des règles Cursor ou un README nourri,
+ * repartir des quatre branches génériques d'`initTree` jette ce qui existe.
+ * Cette liste sert à **inviter** l'IA de l'utilisateur à les lire — contextree
+ * ne les découpe pas lui-même : il n'y a pas de moteur de génération dans le
+ * cœur, et il n'y en aura pas. Deviner un `load_when` à la place de quelqu'un,
+ * c'est produire la branche qu'il ne relira jamais.
+ *
+ * Les chemins sont rendus relatifs au projet, dans l'ordre où ils comptent :
+ * un fichier écrit *pour une IA* avant un fichier écrit pour un humain.
+ */
+export async function detectInstructionFiles(projectDir: string): Promise<string[]> {
+  const candidates = [
+    'CLAUDE.md',
+    'AGENTS.md',
+    'GEMINI.md',
+    '.cursor/rules',
+    '.github/copilot-instructions.md',
+    'README.md',
+    'CONTRIBUTING.md',
+  ];
+  const found: string[] = [];
+  for (const rel of candidates) {
+    try {
+      await fs.stat(path.join(projectDir, rel));
+      found.push(rel);
+    } catch {
+      // Absent : le suivant.
+    }
+  }
+  return found;
+}
+
 export async function writeRoot(treeDir: string, content: string): Promise<void> {
   await fs.mkdir(treeDir, { recursive: true });
   const file = path.join(treeDir, ROOT_FILE);

@@ -4,9 +4,9 @@ import { spawn } from 'node:child_process';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, deleteBranch, moveBranch, initTree } from './core/store.js';
+import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, deleteBranch, moveBranch, initTree, detectInstructionFiles } from './core/store.js';
 import { allBranches, formatTree } from './core/tree.js';
-import { renderContext, renderTrace, renderAgentsBlock } from './core/render.js';
+import { renderContext, renderTrace, renderAgentsBlock, renderBootstrapPrompt } from './core/render.js';
 import { route, pickEngine, isCliEngine, engineBin, withoutRouting } from './core/router.js';
 import { encodePack, extractPack, applyPack } from './core/pack.js';
 import { readSelection, writeSelection } from './core/session.js';
@@ -36,6 +36,7 @@ const HELP = `contextree — un arbre de contexte partageable, routé, injecté 
   contextree mv <de> <vers>          déplace ou renomme une branche (ses enfants suivent)
   contextree route "<prompt>"        montre ce que le routeur chargerait
   contextree route --eval [fichier]  mesure le routage sur un jeu de prompts
+  contextree bootstrap [--copy]      la consigne pour que ton IA construise l'arbre
   contextree render [--agents]       affiche tout l'arbre assemblé (sans routage)
                                      --agents : le bloc court pour un AGENTS.md
                                      --copy   : dans le presse-papier (render, route)
@@ -90,6 +91,8 @@ async function main(argv: string[]): Promise<number> {
       return cmdMove(flags._[0], flags._[1]);
     case 'route':
       return cmdRoute(flags._.join(' '), flags);
+    case 'bootstrap':
+      return cmdBootstrap(flags);
     case 'render':
       return cmdRender(flags);
     case 'export':
@@ -404,6 +407,23 @@ function formatEval(report: EvalReport): string {
     'précision = ce qui a été chargé et servait ; rappel = ce qui servait et a été chargé.',
   );
   return `${out.join('\n')}\n`;
+}
+
+/**
+ * La consigne pour construire l'arbre, à donner à son IA.
+ *
+ * Pour les agents qui n'exposent pas les prompts MCP : on colle. Même texte que
+ * le prompt `bootstrap` du serveur — `renderBootstrapPrompt` est la seule
+ * copie. Ne demande pas d'arbre : c'est précisément la commande d'avant.
+ */
+async function cmdBootstrap(flags: Flags): Promise<number> {
+  const found = await detectInstructionFiles(process.cwd());
+  process.stderr.write(
+    found.length
+      ? `Fichiers de consignes trouvés : ${found.join(', ')}\n`
+      : "Aucun fichier de consignes trouvé — la consigne fera lire le dépôt.\n",
+  );
+  return emit(renderBootstrapPrompt(found), Boolean(flags.copy));
 }
 
 async function cmdRender(flags: Flags): Promise<number> {

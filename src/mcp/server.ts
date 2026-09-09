@@ -4,9 +4,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-import { findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch, ROOT_FILE } from '../core/store.js';
+import { findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch, detectInstructionFiles, ROOT_FILE } from '../core/store.js';
 import { allBranches, formatTree } from '../core/tree.js';
-import { renderContext, renderTrace } from '../core/render.js';
+import { renderContext, renderTrace, renderBootstrapPrompt } from '../core/render.js';
 import { route } from '../core/router.js';
 import { appendTurn, appendAiWrite } from '../core/journal.js';
 import { decodePack, encodePack, extractPack, applyPack } from '../core/pack.js';
@@ -21,7 +21,8 @@ l'utilisateur : tu récupères uniquement les branches pertinentes. Quand tu dé
 durable sur ce projet (une convention, une contrainte, un chemin qui compte), écris-le avec
 \`upsert_branch\` — directement, sans demander la permission. L'arbre est fait pour être enrichi
 à l'usage. Sur un arbre neuf, commence par \`write_root\` : c'est le seul contenu toujours
-injecté, et aucune branche ne le remplace.
+injecté, et aucune branche ne le remplace. Si le projet a déjà un \`CLAUDE.md\`, des règles
+Cursor ou un README nourri, le prompt \`bootstrap\` donne la consigne pour en tirer l'arbre.
 
 En échange, **dis-le**. Après chaque écriture, annonce en une phrase ce que tu as ajouté ou
 changé dans l'arbre et pourquoi. Écrire en silence est la seule façon de mal faire ici : tu
@@ -58,6 +59,32 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
   };
 
   const text = (s: string) => ({ content: [{ type: 'text' as const, text: s }] });
+
+  /**
+   * Le premier geste sur un projet qui a déjà des consignes ailleurs.
+   *
+   * Un prompt et non un outil : c'est l'utilisateur qui décide de construire
+   * son arbre, pas le modèle qui s'en saisit au détour d'une phrase. Les
+   * clients MCP l'exposent en commande, ce qui en fait un geste explicite.
+   */
+  server.registerPrompt(
+    'bootstrap',
+    {
+      title: "Construire l'arbre depuis les fichiers du projet",
+      description:
+        "Donne à l'IA la consigne pour lire les fichiers de consignes existants " +
+        "(CLAUDE.md, règles Cursor, README…) et en écrire un arbre de contexte : " +
+        '6 à 12 branches, un `load_when` par branche, aucun fichier source touché.',
+    },
+    async () => {
+      const found = await detectInstructionFiles(cwd);
+      return {
+        messages: [
+          { role: 'user' as const, content: { type: 'text' as const, text: renderBootstrapPrompt(found) } },
+        ],
+      };
+    },
+  );
 
   server.registerTool(
     'get_context',

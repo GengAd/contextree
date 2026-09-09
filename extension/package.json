@@ -38,6 +38,11 @@
         "icon": "$(plug)"
       },
       {
+        "command": "contextree.copyBootstrap",
+        "title": "Copier la consigne pour l'IA",
+        "category": "contextree"
+      },
+      {
         "command": "contextree.openCanvas",
         "title": "contextree : voir l'arbre (toile)",
         "icon": "$(type-hierarchy)"
@@ -152,8 +157,13 @@
     "viewsWelcome": [
       {
         "view": "contextree.tree",
-        "contents": "Aucun arbre de contexte dans ce dossier.\n\nUn arbre, ce sont de petites branches typées — identité, règles, contexte, références — dont seule la fraction utile est injectée à chaque appel.\n[Créer l'arbre](command:contextree.init)\nQuatre branches de départ, à corriger ensuite comme des fichiers markdown.\n[Ajouter contextree à une IA](command:contextree.wire)",
-        "when": "!contextree.hasTree"
+        "contents": "Aucun arbre de contexte dans ce dossier — mais ce projet a déjà des consignes pour une IA.\n\nLe plus court est de les lui faire lire : elle écrira l'arbre, tu relis les conditions de chargement.\n[Copier la consigne pour l'IA](command:contextree.copyBootstrap)\nColle-la dans ton assistant. Il écrira 6 à 12 branches et ne touchera à aucun fichier.\n[Créer un arbre vide](command:contextree.init)\n[Ajouter contextree à une IA](command:contextree.wire)",
+        "when": "!contextree.hasTree && contextree.hasInstructions"
+      },
+      {
+        "view": "contextree.tree",
+        "contents": "Aucun arbre de contexte dans ce dossier.\n\nUn arbre, ce sont de petites branches typées — identité, règles, contexte, références — dont seule la fraction utile est injectée à chaque appel.\n[Créer l'arbre](command:contextree.init)\nQuatre branches de départ, à corriger ensuite comme des fichiers markdown.\n[Copier la consigne pour l'IA](command:contextree.copyBootstrap)\n[Ajouter contextree à une IA](command:contextree.wire)",
+        "when": "!contextree.hasTree && !contextree.hasInstructions"
       }
     ]
   },

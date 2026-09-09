@@ -5,11 +5,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
-import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree } from '../dist/core/store.js';
+import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree, detectInstructionFiles } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { route, pickEngine, isCliEngine, parseIndices } from '../dist/core/router.js';
 import { evaluateRouting, parseEvalCases } from '../dist/core/eval.js';
-import { renderContext, renderAgentsBlock } from '../dist/core/render.js';
+import { renderContext, renderAgentsBlock, renderBootstrapPrompt } from '../dist/core/render.js';
 import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
 import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites, turnLabelKey } from '../dist/core/journal.js';
@@ -610,6 +610,45 @@ test("journal : la racine se trace comme une branche, sous `:root`", async () =>
   assert.match(tree.rootContent, /Ce que fait ce repo\./);
   // `:root` n'est pas une branche : il ne doit pas apparaître dans l'ordre.
   assert.ok(!tree.order.includes(':root'));
+});
+
+test("bootstrap : on détecte ce qui existe, du plus intentionnel au plus général", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-boot-'));
+  assert.deepEqual(await detectInstructionFiles(dir), []);
+
+  await fs.writeFile(path.join(dir, 'README.md'), '# projet', 'utf8');
+  await fs.writeFile(path.join(dir, 'CLAUDE.md'), '# consignes', 'utf8');
+  await fs.mkdir(path.join(dir, '.cursor', 'rules'), { recursive: true });
+
+  // L'ordre compte : un fichier écrit *pour une IA* passe avant un README.
+  assert.deepEqual(await detectInstructionFiles(dir), ['CLAUDE.md', '.cursor/rules', 'README.md']);
+});
+
+test("bootstrap : la consigne borne l'arbre et interdit de toucher aux sources", () => {
+  const prompt = renderBootstrapPrompt(['CLAUDE.md', 'README.md']);
+
+  // Elle cite les fichiers trouvés : sans ça, l'IA cherche au hasard.
+  assert.match(prompt, /`CLAUDE\.md`/);
+  assert.match(prompt, /`README\.md`/);
+  // Les trois garde-fous qui font la différence entre un arbre et un dépotoir.
+  assert.match(prompt, /6 à 12 branches/);
+  assert.match(prompt, /Ne modifie ni ne supprime aucun fichier source/);
+  assert.match(prompt, /write_root/);
+  // Le `load_when` doit être montré comme une condition, avec un contre-exemple.
+  assert.match(prompt, /load_when/);
+  assert.match(prompt, /toujours pertinent/);
+  // Et elle ne finit pas sur « c'est fait » : elle renvoie à la relecture.
+  assert.match(prompt, /toile/);
+  // Deux défauts constatés en la lançant sur un vrai projet, le 9 septembre 2026 :
+  // le tronc de départ survivait à côté des branches écrites, et l'identité
+  // recevait « toujours » malgré le contre-exemple.
+  assert.match(prompt, /branches de départ génériques/);
+  assert.match(prompt, /identité/);
+
+  // Sans fichier trouvé, elle fait quand même lire le dépôt.
+  const nu = renderBootstrapPrompt([]);
+  assert.match(nu, /n'a pas de fichier de consignes/);
+  assert.match(nu, /6 à 12 branches/);
 });
 
 test('journal : les tours s\'empilent, du plus ancien au plus récent', async () => {

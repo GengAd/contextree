@@ -99,6 +99,77 @@ export function renderAgentsBlock(tree: ContextTree): string {
   return parts.join('\n\n');
 }
 
+/**
+ * La consigne qu'on donne à l'IA de l'utilisateur pour qu'elle construise
+ * l'arbre depuis ce que le projet contient déjà.
+ *
+ * **contextree ne génère rien : il invite.** Pas de moteur de découpe dans le
+ * cœur, pas de dépendance, pas d'heuristique qui devine des `load_when` — c'est
+ * le champ que l'utilisateur sait écrire et que le modèle devine mal, et une
+ * branche dont personne n'a relu la condition ne sera jamais routée
+ * correctement. Ce qu'on fournit, c'est un texte bien écrit et des endroits
+ * pour le déclencher.
+ *
+ * Une seule copie, comme `renderAgentsBlock` : le prompt MCP, la CLI et le
+ * bouton de la vue lisent cette fonction. Trois formulations d'une même
+ * consigne divergeraient au premier ajustement, et c'est le `load_when` qui en
+ * paierait le prix.
+ */
+export function renderBootstrapPrompt(found: string[]): string {
+  const sources = found.length
+    ? `Ce projet contient déjà de quoi partir :\n${found.map(f => `- \`${f}\``).join('\n')}\n\n` +
+      'Lis-les, **et** parcours le dépôt : un fichier de consignes dit ce que ' +
+      "quelqu'un a pris la peine d'écrire, le code dit ce qui est vrai."
+    : "Ce projet n'a pas de fichier de consignes pour une IA. Parcours le dépôt : " +
+      'le README, la structure des dossiers, les scripts, les tests.';
+
+  return [
+    '# Construire l\'arbre de contexte de ce projet',
+    sources,
+    'Écris ensuite les branches avec les outils MCP `write_root` et `upsert_branch`. ' +
+      "Commence **toujours** par `write_root` : c'est le seul contenu toujours injecté, " +
+      'et il tient en quelques lignes — qui, quoi, dans quel dépôt.',
+    "Si l'arbre contient déjà des branches de départ génériques (« Architecture », " +
+      '« Commandes », « Identité », « Règles du projet », avec un contenu à compléter), ' +
+      '**remplace-les** — même chemin, `upsert_branch` — ou supprime celles qui ne servent ' +
+      'pas. Ne laisse jamais une amorce vide à côté de la vraie branche : deux entrées pour ' +
+      'le même sujet, et le routeur charge la mauvaise.',
+    '## Ce qui fait un bon arbre',
+    '- **6 à 12 branches, pas 40.** Un arbre que personne ne relit ne vaut rien, et ' +
+      "c'est en relisant qu'on corrige les conditions de chargement. Regroupe plutôt " +
+      'que de multiplier.\n' +
+      '- **Une section de doc ≈ une branche**, en première approximation seulement : ' +
+      "c'est le sens qui décide, pas le découpage du fichier d'origine. Deux sections " +
+      "qui parlent de la même chose font une branche ; une section qui mélange deux " +
+      'sujets en fait deux.\n' +
+      "- **Le type dit où la branche est injectée**, et rien d'autre : `identity` et " +
+      '`rule` sous « Rules », avant `context`, `reference` et `skill` sous « Context ». ' +
+      'Aucun type ne garantit le chargement.',
+    '## Le `load_when` est le seul champ qui compte',
+    "C'est lui qui décide si la branche sera chargée. Écris une **condition**, pas un " +
+      'résumé :\n\n' +
+      '- ✅ « quand on touche au routeur, au prompt de routage ou au choix de modèle »\n' +
+      '- ✅ « quand la demande parle d\'authentification, de session ou de jeton »\n' +
+      "- ❌ « le routeur et son fonctionnement » — c'est un titre, pas une condition\n" +
+      "- ❌ « toujours pertinent », « toujours » — ce n'est pas une condition. Mesuré : le " +
+      "routeur ne l'honore qu'une fois sur trois, et c'est la branche la plus systématiquement " +
+      'manquée d\'un arbre.\n\n' +
+      "**Y compris pour la branche d'identité**, où la tentation est la plus forte : écris " +
+      'quand elle sert vraiment — « quand on écrit, relit ou conçoit quelque chose sur ce ' +
+      'projet » — plutôt que « toujours ».',
+    '## Ce que tu ne fais pas',
+    "**Ne modifie ni ne supprime aucun fichier source.** Les fichiers de consignes " +
+      "existants restent tels quels : c'est à leur auteur de décider s'ils partent, " +
+      'et quand. Tu écris dans `.contextree/`, nulle part ailleurs.',
+    '## Pour finir',
+    "Quand l'arbre est écrit, **dis à l'utilisateur d'ouvrir la toile** (commande " +
+      '« contextree : toile ») et de relire les `load_when` un par un — ce sont eux ' +
+      "qu'il faudra corriger, et lui seul sait ce qu'il demandera à son IA. Les " +
+      'branches que tu viens d\'écrire y sont signalées pendant un quart d\'heure. ' +
+      "Ne termine pas sur « c'est fait » : l'arbre n'est utile qu'une fois relu.",
+  ].join('\n\n');
+}
+
 const TRACE_LABELS: Record<RouteReason, string> = {
   routed: 'routé',
   all: 'tout chargé',
