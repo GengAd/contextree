@@ -11,6 +11,7 @@ import { route, pickEngine, isCliEngine, engineBin, withoutRouting } from './cor
 import { encodePack, extractPack, applyPack } from './core/pack.js';
 import { readSelection, writeSelection } from './core/session.js';
 import { appendTurn } from './core/journal.js';
+import { evaluateRouting, parseEvalCases, type EvalReport } from './core/eval.js';
 import {
   RemoteError,
   createGroup,
@@ -34,6 +35,7 @@ const HELP = `contextree — un arbre de contexte partageable, routé, injecté 
   contextree rm <chemin>             supprime une branche et ses enfants
   contextree mv <de> <vers>          déplace ou renomme une branche (ses enfants suivent)
   contextree route "<prompt>"        montre ce que le routeur chargerait
+  contextree route --eval [fichier]  mesure le routage sur un jeu de prompts
   contextree render [--agents]       affiche tout l'arbre assemblé (sans routage)
                                      --agents : le bloc court pour un AGENTS.md
                                      --copy   : dans le presse-papier (render, route)
@@ -318,6 +320,7 @@ async function cmdMove(from: string | undefined, to: string | undefined): Promis
 }
 
 async function cmdRoute(prompt: string, flags: Flags): Promise<number> {
+  if (flags.eval) return cmdEval(typeof flags.eval === 'string' ? flags.eval : str(flags._[0]));
   if (!prompt.trim()) {
     process.stderr.write('Usage : contextree route "<prompt>"\n');
     return 1;
@@ -331,6 +334,76 @@ async function cmdRoute(prompt: string, flags: Flags): Promise<number> {
       `${formatTree(tree, selected)}\n\n`,
   );
   return emit(renderContext(tree, selected), Boolean(flags.copy));
+}
+
+/** Le jeu de prompts par défaut : dans le dépôt, à côté des tests — c'est du
+ *  code de mise au point, pas du contexte, donc il n'a rien à faire dans
+ *  l'arbre. Résolu depuis le dossier qui contient `.contextree/`. */
+const EVAL_FILE = path.join('tests', 'routing.eval.json');
+
+/**
+ * Mesurer le routage sur de vrais prompts.
+ *
+ * Opt-in, jamais dans `npm test` : il faut un moteur, la réponse d'un modèle
+ * varie d'un appel à l'autre, et un mauvais score dit « le routage s'est
+ * dégradé », pas « le code est cassé ». D'où le **code de sortie 0 même quand
+ * c'est mauvais** : c'est une mesure qu'on lit, pas une porte qui claque.
+ */
+async function cmdEval(file: string | undefined): Promise<number> {
+  // Personne n'attend une mesure : on laisse au moteur le temps de répondre,
+  // comme le routage de fond. Sans ça, un CLI d'agent expire à 20 s, la moitié
+  // des cas tombent dans le repli « arbre entier », et on mesure le timeout au
+  // lieu du routeur — 9 cas sur 20 à la première mesure, le 9 septembre 2026.
+  process.env['CONTEXTREE_ROUTER_TIMEOUT_MS'] ??= '120000';
+  const { dir, tree } = await open();
+  const target = path.resolve(path.dirname(dir), file ?? EVAL_FILE);
+
+  let cases;
+  try {
+    cases = parseEvalCases(JSON.parse(await fs.readFile(target, 'utf8')));
+  } catch {
+    process.stderr.write(`Jeu d'éval illisible : ${shorten(target)}\n`);
+    return 1;
+  }
+  if (!cases.length) {
+    process.stderr.write(`Aucun cas dans ${shorten(target)}\n`);
+    return 1;
+  }
+
+  process.stderr.write(
+    `${cases.length} cas · ${tree.order.length} branches · ${describeEngine()}\n\n`,
+  );
+
+  const report = await evaluateRouting(tree, cases, p => route(tree, p));
+  process.stdout.write(formatEval(report));
+  return 0;
+}
+
+/** Une ligne par cas — `●` attendu et obtenu, `+` en trop, `−` manquant — puis
+ *  le total. Les titres, pas les chemins : c'est ce que montrent les vues. */
+function formatEval(report: EvalReport): string {
+  const out: string[] = [];
+  for (const c of report.cases) {
+    const bits = [
+      `${c.hit.length}/${c.hit.length + c.missing.length}`,
+      `${String(c.ms).padStart(5)} ms`,
+      c.reason === 'routed' ? '' : c.reason,
+    ].filter(Boolean);
+    out.push(`${bits.join(' · ')}  ${c.prompt}`);
+    if (c.missing.length) out.push(`   − ${c.missing.join(', ')}`);
+    if (c.extra.length) out.push(`   + ${c.extra.join(', ')}`);
+    if (c.unknown.length) out.push(`   ? ${c.unknown.join(', ')} — absent de l'arbre`);
+    if (c.error) out.push(`   ! ${c.error}`);
+  }
+  const pct = (n: number): string => `${Math.round(n * 100)} %`;
+  out.push('');
+  out.push(
+    `précision ${pct(report.precision)} · rappel ${pct(report.recall)} · ${report.avgMs} ms en moyenne`,
+  );
+  out.push(
+    'précision = ce qui a été chargé et servait ; rappel = ce qui servait et a été chargé.',
+  );
+  return `${out.join('\n')}\n`;
 }
 
 async function cmdRender(flags: Flags): Promise<number> {

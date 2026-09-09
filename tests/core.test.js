@@ -8,6 +8,7 @@ import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter
 import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { route, pickEngine, isCliEngine, parseIndices } from '../dist/core/router.js';
+import { evaluateRouting, parseEvalCases } from '../dist/core/eval.js';
 import { renderContext, renderAgentsBlock } from '../dist/core/render.js';
 import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
@@ -514,6 +515,73 @@ test('routeur : la réponse est le dernier tableau d\'entiers, quel que soit le 
   // Limite connue et assumée : un tableau cité gagne s'il est le dernier. Le
   // cas reste théorique — le catalogue n'est jamais recopié dans la réponse.
   assert.deepEqual(parseIndices('voir [1] et [2] plus haut'), [2]);
+});
+
+test("éval : le score compte les ancêtres du bon côté, et dit ce qui manque", async () => {
+  const dir = await scratch();
+  await writeBranch(dir, { path: 'architecture', title: 'Architecture', type: 'context', loadWhen: 'q', content: 'a' });
+  await writeBranch(dir, { path: 'architecture/routage', title: 'Routage', type: 'reference', loadWhen: 'q', content: 'r' });
+  await writeBranch(dir, { path: 'regles', title: 'Règles', type: 'rule', loadWhen: 'q', content: 'g' });
+  const tree = await loadTree(dir);
+
+  // Un moteur factice : la mesure de la comparaison n'a pas à dépendre d'un
+  // modèle, sinon elle ne serait pas dans `npm test`.
+  const answers = {
+    'un': { selected: new Set(['architecture', 'architecture/routage']), reason: 'routed' },
+    'deux': { selected: new Set(['regles']), reason: 'routed' },
+  };
+  const report = await evaluateRouting(
+    tree,
+    [
+      // `expect` ne cite que la branche qui compte : son parent est chargé
+      // d'office, le compter « en trop » ferait mentir le score.
+      { prompt: 'un', expect: ['architecture/routage'] },
+      { prompt: 'deux', expect: ['architecture/routage', 'branche-disparue'] },
+    ],
+    async p => answers[p],
+  );
+
+  assert.deepEqual(report.cases[0].extra, []);
+  assert.deepEqual(report.cases[0].missing, []);
+  assert.equal(report.cases[0].hit.length, 2);
+
+  // Le second cas rate tout : 1 chargé pour rien, 2 attendus manquants.
+  assert.deepEqual(report.cases[1].extra, ['regles']);
+  assert.deepEqual(report.cases[1].missing.sort(), ['architecture', 'architecture/routage']);
+  // Un `expect` qui ne correspond à aucune branche : le jeu d'éval a vieilli,
+  // on le dit au lieu de le compter comme un échec du routeur.
+  assert.deepEqual(report.cases[1].unknown, ['branche-disparue']);
+
+  // Micro-moyenne : 2 justes sur 3 chargés, 2 sur 4 attendus.
+  assert.equal(report.precision, 2 / 3);
+  assert.equal(report.recall, 2 / 4);
+});
+
+test("éval : un moteur qui échoue est un cas raté, pas une mesure interrompue", async () => {
+  const dir = await scratch();
+  await writeBranch(dir, { path: 'regles', title: 'Règles', type: 'rule', loadWhen: 'q', content: 'g' });
+  const tree = await loadTree(dir);
+
+  const report = await evaluateRouting(tree, [{ prompt: 'x', expect: ['regles'] }], async () => {
+    throw new Error('CLI introuvable');
+  });
+  assert.equal(report.cases[0].error, 'CLI introuvable');
+  assert.deepEqual(report.cases[0].missing, ['regles']);
+  assert.equal(report.recall, 0);
+});
+
+test("éval : un cas mal écrit se saute, il n'emporte pas le fichier", () => {
+  const cases = parseEvalCases([
+    { prompt: 'bon', expect: ['regles'] },
+    { prompt: '   ', expect: ['regles'] },
+    { expect: ['regles'] },
+    { prompt: 'sans expect' },
+    { prompt: 'expect sale', expect: ['regles', 42, null] },
+    'pas un objet',
+  ]);
+  assert.deepEqual(cases.map(c => c.prompt), ['bon', 'sans expect', 'expect sale']);
+  assert.deepEqual(cases[2].expect, ['regles']);
+  assert.deepEqual(parseEvalCases({ pas: 'un tableau' }), []);
 });
 
 test('journal : les tours s\'empilent, du plus ancien au plus récent', async () => {

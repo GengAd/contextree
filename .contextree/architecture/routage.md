@@ -34,4 +34,17 @@ Autres contraintes :
 - **Aucun type privilégié** : plus de « garanties » `identity` + `rule` ;
 - court-circuit à ≤ 3 branches : on injecte tout, le routage ne se rentabilise pas.
 
-`CONTEXTREE_ROUTER` (`auto`|`anthropic`|`openai`|`claude`|`codex`|`gemini`|`off` ; `sdk` et `cli` restent compris), `CONTEXTREE_ROUTER_MODEL`, `CONTEXTREE_ROUTER_TIMEOUT_MS`, `OPENAI_BASE_URL`, `CONTEXTREE_CLAUDE_BIN`. **Le défaut de modèle sur clé Anthropic reste à arbitrer.**
+`CONTEXTREE_ROUTER` (`auto`|`anthropic`|`openai`|`claude`|`codex`|`gemini`|`off` ; `sdk` et `cli` restent compris), `CONTEXTREE_ROUTER_MODEL`, `CONTEXTREE_ROUTER_TIMEOUT_MS`, `OPENAI_BASE_URL`, `CONTEXTREE_CLAUDE_BIN`.
+
+## Mesurer, au lieu de retoucher à l'aveugle
+
+`npm run eval` (`route --eval`, `tests/routing.eval.json`) route un jeu de prompts réels et compare aux branches attendues, **ancêtres compris des deux côtés**. Précision = ce qui a été chargé et servait ; rappel = ce qui servait et a été chargé. Micro-moyenné : on somme les branches de tous les cas, pour que le score dise ce que coûte une session, pas ce que vaut un prompt moyen. Jamais dans `npm test`, et toujours code 0 : un mauvais score dit « le routage s'est dégradé », pas « le code est cassé ».
+
+**Première mesure, 9 septembre 2026** — 20 cas, 16 branches, CLI `claude` (haiku) : **précision 57 %, rappel 75 %, 21,5 s par cas**.
+
+Deux choses apprises le jour même :
+
+- **Une éval ne se mesure pas au budget d'un prompt.** Au premier passage, 9 cas sur 20 ont expiré à 20 s et sont tombés dans le repli « arbre entier » : précision 24 %, rappel 81 % — on mesurait le timeout, pas le routeur. `--eval` relève donc le budget à 120 s comme le fait `route-bg`. Personne n'attend une mesure.
+- **Toute la perte de rappel tient à une seule branche.** `identite` est manquée dans 13 cas sur 20 ; **hors `identite`, le rappel est de 100 %** — aucune branche de fond n'a été ratée. Son `load_when` dit « toujours pertinent », ce qui n'est pas une condition : c'est un vœu, et le routeur l'honore une fois sur trois. Le choix est ouvert, et il n'est pas dans le code : soit on lui écrit une vraie condition et elle est routée comme les autres, soit on assume qu'elle n'est pas toujours chargée. Ce qu'on ne fera pas, c'est la garantir par son type — aucun type n'est privilégié.
+
+**Le défaut de modèle sur clé Anthropic reste `claude-opus-5`**, faute de mesure : aucune clé n'était disponible sur la machine le jour de la mesure, et le chemin CLI (le seul mesuré) utilise `haiku`. Le changer sans chiffres reviendrait à remplacer un choix arbitraire par un autre. À reprendre dès qu'une clé permet de comparer haiku / sonnet / opus sur le même jeu.
