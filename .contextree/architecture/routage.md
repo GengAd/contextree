@@ -17,6 +17,12 @@ Le contrat tient en une phrase : **le routeur ne demande qu'un tableau d'entiers
 
 **Le hook n'attend jamais un moteur CLI** (5 à 60 s mesurées) : le tour part avec la sélection du tour précédent (`reason: 'deferred'`), et `contextree route-bg` — détaché, sans stdio — route ce prompt derrière pour le tour suivant. Hook à ~150 ms. `CONTEXTREE_ROUTER_BLOCKING=1` rend l'attente.
 
+**Le routage de fond écrit son tour dans le journal** (9 septembre 2026), avec `source: 'bg'` et le **même `at`** que le tour du hook — passé en `--at`, pour que les deux entrées d'un prompt se lisent ensemble. Un prompt produit donc deux tours : le `deferred` du hook, puis le `routed`/`bg` du fond. On ne les fusionne pas, c'est ce qui s'est passé.
+
+Sans ça, sous un moteur CLI le journal ne contenait **que** des `deferred` — mesuré sur ce dépôt : 25 tours, 20 `deferred`, 5 `fallback`, **0 `routed`**. La vue affichait « différé » à vie, et le seul routage réel de la session n'apparaissait nulle part : personne ne pouvait corriger un `load_when` en regardant ce que le routeur avait vraiment choisi, ce qui est pourtant toute la promesse de la barre latérale. Le fond n'écrit que s'il a **routé** : un repli n'apprend rien de plus que le `deferred` déjà inscrit.
+
+`turnLabelKey` (dans `journal.ts`) traduit ce tour en `routed-bg`, affiché « routé (prochain tour) ». La règle vit dans le cœur, pas dans une vue : la barre latérale et la toile doivent dire la même chose du même tour. Ces branches n'ont pas servi au prompt qu'on vient d'envoyer — elles partiront au suivant, et l'infobulle le dit (« choisie par le routeur pour le prochain tour »).
+
 Autres contraintes :
 
 - **le modèle n'est deviné pour personne** : `haiku` sur le CLI `claude` (mesuré), le défaut de l'utilisateur sur `codex`/`gemini`. Inventer un identifiant de modèle pour un CLI qu'on ne maîtrise pas, c'est un moteur qui échoue au premier appel ;

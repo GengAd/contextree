@@ -609,6 +609,10 @@ async function cmdHook(): Promise<number> {
     if (!tree.order.length && !tree.rootContent.trim()) return 0;
 
     const previous = await readSelection(dir, sessionId);
+    // Un seul horodatage pour ce prompt : le tour du hook et celui que le
+    // routage de fond écrira portent le même `at`, sinon on ne peut plus les
+    // lire ensemble.
+    const at = Date.now();
 
     // Le routage par le CLI coûte entre 5 et 60 s : hors de question de le
     // mettre devant le prompt. Ce tour part avec la sélection du tour précédent
@@ -624,11 +628,11 @@ async function cmdHook(): Promise<number> {
 
     // En différé, c'est le process de fond qui écrira la sélection : l'écraser
     // ici reviendrait à effacer le routage avant qu'il n'arrive.
-    if (deferred) routeInBackground(dir, sessionId, prompt);
+    if (deferred) routeInBackground(dir, sessionId, prompt, at);
     else await writeSelection(dir, sessionId, selected);
 
     await appendTurn(dir, {
-      at: Date.now(),
+      at,
       prompt,
       selected: [...selected],
       reason,
@@ -653,7 +657,7 @@ async function cmdHook(): Promise<number> {
  * Le prompt passe en base64, un `argv` n'a pas à deviner ce qu'un utilisateur
  * peut écrire. Toute panne ici est un routage en moins, jamais un prompt bloqué.
  */
-function routeInBackground(dir: string, sessionId: string, prompt: string): void {
+function routeInBackground(dir: string, sessionId: string, prompt: string, at: number): void {
   try {
     const entry = process.argv[1];
     if (!entry) return;
@@ -665,6 +669,7 @@ function routeInBackground(dir: string, sessionId: string, prompt: string): void
         '--dir', dir,
         '--session', sessionId,
         '--prompt64', Buffer.from(prompt.slice(0, 4000), 'utf8').toString('base64'),
+        '--at', String(at),
       ],
       { detached: true, stdio: 'ignore' },
     );
@@ -678,6 +683,11 @@ function routeInBackground(dir: string, sessionId: string, prompt: string): void
  * Le routage de fond lui-même. Personne ne l'attend, donc il a le droit d'être
  * lent — et il n'écrit que s'il a vraiment routé : un repli n'a rien à mettre
  * dans le cache, il en sort.
+ *
+ * Il **ajoute aussi son tour au journal** (9 septembre 2026). Sans ça, sous un
+ * moteur CLI le journal ne contenait que des `deferred` : la vue affichait
+ * « différé » à vie et le seul routage réel de la session n'était visible nulle
+ * part. Deux entrées pour un prompt, donc, et le même `at` que celle du hook.
  */
 async function cmdRouteBackground(flags: Flags): Promise<number> {
   try {
@@ -691,7 +701,15 @@ async function cmdRouteBackground(flags: Flags): Promise<number> {
     const previous = await readSelection(dir, sessionId);
     const prompt = Buffer.from(encoded, 'base64').toString('utf8');
     const { selected, reason } = await route(tree, prompt, { previousSelection: previous });
-    if (reason === 'routed') await writeSelection(dir, sessionId, selected);
+    if (reason !== 'routed') return 0;
+    await writeSelection(dir, sessionId, selected);
+    await appendTurn(dir, {
+      at: Number(str(flags.at)) || Date.now(),
+      prompt,
+      selected: [...selected],
+      reason,
+      source: 'bg',
+    });
   } catch {
     // Même contrat que le hook : silencieux, code 0.
   }

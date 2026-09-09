@@ -11,7 +11,7 @@ import { route, pickEngine, isCliEngine } from '../dist/core/router.js';
 import { renderContext, renderAgentsBlock } from '../dist/core/render.js';
 import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
-import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites } from '../dist/core/journal.js';
+import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites, turnLabelKey } from '../dist/core/journal.js';
 import {
   RemoteError, clearSession, createGroup, currentSession, me, myGroups,
   readSession, remoteConfig, setRemoteConfig, signIn, signOut,
@@ -437,6 +437,35 @@ test('journal : les tours s\'empilent, du plus ancien au plus récent', async ()
   assert.equal(turns[1].reason, 'fallback');
   assert.equal(turns[1].source, 'mcp');
   assert.equal(turns[1].error, 'timeout');
+});
+
+test("journal : le routage de fond est un tour à part, et il se lit comme tel", async () => {
+  const dir = await scratch();
+  // Sous un moteur CLI, un prompt produit deux entrées : le `deferred` du hook,
+  // puis le verdict du routage de fond. On ne les fusionne pas — c'est ce qui
+  // s'est passé, et sans la seconde la vue affichait « différé » à vie.
+  const at = Date.now();
+  await appendTurn(dir, turn({ at, prompt: 'un prompt', reason: 'deferred', selected: ['a', 'b'] }));
+  await appendTurn(dir, turn({ at, prompt: 'un prompt', source: 'bg', selected: ['a'] }));
+  const turns = await readJournal(dir);
+  assert.equal(turns.length, 2);
+  assert.equal(turns[1].source, 'bg');
+  // Le même `at` : les deux entrées d'un prompt se lisent ensemble.
+  assert.equal(turns[0].at, turns[1].at);
+
+  // Une source inconnue reste écartée : le journal ne gagne pas un champ libre.
+  await fs.writeFile(journalFile(dir), JSON.stringify([turn({ source: 'ailleurs' })]), 'utf8');
+  assert.deepEqual(await readJournal(dir), []);
+});
+
+test("journal : un routage de fond ne se dit pas « routé » tout court", () => {
+  // La barre latérale et la toile lisent la même clé : un tour du fond a bien
+  // routé, mais ses branches partiront au prochain prompt, pas à celui-ci.
+  assert.equal(turnLabelKey({ reason: 'routed', source: 'bg' }), 'routed-bg');
+  assert.equal(turnLabelKey({ reason: 'routed', source: 'hook' }), 'routed');
+  assert.equal(turnLabelKey({ reason: 'routed', source: 'mcp' }), 'routed');
+  // Un repli venu du fond reste un repli : la source ne renomme que `routed`.
+  assert.equal(turnLabelKey({ reason: 'fallback', source: 'bg' }), 'fallback');
 });
 
 test('journal : borné aux 50 derniers tours', async () => {

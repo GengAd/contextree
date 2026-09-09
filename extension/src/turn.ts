@@ -9,6 +9,9 @@ export type LastTurn = {
   turn: RoutingTurn;
   /** Nombre total de branches de l'arbre au moment de la lecture. */
   total: number;
+  /** La clé d'affichage, calculée par le cœur (`turnLabelKey`) : la barre
+   *  latérale et la toile la lisent au lieu de la recalculer chacune. */
+  key: string;
 };
 
 export const LABELS: Record<string, string> = {
@@ -16,6 +19,10 @@ export const LABELS: Record<string, string> = {
   all: 'tout chargé',
   fallback: 'repli',
   deferred: 'différé',
+  // Un tour venu du routage de fond : ces branches n'ont pas servi à ce
+  // prompt-là, elles partiront au suivant. Le dire, sinon on lit « routé » et
+  // on croit que le tour affiché est celui qui vient de passer.
+  'routed-bg': 'routé (prochain tour)',
 };
 
 /** La teinte d'une branche injectée : celle des correspondances de recherche,
@@ -62,26 +69,25 @@ export class LoadedDecorations implements vscode.FileDecorationProvider {
 
   provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
     if (!this.loaded.has(uri.fsPath)) return undefined;
-    // Un repli et un routage diffèrent : dans un cas la branche a été choisie
-    // pour ce prompt, dans l'autre elle est là faute de mieux. Ça se dit dans
-    // l'infobulle — la teinte, elle, dit seulement « ceci est parti à l'IA ».
-    const chosen = this.reason === 'routed';
-    return {
-      badge: '•',
-      color: LOADED_COLOR,
-      tooltip: chosen
-        ? "contextree : lue par l'IA au dernier tour"
-        : `contextree : injectée au dernier tour (${LABELS[this.reason ?? ''] ?? this.reason})`,
-    };
+    // La teinte dit seulement « ceci est parti à l'IA » ; ce qui distingue un
+    // routage d'un repli est dans l'infobulle.
+    return { badge: '•', color: LOADED_COLOR, tooltip: this.tooltip() };
+  }
+
+  /** Trois états, trois phrases : lue, choisie pour la suite, ou là faute de
+   *  mieux. Les confondre, c'est laisser croire qu'un repli est un routage. */
+  private tooltip(): string {
+    if (this.reason === 'routed') return "contextree : lue par l'IA au dernier tour";
+    if (this.reason === 'routed-bg') return 'contextree : choisie par le routeur pour le prochain tour';
+    return `contextree : injectée au dernier tour (${LABELS[this.reason ?? ''] ?? this.reason})`;
   }
 }
 
 /** Le titre de la vue dit l'état du routage — ce que disait le badge d'en bas. */
 export function turnDescription(last: LastTurn | null, total: number): string {
   if (!last) return `${total} branche(s)`;
-  const { turn } = last;
-  const label = LABELS[turn.reason] ?? turn.reason;
-  return `${turn.selected.length}/${total} · ${label}`;
+  const label = LABELS[last.key] ?? last.key;
+  return `${last.turn.selected.length}/${total} · ${label}`;
 }
 
 /**
@@ -115,5 +121,5 @@ export async function watchJournal(core: Core, onChange: () => void): Promise<vs
 export async function lastTurn(core: Core, treeDir: string, total: number): Promise<LastTurn | null> {
   const turns = await core.readJournal(treeDir);
   const turn = turns.at(-1);
-  return turn ? { turn, total } : null;
+  return turn ? { turn, total, key: core.turnLabelKey(turn) } : null;
 }
