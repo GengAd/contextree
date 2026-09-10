@@ -14,7 +14,7 @@ Le test qui compte : **quelqu'un part d'un projet qui n'a jamais entendu parler 
 4. « oui ». Elle lit les fichiers, écrit `root.md` puis 6 à 12 branches avec des `load_when` en condition, **annonce** chaque écriture, et renvoie à la toile.
 5. La toile s'allume sur les écritures fraîches. Relire, corriger deux `load_when` depuis la carte.
 6. Trois prompts ciblés et différents — « comment on lance les tests ? », « ajoute une route API », « pourquoi ce choix d'archi ? ». `contextree route` et le journal doivent montrer une sélection **différente et pertinente** à chaque fois.
-7. Pendant une vraie tâche, l'IA découvre un fait durable : elle écrit une branche, et elle le dit.
+7. Pendant une vraie tâche — pas une question de lecture —, l'IA découvre un fait durable : elle écrit une branche **et l'annonce avec sa motivation**, ou elle dit explicitement qu'il n'y a rien à retenir. Un silence est un échec de cette étape, même quand la réponse est juste. Vérification : les horodatages de `.contextree/`, pas la parole de l'IA.
 
 ## Ce qui fait un passage réussi
 

@@ -379,6 +379,37 @@ test('render : le catalogue liste ce qui n\'a pas été chargé, sans son conten
   assert.ok(!full.includes('## Catalogue'));
 });
 
+test("render : le rappel d'écrire arrive avec la tâche, et à un seul endroit", async () => {
+  const dir = await scratch();
+  await writeRoot(dir, 'racine');
+  await writeBranch(dir, {
+    path: 'a', type: 'context', title: 'A', loadWhen: 'quand a', content: 'contenu a',
+  });
+  const tree = await loadTree(dir);
+
+  // Il est là même quand tout est chargé : il ne dépend pas du catalogue, qui
+  // n'apparaît que s'il reste quelque chose à tirer.
+  const tout = renderContext(tree, new Set(tree.order));
+  assert.match(tout, /upsert_branch/);
+  // Et il demande de dire quand on n'écrit pas : un silence ne se corrige pas.
+  assert.match(tout, /rien à retenir/);
+  // Rattaché à un moment précis — la fin de la réponse. Une consigne sans
+  // moment est une consigne qu'on remet à plus tard (mesuré le 10 sept. 2026).
+  assert.match(tout, /Avant de terminer ta réponse/);
+  // En tout dernier : c'est une consigne pour la suite du tour, pas une
+  // information sur ce qu'on vient de recevoir.
+  assert.ok(tout.indexOf('upsert_branch') > tout.indexOf('contenu a'));
+
+  // Une seule copie : le bloc AGENTS.md ne le redit pas. Trois surfaces qui
+  // répètent la même consigne deviennent un bruit qu'on cesse de lire.
+  assert.ok(!/rien à retenir/.test(renderAgentsBlock(tree)));
+
+  // Un arbre vide n'injecte toujours rien — pas même le rappel.
+  const vide = await scratch();
+  await fs.mkdir(vide, { recursive: true });
+  assert.equal(renderContext(await loadTree(vide), new Set()), '');
+});
+
 test('render : arbre vide → chaîne vide (rien à injecter)', async () => {
   const dir = await scratch();
   const tree = await loadTree(dir);

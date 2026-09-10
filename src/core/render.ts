@@ -40,7 +40,9 @@ export function renderContext(tree: ContextTree, selected: Set<string>): string 
   if (others.length) parts.push(`## Catalogue — branches non chargées\n\n${PULL}\n\n${catalogue(others)}`);
 
   if (!parts.length) return '';
-  return `<contextree>\n${parts.join('\n\n')}\n</contextree>`;
+  // Le rappel d'écrire passe en tout dernier : c'est une consigne pour la suite
+  // du tour, pas une information sur ce qu'on vient de recevoir.
+  return `<contextree>\n${parts.join('\n\n')}\n\n${CAPITALIZE}\n</contextree>`;
 }
 
 /** L'invitation à tirer le reste. Le push n'est qu'une avance : il route sur le
@@ -51,6 +53,33 @@ const PULL =
   "d'erreur, un fichier que tu ouvres —, charge la branche qui va avec au lieu d'attendre le " +
   'tour suivant : outil MCP `get_context` avec ce que tu sais maintenant, ou ' +
   '`npx -y @gengad/contextree route "<la demande>"`.';
+
+/**
+ * Le rappel d'écrire ce qu'on découvre. **Une ligne, et une seule copie.**
+ *
+ * La consigne existait déjà — dans les `instructions` du serveur MCP — et elle
+ * ne suffisait pas : mesuré le 10 septembre 2026, sur un prompt de tâche
+ * réelle, le modèle a trouvé un fait durable et exact, et n'a rien écrit ni
+ * dit qu'il n'écrivait pas. Les `instructions` sont lues **une fois, à la
+ * connexion**, avant que la moindre tâche n'existe ; au moment où le fait
+ * apparaît, elles sont loin derrière dans la conversation.
+ *
+ * Ici, le rappel arrive avec le contexte du tour — donc à chaque prompt sous un
+ * hook, et à chaque `get_context` ailleurs. C'est le plus proche du moment
+ * utile parmi les endroits qu'on contrôle. Il vit dans `renderContext` et nulle
+ * part ailleurs : trois surfaces qui redisent la même chose deviennent un bruit
+ * qu'on cesse de lire, et la seule façon de garder ce rappel court est de
+ * n'avoir qu'un endroit où le rallonger.
+ *
+ * Il demande aussi de **dire quand on n'écrit pas** : un refus visible se
+ * discute, un silence ne se corrige pas.
+ */
+const CAPITALIZE =
+  '**Avant de terminer ta réponse**, dis en une ligne ce que cette tâche t\'a appris sur ce ' +
+  'projet et qui restera vrai demain — une convention, une contrainte, un chemin qui compte. ' +
+  'Si c\'est le cas, écris-le dans l\'arbre avec `upsert_branch` **avant** de répondre, sans ' +
+  "demander la permission ; sinon dis « rien à retenir » et passe. Ne termine pas sans l'un " +
+  'ou l\'autre.';
 
 function section(b: { title: string; content: string }): string {
   return `### ${b.title}\n${b.content}`.trim();
