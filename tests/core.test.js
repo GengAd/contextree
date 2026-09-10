@@ -4,6 +4,10 @@ import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+
+import { createServer } from '../dist/mcp/server.js';
 
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
 import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree, detectInstructionFiles } from '../dist/core/store.js';
@@ -742,6 +746,61 @@ test("hook : sans arbre, l'invitation sort une fois par session — et jamais un
   const casse = await runHook('pas du json', env);
   assert.equal(casse.code, 0);
   assert.equal(casse.out, '');
+});
+
+/** Un vrai client MCP branché sur le serveur, en mémoire. On passe par le
+ *  protocole et pas par les internes du SDK : c'est ce que voit l'agent, et
+ *  c'est ce qui doit rester vrai d'une version du SDK à l'autre. */
+async function mcpClient(cwd) {
+  const server = await createServer(cwd);
+  const client = new Client({ name: 'test', version: '0' });
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
+  return client;
+}
+
+const textOf = res => res.content.map(c => c.text ?? '').join('\n');
+
+test("mcp : write_root crée l'arbre s'il n'existe pas — l'IA n'a pas besoin d'un terminal", async () => {
+  const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-wr-'));
+  const client = await mcpClient(projet);
+
+  const res = await client.callTool({
+    name: 'write_root',
+    arguments: { content: '# Projet\n\nCe que fait ce dépôt.', why: 'poser la racine' },
+  });
+  assert.equal(res.isError, undefined);
+  // Le dossier ET la racine, sans qu'aucune commande n'ait été tapée.
+  assert.equal(await fs.readFile(path.join(projet, '.contextree', 'root.md'), 'utf8'),
+    '# Projet\n\nCe que fait ce dépôt.\n');
+  // L'utilisateur doit apprendre qu'un dossier vient d'apparaître dans son projet.
+  assert.match(textOf(res), /Arbre créé/);
+
+  // Deuxième écriture : l'arbre existe déjà, on ne l'annonce plus.
+  const encore = await client.callTool({
+    name: 'write_root',
+    arguments: { content: '# Projet\n\nCorrigé.', why: 'préciser' },
+  });
+  assert.ok(!/Arbre créé/.test(textOf(encore)));
+});
+
+test("mcp : upsert_branch sans arbre refuse, et nomme write_root", async () => {
+  const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-ub-'));
+  const client = await mcpClient(projet);
+
+  const res = await client.callTool({
+    name: 'upsert_branch',
+    arguments: {
+      title: 'Une branche', type: 'context', load_when: 'quand on teste',
+      content: 'du contenu', why: 'pour le test',
+    },
+  });
+
+  // Écrire une branche avant la racine est l'ordre inverse de la consigne :
+  // l'outil refuse, mais il dit par où commencer.
+  assert.equal(res.isError, true);
+  assert.match(textOf(res), /write_root/);
+  await assert.rejects(fs.stat(path.join(projet, '.contextree')));
 });
 
 test('journal : les tours s\'empilent, du plus ancien au plus récent', async () => {

@@ -4,7 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-import { findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch, detectInstructionFiles, ROOT_FILE } from '../core/store.js';
+import { findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch, detectInstructionFiles, DIR_NAME, ROOT_FILE } from '../core/store.js';
 import { allBranches, formatTree } from '../core/tree.js';
 import { renderContext, renderTrace, renderBootstrapPrompt, renderBootstrapInvite } from '../core/render.js';
 import { route } from '../core/router.js';
@@ -66,7 +66,16 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
    *  l'utilisateur peut les éditer pendant que le serveur tourne. */
   const open = async (): Promise<{ dir: string; tree: ContextTree }> => {
     const dir = await findTreeDir(cwd);
-    if (!dir) throw new Error(`Aucun dossier .contextree trouvé depuis ${cwd}. Lance : contextree init`);
+    // Le message nomme `write_root` avant le terminal : c'est le seul outil qui
+    // sait créer l'arbre, et un agent à qui on répond « lance une commande »
+    // s'arrête pour la demander (constaté le 10 septembre 2026, scénario
+    // « depuis zéro »).
+    if (!dir) {
+      throw new Error(
+        `Aucun dossier ${DIR_NAME} trouvé depuis ${cwd}. Pour créer l'arbre d'ici : ` +
+          '`write_root`, qui pose le dossier et la racine. Sinon : `contextree init`.',
+      );
+    }
     return { dir, tree: await loadTree(dir) };
   };
 
@@ -248,7 +257,9 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       description:
         "Le contenu toujours injecté, jamais routé : qui, quoi, dans quel repo. Court. " +
         "C'est la première chose à poser sur un arbre neuf, et la seule que `upsert_branch` " +
-        'ne sait pas écrire. Relis-la avec `read_branch` sur `:root` avant de la remplacer.',
+        "ne sait pas écrire. **Crée le dossier `.contextree/` s'il n'existe pas encore** : " +
+        "sur un projet sans arbre, c'est par ici qu'on commence, sans aucune commande à " +
+        'taper. Relis la racine avec `read_branch` sur `:root` avant de la remplacer.',
       inputSchema: {
         content: z.string().describe('Corps markdown de la racine. Quelques lignes, pas une page.'),
         why: z
@@ -261,15 +272,33 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       },
     },
     async ({ content, why }) => {
-      const { dir } = await open();
+      // Le seul outil qui a le droit de créer l'arbre.
+      //
+      // Il pose la racine, donc il pose le contenant : sans ça, l'IA qui vient
+      // de proposer l'arbre et d'obtenir un « oui » devait renvoyer l'utilisateur
+      // au terminal (`contextree init`) — le geste que tout ceci existe pour
+      // supprimer. `upsert_branch` n'a pas ce droit : écrire une branche avant
+      // la racine est l'ordre inverse de la consigne `bootstrap`, et donnerait
+      // un arbre sans son seul contenu toujours injecté.
+      //
+      // Le dossier créé est celui d'`initTree` — `.contextree/` sous le `cwd` du
+      // serveur — mais **sans le tronc de quatre branches de départ** : l'IA
+      // écrit les siennes, et deux entrées pour le même sujet font charger la
+      // mauvaise.
+      const existing = await findTreeDir(cwd);
+      const dir = existing ?? path.join(cwd, DIR_NAME);
       await writeRoot(dir, content);
       // Tracée comme une branche, sous le chemin que les vues emploient déjà
       // pour la racine : la pastille « écrite par l'IA » s'allume au même
       // endroit, sans cas particulier de plus.
       await appendAiWrite(dir, { at: Date.now(), op: 'upsert', path: ROOT_PATH, title: 'Racine', why });
       return text(
-        `Racine écrite : ${path.relative(process.cwd(), path.join(dir, ROOT_FILE))}\n\n` +
-          "Annonce-le maintenant à l'utilisateur : ce que tu viens d'écrire dans la racine, et pourquoi.",
+        `Racine écrite : ${path.relative(process.cwd(), path.join(dir, ROOT_FILE))}\n` +
+          // Un dossier vient d'apparaître dans son projet : il doit l'apprendre
+          // maintenant, pas en le découvrant dans un `git status`.
+          (existing ? '' : `Arbre créé : ${path.relative(process.cwd(), dir)}/\n`) +
+          "\nAnnonce-le maintenant à l'utilisateur : ce que tu viens d'écrire dans la racine, et pourquoi." +
+          (existing ? '' : " Dis-lui aussi que le dossier `.contextree/` vient d'être créé."),
       );
     },
   );
