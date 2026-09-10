@@ -107,6 +107,42 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
     },
   );
 
+  /**
+   * La consigne de construction, en **outil** — pas seulement en prompt.
+   *
+   * Tranché le 10 septembre 2026, après l'avoir vu casser : le prompt
+   * `bootstrap` ci-dessus est exposé à l'utilisateur en slash-command, et
+   * jamais au modèle. L'agent qui venait d'obtenir un « oui » ne trouvait donc
+   * rien à appeler, partait sur la commande `npx` — un paquet non publié — et
+   * s'arrêtait pour demander de l'aide, au pire moment possible.
+   *
+   * C'est le même motif que les deux autres ratés de ce scénario : **ce qui
+   * n'est pas un outil n'existe pas pour l'agent.** Une consigne informe, elle
+   * n'agit pas. Le choix alternatif — faire rendre la consigne entière par
+   * `get_context` quand il n'y a pas d'arbre — a été écarté : rien ne pousse le
+   * modèle à rappeler `get_context` juste après avoir reçu l'invitation, et
+   * cela alourdirait de deux mille caractères une invitation qu'on a
+   * délibérément faite courte.
+   *
+   * Le texte reste celui de `renderBootstrapPrompt` : une seule copie pour le
+   * prompt, l'outil, la CLI et le bouton de la vue. Quatre formulations d'une
+   * même consigne divergeraient au premier ajustement, et c'est le `load_when`
+   * qui le paierait.
+   */
+  server.registerTool(
+    'bootstrap_prompt',
+    {
+      title: "La consigne pour construire l'arbre",
+      description:
+        "Rend la consigne complète pour construire l'arbre de contexte de ce projet à partir " +
+        'de ses fichiers de consignes existants et du dépôt. À appeler quand ce projet ' +
+        "n'a pas encore d'arbre et que l'utilisateur vient d'accepter d'en créer un. " +
+        "Suis ensuite ce qu'elle dit : `write_root` en premier, puis `upsert_branch`.",
+      annotations: { readOnlyHint: true },
+    },
+    async () => text(renderBootstrapPrompt(await detectInstructionFiles(cwd))),
+  );
+
   server.registerTool(
     'get_context',
     {

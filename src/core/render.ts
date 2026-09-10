@@ -192,8 +192,9 @@ export function renderBootstrapInvite(found: string[]): string {
     sources,
     "**Propose-le à l'utilisateur** — une phrase, au bon moment, sans insister : un arbre de " +
       'contexte tiré de ces fichiers et du dépôt, à la place du gros fichier de consignes. ' +
-      "S'il accepte, suis le prompt MCP `bootstrap` (sans MCP : `npx -y @gengad/contextree " +
-      'bootstrap`) : il donne la consigne complète.',
+      "S'il accepte, appelle l'outil `bootstrap_prompt` : il te donne la consigne complète, " +
+      "et `write_root` crée l'arbre — rien à taper dans un terminal. (Sans serveur MCP : " +
+      '`contextree bootstrap`.)',
     "**Ne crée rien tant qu'il n'a pas dit oui**, et ne touche à aucun fichier source. " +
       "Un arbre écrit dans son dos est un arbre que personne ne relit.",
   ].join('\n\n');

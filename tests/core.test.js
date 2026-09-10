@@ -668,7 +668,10 @@ test("bootstrap : sans arbre, l'invitation propose et n'autorise pas à créer",
   assert.match(invite, /Ne crée rien tant qu'il n'a pas dit oui/);
   // Et elle renvoie à la consigne longue plutôt que de la recopier : cette
   // invitation arrive sans qu'on l'ait demandée, elle doit rester courte.
-  assert.match(invite, /bootstrap/);
+  assert.match(invite, /`bootstrap_prompt`/);
+  // Elle nomme un **outil**, pas une commande à taper : `npx` renvoyait à un
+  // paquet non publié, et demandait un terminal — le geste qu'on supprime.
+  assert.ok(!/npx/.test(invite));
   assert.ok(!/6 à 12 branches/.test(invite));
   assert.ok(invite.length < renderBootstrapPrompt(['CLAUDE.md']).length);
 
@@ -782,6 +785,26 @@ test("mcp : write_root crée l'arbre s'il n'existe pas — l'IA n'a pas besoin d
     arguments: { content: '# Projet\n\nCorrigé.', why: 'préciser' },
   });
   assert.ok(!/Arbre créé/.test(textOf(encore)));
+});
+
+test("mcp : la consigne bootstrap est un outil, atteignable sans terminal ni slash-command", async () => {
+  const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-bp-'));
+  await fs.writeFile(path.join(projet, 'CLAUDE.md'), '# consignes', 'utf8');
+  const client = await mcpClient(projet);
+
+  // Le modèle voit l'outil dans sa liste : un prompt MCP, lui, ne lui est
+  // jamais exposé.
+  const outils = (await client.listTools()).tools.map(t => t.name);
+  assert.ok(outils.includes('bootstrap_prompt'));
+
+  const res = await client.callTool({ name: 'bootstrap_prompt', arguments: {} });
+  // Exactement le texte du prompt MCP et de `contextree bootstrap` : une seule
+  // copie, quatre surfaces.
+  assert.equal(textOf(res), renderBootstrapPrompt(['CLAUDE.md']));
+
+  // Le prompt reste, pour l'utilisateur qui le lance à la main.
+  const prompts = (await client.listPrompts()).prompts.map(p => p.name);
+  assert.ok(prompts.includes('bootstrap'));
 });
 
 test("mcp : upsert_branch sans arbre refuse, et nomme write_root", async () => {
