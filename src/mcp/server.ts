@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import { findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch, detectInstructionFiles, ROOT_FILE } from '../core/store.js';
 import { allBranches, formatTree } from '../core/tree.js';
-import { renderContext, renderTrace, renderBootstrapPrompt } from '../core/render.js';
+import { renderContext, renderTrace, renderBootstrapPrompt, renderBootstrapInvite } from '../core/render.js';
 import { route } from '../core/router.js';
 import { appendTurn, appendAiWrite } from '../core/journal.js';
 import { decodePack, encodePack, extractPack, applyPack } from '../core/pack.js';
@@ -45,9 +45,21 @@ const branchTypeSchema = z.enum(BRANCH_TYPES);
 const ROOT_PATH = ':root';
 
 export async function createServer(cwd: string = process.cwd()): Promise<McpServer> {
+  /** Ce que l'IA doit faire ici quand il n'y a rien : proposer l'arbre.
+   *
+   *  Une seule copie pour les deux surfaces du serveur — les `instructions` et
+   *  la réponse de `get_context`. Le dossier est relu à chaque appel : celui
+   *  qui crée son arbre en cours de session n'a pas à relancer le serveur pour
+   *  que les outils le voient. */
+  const invite = async (): Promise<string> => renderBootstrapInvite(await detectInstructionFiles(cwd));
+
+  /** Les `instructions` sont lues **une fois**, à la connexion — l'agent relance
+   *  le serveur à chaque session, donc l'invitation arrive une fois par session
+   *  et pas à chaque tour. C'est le seul endroit où un projet sans arbre peut
+   *  encore parler à une IA qui n'a ni hook ni terminal. */
   const server = new McpServer(
     { name: 'contextree', version: '0.1.0' },
-    { instructions: INSTRUCTIONS },
+    { instructions: (await findTreeDir(cwd)) ? INSTRUCTIONS : await invite() },
   );
 
   /** L'arbre est relu à chaque appel : les fichiers sont la source de vérité et
@@ -102,6 +114,13 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       annotations: { readOnlyHint: true },
     },
     async ({ query }) => {
+      // Sans arbre, on répond l'invitation **en texte**, pas une erreur : un
+      // outil qui échoue, le modèle l'abandonne et n'y revient pas ; un outil
+      // qui répond « voilà ce qu'il y a à faire », il le suit. `list_branches`
+      // et `read_branch` gardent l'erreur — on ne liste pas ce qui n'existe pas.
+      const found = await findTreeDir(cwd);
+      if (!found) return text(await invite());
+
       const { dir, tree } = await open();
       const { selected, reason, error } = await route(tree, query);
       // Le chat de Cursor et les autres clients MCP passent par ici : sans cette

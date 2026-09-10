@@ -170,6 +170,35 @@ export function renderBootstrapPrompt(found: string[]): string {
   ].join('\n\n');
 }
 
+/**
+ * L'invitation, pour un projet qui n'a **pas** encore d'arbre.
+ *
+ * La version courte de `renderBootstrapPrompt`, et un rôle différent : celle-ci
+ * n'est pas demandée, elle arrive toute seule — dans les `instructions` du
+ * serveur MCP, dans la réponse de `get_context`, sur le stdout du hook. Elle
+ * tient donc en quelques lignes, et elle dit à l'IA de **proposer**, jamais de
+ * créer : une IA qui fabrique un arbre que personne n'a demandé finit par
+ * écrire douze `load_when` que personne ne relira — or c'est le seul champ qui
+ * décide de quoi que ce soit ici. La consigne longue reste derrière le prompt
+ * `bootstrap`, qu'on ne lit qu'une fois qu'on a dit oui.
+ */
+export function renderBootstrapInvite(found: string[]): string {
+  const sources = found.length
+    ? `Il a déjà de quoi partir : ${found.map(f => `\`${f}\``).join(', ')} — plus le dépôt lui-même.`
+    : "Il n'a pas de fichier de consignes pour une IA ; le dépôt lui-même fera l'affaire.";
+
+  return [
+    "Ce projet n'a pas d'arbre de contexte contextree (pas de dossier `.contextree/`).",
+    sources,
+    "**Propose-le à l'utilisateur** — une phrase, au bon moment, sans insister : un arbre de " +
+      'contexte tiré de ces fichiers et du dépôt, à la place du gros fichier de consignes. ' +
+      "S'il accepte, suis le prompt MCP `bootstrap` (sans MCP : `npx -y @gengad/contextree " +
+      'bootstrap`) : il donne la consigne complète.',
+    "**Ne crée rien tant qu'il n'a pas dit oui**, et ne touche à aucun fichier source. " +
+      "Un arbre écrit dans son dos est un arbre que personne ne relit.",
+  ].join('\n\n');
+}
+
 const TRACE_LABELS: Record<RouteReason, string> = {
   routed: 'routé',
   all: 'tout chargé',

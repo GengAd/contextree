@@ -6,10 +6,10 @@ import * as path from 'node:path';
 
 import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, deleteBranch, moveBranch, initTree, detectInstructionFiles } from './core/store.js';
 import { allBranches, formatTree } from './core/tree.js';
-import { renderContext, renderTrace, renderAgentsBlock, renderBootstrapPrompt } from './core/render.js';
+import { renderContext, renderTrace, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite } from './core/render.js';
 import { route, pickEngine, isCliEngine, engineBin, withoutRouting } from './core/router.js';
 import { encodePack, extractPack, applyPack } from './core/pack.js';
-import { readSelection, writeSelection } from './core/session.js';
+import { readSelection, writeSelection, claimBootstrapInvite } from './core/session.js';
 import { appendTurn } from './core/journal.js';
 import { evaluateRouting, parseEvalCases, type EvalReport } from './core/eval.js';
 import {
@@ -697,7 +697,19 @@ async function cmdHook(): Promise<number> {
     if (!prompt) return 0;
 
     const dir = await findTreeDir(cwd);
-    if (!dir) return 0;
+    // Pas d'arbre : on ne se tait plus, on invite — une fois par session.
+    //
+    // Le hook sortait en silence, et l'utilisateur qui n'a jamais lancé `init`
+    // ne pouvait pas apprendre que l'arbre existe : l'outil restait invisible
+    // depuis l'endroit même où il sert. On propose, on ne crée pas. Et le hook
+    // n'est installé que par projet, donc rien ne fuit vers un dépôt qui n'a
+    // rien demandé.
+    if (!dir) {
+      if (await claimBootstrapInvite(cwd, sessionId)) {
+        process.stdout.write(`${renderBootstrapInvite(await detectInstructionFiles(cwd))}\n`);
+      }
+      return 0;
+    }
     const tree = await loadTree(dir);
     if (!tree.order.length && !tree.rootContent.trim()) return 0;
 

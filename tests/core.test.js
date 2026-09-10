@@ -3,17 +3,18 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawn } from 'node:child_process';
 
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
 import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree, detectInstructionFiles } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { route, pickEngine, isCliEngine, parseIndices } from '../dist/core/router.js';
 import { evaluateRouting, parseEvalCases } from '../dist/core/eval.js';
-import { renderContext, renderAgentsBlock, renderBootstrapPrompt } from '../dist/core/render.js';
+import { renderContext, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite } from '../dist/core/render.js';
 import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
 import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites, turnLabelKey } from '../dist/core/journal.js';
-import { readSelection, writeSelection } from '../dist/core/session.js';
+import { readSelection, writeSelection, claimBootstrapInvite } from '../dist/core/session.js';
 import {
   RemoteError, clearSession, createGroup, currentSession, me, myGroups,
   readSession, remoteConfig, setRemoteConfig, signIn, signOut,
@@ -649,6 +650,98 @@ test("bootstrap : la consigne borne l'arbre et interdit de toucher aux sources",
   const nu = renderBootstrapPrompt([]);
   assert.match(nu, /n'a pas de fichier de consignes/);
   assert.match(nu, /6 à 12 branches/);
+});
+
+test("bootstrap : sans arbre, l'invitation propose et n'autorise pas à créer", () => {
+  const invite = renderBootstrapInvite(['CLAUDE.md', 'README.md']);
+
+  // Elle dit ce qui manque, et avec quoi partir.
+  assert.match(invite, /`\.contextree\/`/);
+  assert.match(invite, /`CLAUDE\.md`/);
+  assert.match(invite, /`README\.md`/);
+  // Le garde-fou : proposer, jamais créer de son propre chef.
+  assert.match(invite, /Propose-le à l'utilisateur/);
+  assert.match(invite, /Ne crée rien tant qu'il n'a pas dit oui/);
+  // Et elle renvoie à la consigne longue plutôt que de la recopier : cette
+  // invitation arrive sans qu'on l'ait demandée, elle doit rester courte.
+  assert.match(invite, /bootstrap/);
+  assert.ok(!/6 à 12 branches/.test(invite));
+  assert.ok(invite.length < renderBootstrapPrompt(['CLAUDE.md']).length);
+
+  // Sans fichier trouvé, il reste le dépôt.
+  assert.match(renderBootstrapInvite([]), /le dépôt lui-même/);
+});
+
+test("bootstrap : l'invitation se pose une fois par session et par dossier", async () => {
+  const previous = process.env.CONTEXTREE_STATE_DIR;
+  process.env.CONTEXTREE_STATE_DIR = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-invite-'));
+  try {
+    const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-projet-'));
+    const autre = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-projet-'));
+
+    // Première fois : oui. Ensuite : non, tant qu'on est dans la même session.
+    assert.equal(await claimBootstrapInvite(projet, 's1'), true);
+    assert.equal(await claimBootstrapInvite(projet, 's1'), false);
+    assert.equal(await claimBootstrapInvite(projet, 's1'), false);
+
+    // Une autre session, ou un autre dossier : l'invitation revient.
+    assert.equal(await claimBootstrapInvite(projet, 's2'), true);
+    assert.equal(await claimBootstrapInvite(autre, 's1'), true);
+
+    // Un identifiant de session vient d'un payload JSON : il ne choisit pas où
+    // on écrit.
+    assert.equal(await claimBootstrapInvite(projet, '../../evade'), true);
+    const poses = await fs.readdir(path.join(process.env.CONTEXTREE_STATE_DIR, 'session'));
+    assert.equal(poses.length, 4);
+    assert.ok(poses.every(f => !f.includes('/') && !f.includes('..')));
+  } finally {
+    process.env.CONTEXTREE_STATE_DIR = previous;
+  }
+});
+
+/** Le hook tel qu'un agent le lance : un payload JSON sur stdin, le contexte sur
+ *  stdout. Le seul test qui passe par le vrai binaire — c'est le contrat que
+ *  Claude Code exécute, et il ne se vérifie pas en appelant les fonctions. */
+function runHook(payload, env = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['dist/cli.js', 'hook'], {
+      env: { ...process.env, ...env },
+    });
+    let out = '';
+    child.stdout.on('data', d => { out += d; });
+    child.stderr.resume();
+    child.on('error', reject);
+    child.on('close', code => resolve({ code, out }));
+    child.stdin.end(JSON.stringify(payload));
+  });
+}
+
+test("hook : sans arbre, l'invitation sort une fois par session — et jamais un code non nul", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-hook-state-'));
+  const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-hook-'));
+  const env = { CONTEXTREE_STATE_DIR: stateDir };
+  const payload = { prompt: 'bonjour, on fait quoi ?', cwd: projet, session_id: 'abc' };
+
+  const premier = await runHook(payload, env);
+  assert.equal(premier.code, 0);
+  assert.match(premier.out, /arbre de contexte contextree/);
+
+  // Deuxième prompt de la même session : plus rien. L'invitation vaut pour la
+  // session, pas pour le tour.
+  const second = await runHook(payload, env);
+  assert.equal(second.code, 0);
+  assert.equal(second.out, '');
+
+  // Nouvelle session : elle revient.
+  const autreSession = await runHook({ ...payload, session_id: 'def' }, env);
+  assert.equal(autreSession.code, 0);
+  assert.match(autreSession.out, /arbre de contexte contextree/);
+
+  // L'invariant qui prime sur tout le reste : un payload cassé ne bloque pas le
+  // prompt, et n'injecte rien.
+  const casse = await runHook('pas du json', env);
+  assert.equal(casse.code, 0);
+  assert.equal(casse.out, '');
 });
 
 test('journal : les tours s\'empilent, du plus ancien au plus récent', async () => {
