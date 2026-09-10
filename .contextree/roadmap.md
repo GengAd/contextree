@@ -14,7 +14,7 @@ Chaque palier n'ouvre que quand le précédent est **utilisé pour de vrai**, pa
 |---|---|---|---|
 | ~~P1 usage perso~~ **fait le 9 septembre 2026** | `p1-usage-perso` (mergée) | l'outil marche sur les autres projets d'Adrien, et la vue dit la vérité sur le routage | **franchie** — voir plus bas |
 | ~~P2 dogfooding~~ **fait le 9 septembre 2026** | `p2-dogfooding` (mergée) | plus aucun `.md` de consignes hors de l'arbre dans ce repo (`README.md` = procédure, seule exception) | **à moitié franchie** — voir plus bas |
-| P3 depuis zéro | `p3-depuis-zero` | sur un dossier vierge, l'IA propose l'arbre, le construit proprement, renvoie à la toile | le scénario « depuis zéro » passe sous Claude Code |
+| P3 depuis zéro | `p3-depuis-zero` | sur un dossier vierge, l'IA propose l'arbre, le construit proprement, renvoie à la toile | **pas franchie au 10 septembre 2026** — déroulé une fois, trois ratés ; voir plus bas |
 | P4 tous les agents | `p4-tous-les-agents` | Claude Code, VS Code + Copilot (cible probable de l'entreprise), Cursor, Codex, Gemini ; ChatGPT web = presse-papier | la matrice est cochée ligne par ligne |
 | P5 démo | `p5-demo` | dix minutes devant l'entreprise ; le partage par git, déroulé à deux | la démo tourne sur l'éditeur de la boîte, réseau coupé si besoin |
 | P6 distribution | `p6-distribution` | npm, Open VSX, hook pinné, README procédure — pour que des collègues installent | `npx -y @gengad/contextree init` marche sur une machine vierge |
@@ -46,6 +46,23 @@ La racine n'a plus qu'un `README.md`. `CLAUDE.md`, `CONTEXT.md`, `REFERENCES.md`
 **Ce qui ne l'est pas, et qu'il faut faire à froid** : la porte de sortie demandait une session **neuve**. Celle qui a fait la migration l'avait encore en mémoire, ce qui ne prouve rien sur ce que l'arbre transmet à quelqu'un qui arrive. Le vrai test est de prendre la première carte de P3 dans une session sans historique, et de regarder ce qui manque. Si l'IA rate un invariant, la réponse est de **resserrer un `load_when`**, jamais de recréer un fichier de consignes.
 
 Ce que la migration a appris en chemin, et qui vaut pour tout arbre : **corriger un `load_when` invalide le jeu d'éval qui reposait dessus**. `identite` promettait « toujours pertinent » ; en lui donnant une vraie condition, la mesure a d'abord chuté à 65 % de rappel — l'instrument mesurait une promesse disparue. Recalibré, il donne 93 %. Un score qui bouge après un changement de `load_when` doit être relu avant d'être cru.
+
+## P3, déroulé le 10 septembre 2026 — porte **pas** franchie
+
+Le scénario *depuis zéro* a été joué en entier sous Claude Code, sur une copie jetable d'un vrai projet (`ai-tree` : `CLAUDE.md`, `CONTEXT.md`, `REFERENCES.md`, `SETUP.md`, un `README` de 185 lignes). `contextree install`, puis quatre tours de conversation.
+
+**Ce qui marche, et bien** :
+- L'invitation part au premier prompt. « bonjour, on fait quoi ? » → l'IA a proposé l'arbre en une phrase, à la fin de sa réponse, sans insister et sans rien créer.
+- L'arbre produit tient : racine + **10 branches**, hiérarchisées, et **tous** les `load_when` sont des conditions — aucun résumé, aucun « toujours », y compris sur l'identité. L'IA a annoncé ses écritures, désigné les deux branches à relire en priorité, et fini sur « rien n'est utile tant que ce n'est pas relu ».
+- **Aucun fichier source touché** — vérifié par horodatage sur tout le clone.
+- Le routage trie vraiment, dès le premier prompt : 2, 4 et 3 branches sur 10 pour « comment on lance les tests ? », « ajoute une commande VS Code au bridge » et « pourquoi ce choix d'archi pour le routeur ? ». Sélections différentes et justes à chaque fois.
+
+**Ce qui casse** — et c'est ce qui tient la porte fermée :
+- **L'IA ne peut pas créer l'arbre depuis la conversation.** `write_root` passe par `open()`, qui lève tant que `.contextree/` n'existe pas : l'agent a demandé un terminal (`init`). Le critère « aucun terminal après `install` » tombe, et l'invitation qu'on vient d'écrire promet quelque chose que les outils refusent.
+- **L'agent ne peut pas atteindre la consigne `bootstrap`.** Un prompt MCP est exposé à l'utilisateur en slash-command, pas au modèle ; l'agent est donc allé vers `npx -y @gengad/contextree bootstrap`, un paquet non publié (P6). Il s'est arrêté et a demandé de l'aide.
+- **L'IA n'enrichit pas l'arbre pendant une vraie tâche.** Sur « où sont les tests et avec quoi tournent-ils », elle a trouvé un fait durable et exact — la couverture ne concerne que `src/lib/`, rien dans `packages/vscode/` — et n'a **rien** écrit, ni dit qu'elle n'écrivait pas. Les `instructions` du serveur le demandent pourtant. Une consigne lue une fois à la connexion ne survit pas à la tâche.
+
+Trois enseignements, un seul motif : **ce qui n'est pas un outil n'existe pas pour l'agent.** Une consigne dans les `instructions`, un prompt MCP, une invitation en texte — tout cela informe, et rien de tout cela n'agit. Ce qu'on veut voir se produire doit être atteignable par un appel d'outil, au moment où la tâche s'y prête.
 
 ## Décisions tranchées le 9 septembre 2026
 
