@@ -33,8 +33,11 @@ Tous les agents n'ont pas de hook. Trois surfaces, par ordre de qualité — c'e
 | enrichir l'arbre | « écris ce que tu découvres » | jamais fait |
 | enrichir l'arbre | « **avant de terminer ta réponse**, dis ce que tu as appris » | fait |
 | proposer l'arbre | « propose-le **au bon moment**, sans insister » | 4 fois sur 6 |
+| proposer l'arbre | « **avant de terminer ta réponse**, dis-lui que… » | 6 fois sur 6 |
 
-« Au bon moment » et « sans insister » se lisent comme une permission de se taire. Mesuré sur six passages identiques d'un même prompt (« bonjour, on fait quoi ? »), sur un projet sans arbre, l'invitation **injectée à chaque fois** : deux fois le modèle n'en a rien dit. Une consigne probabiliste ne tient pas un critère de sortie.
+« Au bon moment » et « sans insister » se lisent comme une permission de se taire. Mesuré sur six passages identiques d'un même prompt (« bonjour, on fait quoi ? »), sur un projet sans arbre, l'invitation **injectée à chaque fois** : deux fois le modèle n'en a rien dit. Une consigne probabiliste ne tient pas un critère de sortie. Rattachée à la fin de la réponse, même protocole : six sur six.
+
+Ce qu'on n'a **pas** touché en corrigeant : le marqueur de session (une invitation par session, pas par tour) et l'interdiction de créer avant un oui. Ni l'un ni l'autre n'avait jamais raté — le défaut était dans le déclenchement, pas dans la politesse, et resserrer ce qui marchait déjà aurait rendu l'outil insistant pour rien.
 
 **La formulation compte autant que l'endroit.** « Écris ce que tu découvres » n'a rien changé au deuxième essai : une consigne sans moment est une consigne qu'on remet à plus tard. Rattachée à un instant précis — « **avant de terminer ta réponse**, dis ce que cette tâche t'a appris ; si c'est le cas écris-le, sinon dis « rien à retenir » » —, elle a produit une branche juste, annoncée, avec sa motivation. Effet de bord redouté et non constaté : sur un prompt anodin, rien n'est écrit — le modèle ne fabrique pas une branche pour obéir.
 

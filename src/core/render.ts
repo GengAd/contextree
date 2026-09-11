@@ -210,6 +210,18 @@ export function renderBootstrapPrompt(found: string[]): string {
  * écrire douze `load_when` que personne ne relira — or c'est le seul champ qui
  * décide de quoi que ce soit ici. La consigne longue reste derrière le prompt
  * `bootstrap`, qu'on ne lit qu'une fois qu'on a dit oui.
+ *
+ * **Elle est rattachée à la fin de la réponse** (11 septembre 2026). Elle disait
+ * « propose-le au bon moment, sans insister » : mesuré sur six passages
+ * identiques d'un même prompt, l'invitation injectée à chaque fois, le modèle
+ * n'en disait rien **deux fois sur six**. « Au bon moment » se lit comme une
+ * permission de se taire — le même défaut, au même moment, que « écris ce que
+ * tu découvres » pour le rappel d'enrichissement (voir `CAPITALIZE`). Une
+ * consigne sans moment est une consigne qu'on remet à plus tard.
+ *
+ * Ce qui retient l'outil reste ailleurs, et n'a jamais raté : le marqueur de
+ * session (une invitation par session, pas par tour) et l'interdiction de créer
+ * avant un oui. On a resserré le déclenchement, pas la politesse.
  */
 export function renderBootstrapInvite(found: string[]): string {
   const sources = found.length
@@ -219,9 +231,11 @@ export function renderBootstrapInvite(found: string[]): string {
   return [
     "Ce projet n'a pas d'arbre de contexte contextree (pas de dossier `.contextree/`).",
     sources,
-    "**Propose-le à l'utilisateur** — une phrase, au bon moment, sans insister : un arbre de " +
-      'contexte tiré de ces fichiers et du dépôt, à la place du gros fichier de consignes. ' +
-      "S'il accepte, appelle l'outil `bootstrap_prompt` : il te donne la consigne complète, " +
+    "**Avant de terminer ta réponse**, dis-lui en une phrase que ce projet n'a pas d'arbre " +
+      'de contexte et que tu peux en construire un à partir de ces fichiers et du dépôt, à ' +
+      "la place du gros fichier de consignes. Une phrase, à la fin, sans y revenir : c'est " +
+      'la seule fois de la session où on le lui propose.',
+    "S'il accepte, appelle l'outil `bootstrap_prompt` : il te donne la consigne complète, " +
       "et `write_root` crée l'arbre — rien à taper dans un terminal. (Sans serveur MCP : " +
       '`contextree bootstrap`.)',
     "**Ne crée rien tant qu'il n'a pas dit oui**, et ne touche à aucun fichier source. " +

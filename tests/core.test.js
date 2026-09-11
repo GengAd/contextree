@@ -727,8 +727,12 @@ test("bootstrap : sans arbre, l'invitation propose et n'autorise pas à créer",
   assert.match(invite, /`\.contextree\/`/);
   assert.match(invite, /`CLAUDE\.md`/);
   assert.match(invite, /`README\.md`/);
-  // Le garde-fou : proposer, jamais créer de son propre chef.
-  assert.match(invite, /Propose-le à l'utilisateur/);
+  // Rattachée à un moment précis. « Au bon moment, sans insister » se lisait
+  // comme une permission de se taire : deux passages sur six sans un mot,
+  // l'invitation pourtant injectée (mesuré le 11 septembre 2026).
+  assert.match(invite, /Avant de terminer ta réponse/);
+  assert.ok(!/au bon moment/.test(invite));
+  // Le garde-fou qui, lui, n'a jamais raté : proposer, jamais créer.
   assert.match(invite, /Ne crée rien tant qu'il n'a pas dit oui/);
   // Et elle renvoie à la consigne longue plutôt que de la recopier : cette
   // invitation arrive sans qu'on l'ait demandée, elle doit rester courte.

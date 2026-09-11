@@ -23,6 +23,7 @@ Ce que ça change se mesure. Même projet, même modèle : **sans** la consigne,
 Trois choix qui ne sont pas arbitraires :
 - **`get_context` répond, il n'échoue pas.** Un outil qui lève, le modèle l'abandonne et n'y revient plus ; un outil qui répond « voilà quoi faire », il le suit. `list_branches` et `read_branch` gardent l'erreur — on ne liste pas ce qui n'existe pas.
 - **Une fois par session, pas par tour.** Répéter l'invitation à chaque prompt, c'est harceler quelqu'un qui a déjà dit non, avec son contexte pour facture.
+- **Mais à un moment précis de ce tour-là** (11 septembre 2026) : « avant de terminer ta réponse ». Formulée « au bon moment, sans insister », l'invitation passait 4 fois sur 6 ; rattachée à la fin de la réponse, 6 fois sur 6. La fréquence et le déclenchement sont deux réglages distincts — on a resserré le second sans toucher au premier.
 - **Proposer, jamais créer.** Un arbre fabriqué sans qu'on l'ait demandé, ce sont douze `load_when` que personne ne relira — or c'est le seul champ qui décide de quelque chose ici.
 
 **La vue est toujours visible**, même sans `.contextree/` : une `viewsWelcome` (`when: !contextree.hasTree`) porte « Créer l'arbre » et « Ajouter contextree à une IA ». Sans ça, le premier geste de l'outil échappait à l'outil — il fallait un terminal. Les boutons qui n'ont de sens qu'avec un arbre (nouvelle branche, toile) sont gardés par `contextree.hasTree`.
