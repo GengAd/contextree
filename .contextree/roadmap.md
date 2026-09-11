@@ -14,7 +14,7 @@ Chaque palier n'ouvre que quand le précédent est **utilisé pour de vrai**, pa
 |---|---|---|---|
 | ~~P1 usage perso~~ **fait le 9 septembre 2026** | `p1-usage-perso` (mergée) | l'outil marche sur les autres projets d'Adrien, et la vue dit la vérité sur le routage | **franchie** — voir plus bas |
 | ~~P2 dogfooding~~ **fait le 9 septembre 2026** | `p2-dogfooding` (mergée) | plus aucun `.md` de consignes hors de l'arbre dans ce repo (`README.md` = procédure, seule exception) | **à moitié franchie** — voir plus bas |
-| P3 depuis zéro | `p3-depuis-zero` | sur un dossier vierge, l'IA propose l'arbre, le construit proprement, renvoie à la toile | le scénario « depuis zéro » passe sous Claude Code |
+| ~~P3 depuis zéro~~ **fait le 11 septembre 2026** | `p3-depuis-zero` (mergée) | sur un dossier vierge, l'IA propose l'arbre, le construit proprement, renvoie à la toile | **franchie** — sept critères sur sept, au troisième passage d'une traite ; voir plus bas |
 | P4 tous les agents | `p4-tous-les-agents` | Claude Code, VS Code + Copilot (cible probable de l'entreprise), Cursor, Codex, Gemini ; ChatGPT web = presse-papier | la matrice est cochée ligne par ligne |
 | P5 démo | `p5-demo` | dix minutes devant l'entreprise ; le partage par git, déroulé à deux | la démo tourne sur l'éditeur de la boîte, réseau coupé si besoin |
 | P6 distribution | `p6-distribution` | npm, Open VSX, hook pinné, README procédure — pour que des collègues installent | `npx -y @gengad/contextree init` marche sur une machine vierge |
@@ -46,6 +46,70 @@ La racine n'a plus qu'un `README.md`. `CLAUDE.md`, `CONTEXT.md`, `REFERENCES.md`
 **Ce qui ne l'est pas, et qu'il faut faire à froid** : la porte de sortie demandait une session **neuve**. Celle qui a fait la migration l'avait encore en mémoire, ce qui ne prouve rien sur ce que l'arbre transmet à quelqu'un qui arrive. Le vrai test est de prendre la première carte de P3 dans une session sans historique, et de regarder ce qui manque. Si l'IA rate un invariant, la réponse est de **resserrer un `load_when`**, jamais de recréer un fichier de consignes.
 
 Ce que la migration a appris en chemin, et qui vaut pour tout arbre : **corriger un `load_when` invalide le jeu d'éval qui reposait dessus**. `identite` promettait « toujours pertinent » ; en lui donnant une vraie condition, la mesure a d'abord chuté à 65 % de rappel — l'instrument mesurait une promesse disparue. Recalibré, il donne 93 %. Un score qui bouge après un changement de `load_when` doit être relu avant d'être cru.
+
+## P3, déroulé le 10 septembre 2026 — porte **pas** franchie
+
+Le scénario *depuis zéro* a été joué en entier sous Claude Code, sur une copie jetable d'un vrai projet (`ai-tree` : `CLAUDE.md`, `CONTEXT.md`, `REFERENCES.md`, `SETUP.md`, un `README` de 185 lignes). `contextree install`, puis quatre tours de conversation.
+
+**Ce qui marche, et bien** :
+- L'invitation part au premier prompt. « bonjour, on fait quoi ? » → l'IA a proposé l'arbre en une phrase, à la fin de sa réponse, sans insister et sans rien créer.
+- L'arbre produit tient : racine + **10 branches**, hiérarchisées, et **tous** les `load_when` sont des conditions — aucun résumé, aucun « toujours », y compris sur l'identité. L'IA a annoncé ses écritures, désigné les deux branches à relire en priorité, et fini sur « rien n'est utile tant que ce n'est pas relu ».
+- **Aucun fichier source touché** — vérifié par horodatage sur tout le clone.
+- Le routage trie vraiment, dès le premier prompt : 2, 4 et 3 branches sur 10 pour « comment on lance les tests ? », « ajoute une commande VS Code au bridge » et « pourquoi ce choix d'archi pour le routeur ? ». Sélections différentes et justes à chaque fois.
+
+**Ce qui casse** — et c'est ce qui tient la porte fermée :
+- **L'IA ne peut pas créer l'arbre depuis la conversation.** `write_root` passe par `open()`, qui lève tant que `.contextree/` n'existe pas : l'agent a demandé un terminal (`init`). Le critère « aucun terminal après `install` » tombe, et l'invitation qu'on vient d'écrire promet quelque chose que les outils refusent.
+- **L'agent ne peut pas atteindre la consigne `bootstrap`.** Un prompt MCP est exposé à l'utilisateur en slash-command, pas au modèle ; l'agent est donc allé vers `npx -y @gengad/contextree bootstrap`, un paquet non publié (P6). Il s'est arrêté et a demandé de l'aide.
+- **L'IA n'enrichit pas l'arbre pendant une vraie tâche.** Sur « où sont les tests et avec quoi tournent-ils », elle a trouvé un fait durable et exact — la couverture ne concerne que `src/lib/`, rien dans `packages/vscode/` — et n'a **rien** écrit, ni dit qu'elle n'écrivait pas. Les `instructions` du serveur le demandent pourtant. Une consigne lue une fois à la connexion ne survit pas à la tâche.
+
+Trois enseignements, un seul motif : **ce qui n'est pas un outil n'existe pas pour l'agent.** Une consigne dans les `instructions`, un prompt MCP, une invitation en texte — tout cela informe, et rien de tout cela n'agit. Ce qu'on veut voir se produire doit être atteignable par un appel d'outil, au moment où la tâche s'y prête.
+
+**Les trois ratés ont été corrigés le jour même** (`79ee8d4`, `ac2b9a9`, et le rappel d'écriture) : `write_root` crée le dossier, `bootstrap_prompt` rend la consigne au modèle, et le rappel d'enrichir arrive avec le contexte du tour au lieu d'être lu à la connexion. Le scénario va maintenant de « bonjour » à l'arbre écrit sans qu'aucune commande ne soit tapée, et l'étape 7 produit une branche. **La porte reste à constater sur un passage propre, d'un bout à l'autre, sans reprise** — celui du 10 septembre a été joué en réparant au fur et à mesure, ce qui ne prouve pas qu'il passe d'une traite.
+
+Une mesure à garder : les garde-fous d'une consigne ne valent que si elle est lue. Même projet, même modèle — **sans** la consigne `bootstrap` : 15 branches, un `load_when` d'identité en « Toujours utile… ». **Avec** : 12 branches, aucun « toujours ». Et une consigne sans **moment** ne vaut guère mieux qu'une consigne absente : « écris ce que tu découvres » n'a rien changé ; « avant de terminer ta réponse, dis ce que tu as appris » a produit la branche.
+
+## Le passage d'une traite, 11 septembre 2026 — porte toujours pas franchie
+
+Rejoué sur un clone neuf d'`ai-tree`, sans aucune reprise : `install`, « bonjour, on fait quoi ? », « oui ».
+
+**Six critères sur sept.** L'IA propose sans créer ; elle écrit l'arbre **sans terminal** — 9 branches, dans la borne, aucun `load_when` en « toujours », aucun fichier source touché ; et sur une tâche réelle (« comment marche la persistance des conversations ? ») elle écrit une branche et l'annonce avec sa motivation, en nommant précisément ce qui manquait à l'arbre. Les trois corrections de la veille tiennent sur un passage propre.
+
+**Ce qui a cassé : le routage.** Deux prompts ciblés sur trois sont partis en **fallback sur timeout à 20 s** — donc l'arbre entier injecté, ce que l'outil existe pour éviter. Relancés avec un budget de 60 s, les mêmes prompts routent en 13-14 s sur 1 à 2 branches : le routeur fait son travail, c'est le budget qui coupe trop tôt. Le code se contredisait d'ailleurs tout seul — `timeoutFor` est commenté « mesuré entre 5 et 60 s » et rendait `20_000`.
+
+La leçon vaut au-delà du budget : **la veille, les mêmes prompts passaient en 6, 11 et 17 s**. On vivait au bord sans le savoir, et un seul passage réussi ne le disait pas. Un critère qui ne tient qu'à quelques secondes près n'est pas tenu — il est en sursis.
+
+## Deuxième passage d'une traite, 11 septembre 2026 — le routage tient, la proposition non
+
+Budget de routage corrigé, scénario rejoué sur un clone neuf. **L'étape 6 passe** : les trois prompts ciblés routent (11 420, 37 282 et 20 554 ms), là où deux tombaient en repli le matin même.
+
+**L'étape 3 lâche.** « bonjour, on fait quoi ? » sur un projet sans arbre : l'invitation est injectée — marqueur de session vérifié — et le modèle n'en dit rien **deux fois sur six**. Le critère « l'IA propose l'arbre » n'est pas tenu, il est probable.
+
+Rien de neuf sur le fond : c'est la leçon de la veille, sur une autre consigne. « Propose-le au bon moment, sans insister » se lit comme une permission de se taire, exactement comme « écris ce que tu découvres ». Le détail est dans *Surfaces d'injection par agent*.
+
+**Ce que le rejeu d'une traite aura prouvé, deux fois** : chaque passage réussi cachait un critère qui ne tenait qu'à peu de chose — quelques secondes de latence la première fois, une formulation permissive la seconde. Un scénario qu'on répare en le déroulant ne prouve rien ; c'est le passage sans reprise qui parle.
+
+## P3, franchie le 11 septembre 2026
+
+Troisième passage d'une traite, clone neuf d'`ai-tree`, aucune reprise. **Les sept critères passent :**
+
+| étape | résultat |
+|---|---|
+| `install`, pas `init` | le hook et le serveur MCP câblés, pas d'arbre |
+| l'IA propose sans créer | proposé, en fin de réponse — 6 sur 6 sur la mesure dédiée |
+| l'arbre écrit depuis la conversation | racine + **8 branches**, aucun terminal |
+| les `load_when` | aucun « toujours », aucun résumé |
+| les fichiers source | aucun touché |
+| le routage | 3 prompts, 3 routés — 2/8, 4/8, 6/8 (24 710, 10 374, 13 363 ms) |
+| l'enrichissement pendant une tâche | « rien à retenir de neuf : c'est déjà dans `REFERENCES.md` » — dit, pas tu |
+
+Le dernier point mérite d'être lu pour ce qu'il est : l'IA **n'a pas écrit** de branche, et c'est le bon comportement. Elle a vérifié, jugé que le fait existait déjà, et l'a dit. Le critère n'a jamais été « écrire à chaque fois » mais « ne pas se taire ».
+
+**Les étapes 4-5 (la toile, corriger deux `load_when` à la souris) n'ont jamais été jouées** : elles demandent l'éditeur ouvert sur le clone. La porte est franchie sur les sept critères automatisables ; le geste humain reste à faire une fois, et il relève d'Adrien.
+
+**Ce que ce palier aura appris, et qui vaut pour la suite :**
+- **Ce qui n'est pas un outil n'existe pas pour l'agent.** Une consigne dans les `instructions`, un prompt MCP, une invitation en texte — tout cela informe, rien de tout cela n'agit.
+- **Une consigne sans moment est une consigne qu'on remet à plus tard.** Vérifié deux fois, sur deux consignes différentes. Le détail est dans *Surfaces d'injection par agent*.
+- **Un scénario qu'on répare en le déroulant ne prouve rien.** Trois passages ont été nécessaires : le premier a produit trois cartes, le deuxième a révélé le budget de routage, le troisième la formulation de l'invitation. Chaque passage « réussi » cachait un critère qui ne tenait qu'à peu de chose.
 
 ## Décisions tranchées le 9 septembre 2026
 

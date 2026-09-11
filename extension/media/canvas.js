@@ -74,6 +74,7 @@
       title: 'Racine',
       loadWhen: 'toujours injectée, jamais routée',
       content: tree.rootContent || '',
+      write: tree.rootWrite || null,
       children: [],
     };
     byId.set(ROOT_ID, root);

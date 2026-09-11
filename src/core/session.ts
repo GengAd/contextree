@@ -88,6 +88,45 @@ export async function writeSelection(
   if (opts.routed) await writeCache(lastFile(treeDir), entry);
 }
 
+/**
+ * L'invitation à créer un arbre : une fois par session, pour ce dossier.
+ *
+ * Renvoie `true` la première fois, `false` ensuite. Le marqueur est un fichier
+ * vide sous `stateDir()/session/`, à côté du cache de sélection : c'est le même
+ * genre d'état — jetable, par session, hors du dépôt.
+ *
+ * **Une fois, et pas à chaque prompt.** L'invitation vaut pour la session
+ * entière : la répéter à chaque tour reviendrait à harceler quelqu'un qui a
+ * déjà dit non, avec le contexte du modèle pour facture.
+ *
+ * On hache `cwd` avec `treeKey` — il n'y a pas d'arbre ici, mais c'est la même
+ * question : le même dossier vu par deux chemins (un lien symbolique, `/var`
+ * contre `/private/var` sur macOS) doit donner le même marqueur, sinon
+ * l'invitation revient une seconde fois dans la même session.
+ */
+export async function claimBootstrapInvite(cwd: string, sessionId: string): Promise<boolean> {
+  const file = path.join(stateDir(), 'session', `${treeKey(cwd)}-${safe(sessionId)}.invited`);
+  try {
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    // `wx` échoue si le fichier existe : tester puis écrire laisserait une
+    // fenêtre entre les deux, et deux hooks lancés coup sur coup injecteraient
+    // l'invitation deux fois.
+    await fs.writeFile(file, String(Date.now()), { flag: 'wx' });
+    return true;
+  } catch {
+    // Déjà posé, ou disque récalcitrant. Dans le doute on se tait : une
+    // invitation manquée est un désagrément, une invitation en boucle est une
+    // nuisance.
+    return false;
+  }
+}
+
+/** Un identifiant de session vient d'un payload JSON : il n'a pas le droit de
+ *  choisir où on écrit. */
+function safe(sessionId: string): string {
+  return (sessionId.replace(/[^A-Za-z0-9_-]/g, '_') || 'default').slice(0, 64);
+}
+
 async function readCache(file: string): Promise<Cached> {
   try {
     const parsed: unknown = JSON.parse(await fs.readFile(file, 'utf8'));

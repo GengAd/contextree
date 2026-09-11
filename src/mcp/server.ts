@@ -4,9 +4,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-import { findTreeDir, loadTree, slugify, writeBranch, deleteBranch, moveBranch } from '../core/store.js';
+import { findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch, detectInstructionFiles, DIR_NAME, ROOT_FILE } from '../core/store.js';
 import { allBranches, formatTree } from '../core/tree.js';
-import { renderContext, renderTrace } from '../core/render.js';
+import { renderContext, renderTrace, renderBootstrapPrompt, renderBootstrapInvite } from '../core/render.js';
 import { route } from '../core/router.js';
 import { appendTurn, appendAiWrite } from '../core/journal.js';
 import { decodePack, encodePack, extractPack, applyPack } from '../core/pack.js';
@@ -20,7 +20,9 @@ Avant de travailler sur une tâche non triviale, appelle \`get_context\` avec la
 l'utilisateur : tu récupères uniquement les branches pertinentes. Quand tu découvres un fait
 durable sur ce projet (une convention, une contrainte, un chemin qui compte), écris-le avec
 \`upsert_branch\` — directement, sans demander la permission. L'arbre est fait pour être enrichi
-à l'usage.
+à l'usage. Sur un arbre neuf, commence par \`write_root\` : c'est le seul contenu toujours
+injecté, et aucune branche ne le remplace. Si le projet a déjà un \`CLAUDE.md\`, des règles
+Cursor ou un README nourri, le prompt \`bootstrap\` donne la consigne pour en tirer l'arbre.
 
 En échange, **dis-le**. Après chaque écriture, annonce en une phrase ce que tu as ajouté ou
 changé dans l'arbre et pourquoi. Écrire en silence est la seule façon de mal faire ici : tu
@@ -36,21 +38,110 @@ un rattrapage exceptionnel : un prompt de départ ne contient presque jamais la 
 
 const branchTypeSchema = z.enum(BRANCH_TYPES);
 
+/** Le chemin sous lequel la racine se lit et se trace. Ce n'est pas une branche
+ *  — elle n'a ni type ni `load_when` — mais les vues l'adressent déjà ainsi
+ *  (`ROOT_ELEMENT` dans l'extension), et une écriture tracée là s'affiche au bon
+ *  endroit sans cas particulier de plus. */
+const ROOT_PATH = ':root';
+
 export async function createServer(cwd: string = process.cwd()): Promise<McpServer> {
+  /** Ce que l'IA doit faire ici quand il n'y a rien : proposer l'arbre.
+   *
+   *  Une seule copie pour les deux surfaces du serveur — les `instructions` et
+   *  la réponse de `get_context`. Le dossier est relu à chaque appel : celui
+   *  qui crée son arbre en cours de session n'a pas à relancer le serveur pour
+   *  que les outils le voient. */
+  const invite = async (): Promise<string> => renderBootstrapInvite(await detectInstructionFiles(cwd));
+
+  /** Les `instructions` sont lues **une fois**, à la connexion — l'agent relance
+   *  le serveur à chaque session, donc l'invitation arrive une fois par session
+   *  et pas à chaque tour. C'est le seul endroit où un projet sans arbre peut
+   *  encore parler à une IA qui n'a ni hook ni terminal. */
   const server = new McpServer(
     { name: 'contextree', version: '0.1.0' },
-    { instructions: INSTRUCTIONS },
+    { instructions: (await findTreeDir(cwd)) ? INSTRUCTIONS : await invite() },
   );
 
   /** L'arbre est relu à chaque appel : les fichiers sont la source de vérité et
    *  l'utilisateur peut les éditer pendant que le serveur tourne. */
   const open = async (): Promise<{ dir: string; tree: ContextTree }> => {
     const dir = await findTreeDir(cwd);
-    if (!dir) throw new Error(`Aucun dossier .contextree trouvé depuis ${cwd}. Lance : contextree init`);
+    // Le message nomme `write_root` avant le terminal : c'est le seul outil qui
+    // sait créer l'arbre, et un agent à qui on répond « lance une commande »
+    // s'arrête pour la demander (constaté le 10 septembre 2026, scénario
+    // « depuis zéro »).
+    if (!dir) {
+      throw new Error(
+        `Aucun dossier ${DIR_NAME} trouvé depuis ${cwd}. Pour créer l'arbre d'ici : ` +
+          '`write_root`, qui pose le dossier et la racine. Sinon : `contextree init`.',
+      );
+    }
     return { dir, tree: await loadTree(dir) };
   };
 
   const text = (s: string) => ({ content: [{ type: 'text' as const, text: s }] });
+
+  /**
+   * Le premier geste sur un projet qui a déjà des consignes ailleurs.
+   *
+   * Un prompt et non un outil : c'est l'utilisateur qui décide de construire
+   * son arbre, pas le modèle qui s'en saisit au détour d'une phrase. Les
+   * clients MCP l'exposent en commande, ce qui en fait un geste explicite.
+   */
+  server.registerPrompt(
+    'bootstrap',
+    {
+      title: "Construire l'arbre depuis les fichiers du projet",
+      description:
+        "Donne à l'IA la consigne pour lire les fichiers de consignes existants " +
+        "(CLAUDE.md, règles Cursor, README…) et en écrire un arbre de contexte : " +
+        '6 à 12 branches, un `load_when` par branche, aucun fichier source touché.',
+    },
+    async () => {
+      const found = await detectInstructionFiles(cwd);
+      return {
+        messages: [
+          { role: 'user' as const, content: { type: 'text' as const, text: renderBootstrapPrompt(found) } },
+        ],
+      };
+    },
+  );
+
+  /**
+   * La consigne de construction, en **outil** — pas seulement en prompt.
+   *
+   * Tranché le 10 septembre 2026, après l'avoir vu casser : le prompt
+   * `bootstrap` ci-dessus est exposé à l'utilisateur en slash-command, et
+   * jamais au modèle. L'agent qui venait d'obtenir un « oui » ne trouvait donc
+   * rien à appeler, partait sur la commande `npx` — un paquet non publié — et
+   * s'arrêtait pour demander de l'aide, au pire moment possible.
+   *
+   * C'est le même motif que les deux autres ratés de ce scénario : **ce qui
+   * n'est pas un outil n'existe pas pour l'agent.** Une consigne informe, elle
+   * n'agit pas. Le choix alternatif — faire rendre la consigne entière par
+   * `get_context` quand il n'y a pas d'arbre — a été écarté : rien ne pousse le
+   * modèle à rappeler `get_context` juste après avoir reçu l'invitation, et
+   * cela alourdirait de deux mille caractères une invitation qu'on a
+   * délibérément faite courte.
+   *
+   * Le texte reste celui de `renderBootstrapPrompt` : une seule copie pour le
+   * prompt, l'outil, la CLI et le bouton de la vue. Quatre formulations d'une
+   * même consigne divergeraient au premier ajustement, et c'est le `load_when`
+   * qui le paierait.
+   */
+  server.registerTool(
+    'bootstrap_prompt',
+    {
+      title: "La consigne pour construire l'arbre",
+      description:
+        "Rend la consigne complète pour construire l'arbre de contexte de ce projet à partir " +
+        'de ses fichiers de consignes existants et du dépôt. À appeler quand ce projet ' +
+        "n'a pas encore d'arbre et que l'utilisateur vient d'accepter d'en créer un. " +
+        "Suis ensuite ce qu'elle dit : `write_root` en premier, puis `upsert_branch`.",
+      annotations: { readOnlyHint: true },
+    },
+    async () => text(renderBootstrapPrompt(await detectInstructionFiles(cwd))),
+  );
 
   server.registerTool(
     'get_context',
@@ -68,8 +159,18 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       annotations: { readOnlyHint: true },
     },
     async ({ query }) => {
+      // Sans arbre, on répond l'invitation **en texte**, pas une erreur : un
+      // outil qui échoue, le modèle l'abandonne et n'y revient pas ; un outil
+      // qui répond « voilà ce qu'il y a à faire », il le suit. `list_branches`
+      // et `read_branch` gardent l'erreur — on ne liste pas ce qui n'existe pas.
+      const found = await findTreeDir(cwd);
+      if (!found) return text(await invite());
+
       const { dir, tree } = await open();
-      const { selected, reason, error } = await route(tree, query);
+      // `waiter: 'tool'` : l'agent a appelé cet outil et attend déjà sa réponse.
+      // C'est aussi la seule surface des agents sans hook — un repli ici leur
+      // injecte l'arbre entier, c'est-à-dire tout ce qu'on cherche à éviter.
+      const { selected, reason, error } = await route(tree, query, { waiter: 'tool' });
       // Le chat de Cursor et les autres clients MCP passent par ici : sans cette
       // ligne, le journal ne verrait que les tours de Claude Code.
       await appendTurn(dir, {
@@ -116,11 +217,21 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
     {
       title: 'Lire une branche',
       description: "Contenu complet d'une branche, par son chemin (voir list_branches).",
-      inputSchema: { path: z.string().describe("Chemin logique, ex. 'archi-store/commandes-npm'.") },
+      inputSchema: {
+        path: z
+          .string()
+          .describe("Chemin logique, ex. 'archi-store/commandes-npm'. `:root` pour la racine."),
+      },
       annotations: { readOnlyHint: true },
     },
     async ({ path: branchPath }) => {
       const { tree } = await open();
+      // La racine n'est pas une branche — elle n'a ni type ni `load_when` —
+      // mais elle se relit par le même outil : on ne remplace pas un contenu
+      // qu'on n'a pas pu lire.
+      if (branchPath === ROOT_PATH) {
+        return text(`# Racine\ntoujours injectée, jamais routée\n\n${tree.rootContent}`);
+      }
       const branch = tree.branches.get(branchPath);
       if (!branch) throw new Error(`Branche inconnue : ${branchPath}`);
       return text(
@@ -174,6 +285,59 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         `${existed ? 'Branche mise à jour' : 'Branche écrite'} : ${branchPath} (${type})\n` +
           `${path.relative(process.cwd(), file)}\n\n` +
           "Annonce-le maintenant à l'utilisateur : ce que tu viens d'écrire dans l'arbre, et pourquoi.",
+      );
+    },
+  );
+
+  server.registerTool(
+    'write_root',
+    {
+      title: 'Écrire la racine',
+      description:
+        "Le contenu toujours injecté, jamais routé : qui, quoi, dans quel repo. Court. " +
+        "C'est la première chose à poser sur un arbre neuf, et la seule que `upsert_branch` " +
+        "ne sait pas écrire. **Crée le dossier `.contextree/` s'il n'existe pas encore** : " +
+        "sur un projet sans arbre, c'est par ici qu'on commence, sans aucune commande à " +
+        'taper. Relis la racine avec `read_branch` sur `:root` avant de la remplacer.',
+      inputSchema: {
+        content: z.string().describe('Corps markdown de la racine. Quelques lignes, pas une page.'),
+        why: z
+          .string()
+          .describe(
+            'Pourquoi la racine doit dire ça, en une phrase. Elle apparaît dans la vue à côté ' +
+              "de la racine : c'est ce qui permet à l'utilisateur de relire ce que tu as écrit. " +
+              "Dis la même chose à l'utilisateur en clair.",
+          ),
+      },
+    },
+    async ({ content, why }) => {
+      // Le seul outil qui a le droit de créer l'arbre.
+      //
+      // Il pose la racine, donc il pose le contenant : sans ça, l'IA qui vient
+      // de proposer l'arbre et d'obtenir un « oui » devait renvoyer l'utilisateur
+      // au terminal (`contextree init`) — le geste que tout ceci existe pour
+      // supprimer. `upsert_branch` n'a pas ce droit : écrire une branche avant
+      // la racine est l'ordre inverse de la consigne `bootstrap`, et donnerait
+      // un arbre sans son seul contenu toujours injecté.
+      //
+      // Le dossier créé est celui d'`initTree` — `.contextree/` sous le `cwd` du
+      // serveur — mais **sans le tronc de quatre branches de départ** : l'IA
+      // écrit les siennes, et deux entrées pour le même sujet font charger la
+      // mauvaise.
+      const existing = await findTreeDir(cwd);
+      const dir = existing ?? path.join(cwd, DIR_NAME);
+      await writeRoot(dir, content);
+      // Tracée comme une branche, sous le chemin que les vues emploient déjà
+      // pour la racine : la pastille « écrite par l'IA » s'allume au même
+      // endroit, sans cas particulier de plus.
+      await appendAiWrite(dir, { at: Date.now(), op: 'upsert', path: ROOT_PATH, title: 'Racine', why });
+      return text(
+        `Racine écrite : ${path.relative(process.cwd(), path.join(dir, ROOT_FILE))}\n` +
+          // Un dossier vient d'apparaître dans son projet : il doit l'apprendre
+          // maintenant, pas en le découvrant dans un `git status`.
+          (existing ? '' : `Arbre créé : ${path.relative(process.cwd(), dir)}/\n`) +
+          "\nAnnonce-le maintenant à l'utilisateur : ce que tu viens d'écrire dans la racine, et pourquoi." +
+          (existing ? '' : " Dis-lui aussi que le dossier `.contextree/` vient d'être créé."),
       );
     },
   );

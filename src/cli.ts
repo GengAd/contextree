@@ -4,12 +4,12 @@ import { spawn } from 'node:child_process';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, deleteBranch, moveBranch, initTree } from './core/store.js';
+import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, deleteBranch, moveBranch, initTree, detectInstructionFiles } from './core/store.js';
 import { allBranches, formatTree } from './core/tree.js';
-import { renderContext, renderTrace, renderAgentsBlock } from './core/render.js';
+import { renderContext, renderTrace, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite } from './core/render.js';
 import { route, pickEngine, isCliEngine, engineBin, withoutRouting } from './core/router.js';
 import { encodePack, extractPack, applyPack } from './core/pack.js';
-import { readSelection, writeSelection } from './core/session.js';
+import { readSelection, writeSelection, claimBootstrapInvite } from './core/session.js';
 import { appendTurn } from './core/journal.js';
 import { evaluateRouting, parseEvalCases, type EvalReport } from './core/eval.js';
 import {
@@ -36,6 +36,7 @@ const HELP = `contextree — un arbre de contexte partageable, routé, injecté 
   contextree mv <de> <vers>          déplace ou renomme une branche (ses enfants suivent)
   contextree route "<prompt>"        montre ce que le routeur chargerait
   contextree route --eval [fichier]  mesure le routage sur un jeu de prompts
+  contextree bootstrap [--copy]      la consigne pour que ton IA construise l'arbre
   contextree render [--agents]       affiche tout l'arbre assemblé (sans routage)
                                      --agents : le bloc court pour un AGENTS.md
                                      --copy   : dans le presse-papier (render, route)
@@ -90,6 +91,8 @@ async function main(argv: string[]): Promise<number> {
       return cmdMove(flags._[0], flags._[1]);
     case 'route':
       return cmdRoute(flags._.join(' '), flags);
+    case 'bootstrap':
+      return cmdBootstrap(flags);
     case 'render':
       return cmdRender(flags);
     case 'export':
@@ -350,11 +353,6 @@ const EVAL_FILE = path.join('tests', 'routing.eval.json');
  * c'est mauvais** : c'est une mesure qu'on lit, pas une porte qui claque.
  */
 async function cmdEval(file: string | undefined): Promise<number> {
-  // Personne n'attend une mesure : on laisse au moteur le temps de répondre,
-  // comme le routage de fond. Sans ça, un CLI d'agent expire à 20 s, la moitié
-  // des cas tombent dans le repli « arbre entier », et on mesure le timeout au
-  // lieu du routeur — 9 cas sur 20 à la première mesure, le 9 septembre 2026.
-  process.env['CONTEXTREE_ROUTER_TIMEOUT_MS'] ??= '120000';
   const { dir, tree } = await open();
   const target = path.resolve(path.dirname(dir), file ?? EVAL_FILE);
 
@@ -374,7 +372,11 @@ async function cmdEval(file: string | undefined): Promise<number> {
     `${cases.length} cas · ${tree.order.length} branches · ${describeEngine()}\n\n`,
   );
 
-  const report = await evaluateRouting(tree, cases, p => route(tree, p));
+  // Personne n'attend une mesure : `batch` laisse au moteur le temps de
+  // répondre. Sans ça, on mesure le timeout au lieu du routeur — 9 cas sur 20
+  // tombés dans le repli « arbre entier » à la première mesure, le 9 septembre
+  // 2026.
+  const report = await evaluateRouting(tree, cases, p => route(tree, p, { waiter: 'batch' }));
   process.stdout.write(formatEval(report));
   return 0;
 }
@@ -404,6 +406,23 @@ function formatEval(report: EvalReport): string {
     'précision = ce qui a été chargé et servait ; rappel = ce qui servait et a été chargé.',
   );
   return `${out.join('\n')}\n`;
+}
+
+/**
+ * La consigne pour construire l'arbre, à donner à son IA.
+ *
+ * Pour les agents qui n'exposent pas les prompts MCP : on colle. Même texte que
+ * le prompt `bootstrap` du serveur — `renderBootstrapPrompt` est la seule
+ * copie. Ne demande pas d'arbre : c'est précisément la commande d'avant.
+ */
+async function cmdBootstrap(flags: Flags): Promise<number> {
+  const found = await detectInstructionFiles(process.cwd());
+  process.stderr.write(
+    found.length
+      ? `Fichiers de consignes trouvés : ${found.join(', ')}\n`
+      : "Aucun fichier de consignes trouvé — la consigne fera lire le dépôt.\n",
+  );
+  return emit(renderBootstrapPrompt(found), Boolean(flags.copy));
 }
 
 async function cmdRender(flags: Flags): Promise<number> {
@@ -677,7 +696,19 @@ async function cmdHook(): Promise<number> {
     if (!prompt) return 0;
 
     const dir = await findTreeDir(cwd);
-    if (!dir) return 0;
+    // Pas d'arbre : on ne se tait plus, on invite — une fois par session.
+    //
+    // Le hook sortait en silence, et l'utilisateur qui n'a jamais lancé `init`
+    // ne pouvait pas apprendre que l'arbre existe : l'outil restait invisible
+    // depuis l'endroit même où il sert. On propose, on ne crée pas. Et le hook
+    // n'est installé que par projet, donc rien ne fuit vers un dépôt qui n'a
+    // rien demandé.
+    if (!dir) {
+      if (await claimBootstrapInvite(cwd, sessionId)) {
+        process.stdout.write(`${renderBootstrapInvite(await detectInstructionFiles(cwd))}\n`);
+      }
+      return 0;
+    }
     const tree = await loadTree(dir);
     if (!tree.order.length && !tree.rootContent.trim()) return 0;
 
@@ -768,12 +799,11 @@ async function cmdRouteBackground(flags: Flags): Promise<number> {
     const encoded = str(flags.prompt64);
     if (!dir || !encoded) return 0;
     const sessionId = str(flags.session) ?? 'default';
-    process.env['CONTEXTREE_ROUTER_TIMEOUT_MS'] ??= '120000';
 
     const tree = await loadTree(dir);
     const previous = await readSelection(dir, sessionId);
     const prompt = Buffer.from(encoded, 'base64').toString('utf8');
-    const { selected, reason } = await route(tree, prompt, { previousSelection: previous });
+    const { selected, reason } = await route(tree, prompt, { previousSelection: previous, waiter: 'batch' });
     if (reason !== 'routed') return 0;
     const at = Number(str(flags.at)) || Date.now();
     await writeSelection(dir, sessionId, selected, { at, routed: true });

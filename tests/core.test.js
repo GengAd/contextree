@@ -3,17 +3,22 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawn } from 'node:child_process';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+
+import { createServer } from '../dist/mcp/server.js';
 
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
-import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree } from '../dist/core/store.js';
+import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree, detectInstructionFiles } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
-import { route, pickEngine, isCliEngine, parseIndices } from '../dist/core/router.js';
+import { route, pickEngine, isCliEngine, parseIndices, timeoutFor } from '../dist/core/router.js';
 import { evaluateRouting, parseEvalCases } from '../dist/core/eval.js';
-import { renderContext, renderAgentsBlock } from '../dist/core/render.js';
+import { renderContext, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite } from '../dist/core/render.js';
 import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
 import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites, turnLabelKey } from '../dist/core/journal.js';
-import { readSelection, writeSelection } from '../dist/core/session.js';
+import { readSelection, writeSelection, claimBootstrapInvite } from '../dist/core/session.js';
 import {
   RemoteError, clearSession, createGroup, currentSession, me, myGroups,
   readSession, remoteConfig, setRemoteConfig, signIn, signOut,
@@ -122,6 +127,39 @@ test("routeur : sans moteur, tout l'arbre — et aucun type privilégié", async
   } finally {
     if (previous === undefined) delete process.env.CONTEXTREE_ROUTER;
     else process.env.CONTEXTREE_ROUTER = previous;
+  }
+});
+
+test("routeur : le budget dépend de qui attend, pas du moteur seul", () => {
+  const avant = process.env.CONTEXTREE_ROUTER_TIMEOUT_MS;
+  delete process.env.CONTEXTREE_ROUTER_TIMEOUT_MS;
+  try {
+    // Un CLI démarre un process et passe par la file d'un abonnement — mesuré
+    // entre 5 et 60 s. Un prompt ne peut pas attendre autant qu'une mesure que
+    // personne ne regarde.
+    assert.equal(timeoutFor('cli', 'prompt'), 45_000);
+    // Un agent qui appelle `get_context` attend déjà — mais son client, lui,
+    // abandonne à 60 s. Le budget reste dessous pour que le repli arrive :
+    // mieux vaut un contexte trop large qu'aucun contexte.
+    assert.equal(timeoutFor('cli', 'tool'), 45_000);
+    assert.ok(timeoutFor('cli', 'tool') < 60_000);
+    assert.equal(timeoutFor('cli', 'batch'), 120_000);
+    // Une API répond en centaines de ms ; si elle met des secondes, elle est
+    // cassée, pas lente.
+    assert.equal(timeoutFor('api', 'prompt'), 2500);
+    assert.equal(timeoutFor('api', 'tool'), 2500);
+    assert.equal(timeoutFor('api', 'batch'), 10_000);
+
+    // L'échappatoire de l'utilisateur écrase tout le reste.
+    process.env.CONTEXTREE_ROUTER_TIMEOUT_MS = '7000';
+    assert.equal(timeoutFor('cli', 'prompt'), 7000);
+    assert.equal(timeoutFor('api', 'batch'), 7000);
+    // Une valeur absurde n'a pas le droit de ramener le budget à zéro.
+    process.env.CONTEXTREE_ROUTER_TIMEOUT_MS = 'beaucoup';
+    assert.equal(timeoutFor('cli', 'tool'), 45_000);
+  } finally {
+    if (avant === undefined) delete process.env.CONTEXTREE_ROUTER_TIMEOUT_MS;
+    else process.env.CONTEXTREE_ROUTER_TIMEOUT_MS = avant;
   }
 });
 
@@ -374,6 +412,37 @@ test('render : le catalogue liste ce qui n\'a pas été chargé, sans son conten
   assert.ok(!full.includes('## Catalogue'));
 });
 
+test("render : le rappel d'écrire arrive avec la tâche, et à un seul endroit", async () => {
+  const dir = await scratch();
+  await writeRoot(dir, 'racine');
+  await writeBranch(dir, {
+    path: 'a', type: 'context', title: 'A', loadWhen: 'quand a', content: 'contenu a',
+  });
+  const tree = await loadTree(dir);
+
+  // Il est là même quand tout est chargé : il ne dépend pas du catalogue, qui
+  // n'apparaît que s'il reste quelque chose à tirer.
+  const tout = renderContext(tree, new Set(tree.order));
+  assert.match(tout, /upsert_branch/);
+  // Et il demande de dire quand on n'écrit pas : un silence ne se corrige pas.
+  assert.match(tout, /rien à retenir/);
+  // Rattaché à un moment précis — la fin de la réponse. Une consigne sans
+  // moment est une consigne qu'on remet à plus tard (mesuré le 10 sept. 2026).
+  assert.match(tout, /Avant de terminer ta réponse/);
+  // En tout dernier : c'est une consigne pour la suite du tour, pas une
+  // information sur ce qu'on vient de recevoir.
+  assert.ok(tout.indexOf('upsert_branch') > tout.indexOf('contenu a'));
+
+  // Une seule copie : le bloc AGENTS.md ne le redit pas. Trois surfaces qui
+  // répètent la même consigne deviennent un bruit qu'on cesse de lire.
+  assert.ok(!/rien à retenir/.test(renderAgentsBlock(tree)));
+
+  // Un arbre vide n'injecte toujours rien — pas même le rappel.
+  const vide = await scratch();
+  await fs.mkdir(vide, { recursive: true });
+  assert.equal(renderContext(await loadTree(vide), new Set()), '');
+});
+
 test('render : arbre vide → chaîne vide (rien à injecter)', async () => {
   const dir = await scratch();
   const tree = await loadTree(dir);
@@ -582,6 +651,247 @@ test("éval : un cas mal écrit se saute, il n'emporte pas le fichier", () => {
   assert.deepEqual(cases.map(c => c.prompt), ['bon', 'sans expect', 'expect sale']);
   assert.deepEqual(cases[2].expect, ['regles']);
   assert.deepEqual(parseEvalCases({ pas: 'un tableau' }), []);
+});
+
+test("journal : la racine se trace comme une branche, sous `:root`", async () => {
+  const dir = await scratch();
+  await writeRoot(dir, '# Projet\n\nCe que fait ce repo.');
+
+  // `write_root` écrit la racine et la trace sous le chemin que les vues
+  // emploient déjà. Sans ça, la seule écriture que l'IA fait sur un arbre neuf
+  // serait la seule qu'aucune vue ne montre.
+  await appendAiWrite(dir, {
+    at: Date.now(),
+    op: 'upsert',
+    path: ':root',
+    title: 'Racine',
+    why: "poser qui, quoi, dans quel repo",
+  });
+
+  const writes = await readAiWrites(dir);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].path, ':root');
+  assert.equal(writes[0].title, 'Racine');
+  assert.match(writes[0].why, /poser qui/);
+
+  // Et la racine est bien sur le disque, relisible par loadTree.
+  const tree = await loadTree(dir);
+  assert.match(tree.rootContent, /Ce que fait ce repo\./);
+  // `:root` n'est pas une branche : il ne doit pas apparaître dans l'ordre.
+  assert.ok(!tree.order.includes(':root'));
+});
+
+test("bootstrap : on détecte ce qui existe, du plus intentionnel au plus général", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-boot-'));
+  assert.deepEqual(await detectInstructionFiles(dir), []);
+
+  await fs.writeFile(path.join(dir, 'README.md'), '# projet', 'utf8');
+  await fs.writeFile(path.join(dir, 'CLAUDE.md'), '# consignes', 'utf8');
+  await fs.mkdir(path.join(dir, '.cursor', 'rules'), { recursive: true });
+
+  // L'ordre compte : un fichier écrit *pour une IA* passe avant un README.
+  assert.deepEqual(await detectInstructionFiles(dir), ['CLAUDE.md', '.cursor/rules', 'README.md']);
+});
+
+test("bootstrap : la consigne borne l'arbre et interdit de toucher aux sources", () => {
+  const prompt = renderBootstrapPrompt(['CLAUDE.md', 'README.md']);
+
+  // Elle cite les fichiers trouvés : sans ça, l'IA cherche au hasard.
+  assert.match(prompt, /`CLAUDE\.md`/);
+  assert.match(prompt, /`README\.md`/);
+  // Les trois garde-fous qui font la différence entre un arbre et un dépotoir.
+  assert.match(prompt, /6 à 12 branches/);
+  assert.match(prompt, /Ne modifie ni ne supprime aucun fichier source/);
+  assert.match(prompt, /write_root/);
+  // Le `load_when` doit être montré comme une condition, avec un contre-exemple.
+  assert.match(prompt, /load_when/);
+  assert.match(prompt, /toujours pertinent/);
+  // Et elle ne finit pas sur « c'est fait » : elle renvoie à la relecture.
+  assert.match(prompt, /toile/);
+  // Deux défauts constatés en la lançant sur un vrai projet, le 9 septembre 2026 :
+  // le tronc de départ survivait à côté des branches écrites, et l'identité
+  // recevait « toujours » malgré le contre-exemple.
+  assert.match(prompt, /branches de départ génériques/);
+  assert.match(prompt, /identité/);
+
+  // Sans fichier trouvé, elle fait quand même lire le dépôt.
+  const nu = renderBootstrapPrompt([]);
+  assert.match(nu, /n'a pas de fichier de consignes/);
+  assert.match(nu, /6 à 12 branches/);
+});
+
+test("bootstrap : sans arbre, l'invitation propose et n'autorise pas à créer", () => {
+  const invite = renderBootstrapInvite(['CLAUDE.md', 'README.md']);
+
+  // Elle dit ce qui manque, et avec quoi partir.
+  assert.match(invite, /`\.contextree\/`/);
+  assert.match(invite, /`CLAUDE\.md`/);
+  assert.match(invite, /`README\.md`/);
+  // Rattachée à un moment précis. « Au bon moment, sans insister » se lisait
+  // comme une permission de se taire : deux passages sur six sans un mot,
+  // l'invitation pourtant injectée (mesuré le 11 septembre 2026).
+  assert.match(invite, /Avant de terminer ta réponse/);
+  assert.ok(!/au bon moment/.test(invite));
+  // Le garde-fou qui, lui, n'a jamais raté : proposer, jamais créer.
+  assert.match(invite, /Ne crée rien tant qu'il n'a pas dit oui/);
+  // Et elle renvoie à la consigne longue plutôt que de la recopier : cette
+  // invitation arrive sans qu'on l'ait demandée, elle doit rester courte.
+  assert.match(invite, /`bootstrap_prompt`/);
+  // Elle nomme un **outil**, pas une commande à taper : `npx` renvoyait à un
+  // paquet non publié, et demandait un terminal — le geste qu'on supprime.
+  assert.ok(!/npx/.test(invite));
+  assert.ok(!/6 à 12 branches/.test(invite));
+  assert.ok(invite.length < renderBootstrapPrompt(['CLAUDE.md']).length);
+
+  // Sans fichier trouvé, il reste le dépôt.
+  assert.match(renderBootstrapInvite([]), /le dépôt lui-même/);
+});
+
+test("bootstrap : l'invitation se pose une fois par session et par dossier", async () => {
+  const previous = process.env.CONTEXTREE_STATE_DIR;
+  process.env.CONTEXTREE_STATE_DIR = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-invite-'));
+  try {
+    const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-projet-'));
+    const autre = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-projet-'));
+
+    // Première fois : oui. Ensuite : non, tant qu'on est dans la même session.
+    assert.equal(await claimBootstrapInvite(projet, 's1'), true);
+    assert.equal(await claimBootstrapInvite(projet, 's1'), false);
+    assert.equal(await claimBootstrapInvite(projet, 's1'), false);
+
+    // Une autre session, ou un autre dossier : l'invitation revient.
+    assert.equal(await claimBootstrapInvite(projet, 's2'), true);
+    assert.equal(await claimBootstrapInvite(autre, 's1'), true);
+
+    // Un identifiant de session vient d'un payload JSON : il ne choisit pas où
+    // on écrit.
+    assert.equal(await claimBootstrapInvite(projet, '../../evade'), true);
+    const poses = await fs.readdir(path.join(process.env.CONTEXTREE_STATE_DIR, 'session'));
+    assert.equal(poses.length, 4);
+    assert.ok(poses.every(f => !f.includes('/') && !f.includes('..')));
+  } finally {
+    process.env.CONTEXTREE_STATE_DIR = previous;
+  }
+});
+
+/** Le hook tel qu'un agent le lance : un payload JSON sur stdin, le contexte sur
+ *  stdout. Le seul test qui passe par le vrai binaire — c'est le contrat que
+ *  Claude Code exécute, et il ne se vérifie pas en appelant les fonctions. */
+function runHook(payload, env = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['dist/cli.js', 'hook'], {
+      env: { ...process.env, ...env },
+    });
+    let out = '';
+    child.stdout.on('data', d => { out += d; });
+    child.stderr.resume();
+    child.on('error', reject);
+    child.on('close', code => resolve({ code, out }));
+    child.stdin.end(JSON.stringify(payload));
+  });
+}
+
+test("hook : sans arbre, l'invitation sort une fois par session — et jamais un code non nul", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-hook-state-'));
+  const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-hook-'));
+  const env = { CONTEXTREE_STATE_DIR: stateDir };
+  const payload = { prompt: 'bonjour, on fait quoi ?', cwd: projet, session_id: 'abc' };
+
+  const premier = await runHook(payload, env);
+  assert.equal(premier.code, 0);
+  assert.match(premier.out, /arbre de contexte contextree/);
+
+  // Deuxième prompt de la même session : plus rien. L'invitation vaut pour la
+  // session, pas pour le tour.
+  const second = await runHook(payload, env);
+  assert.equal(second.code, 0);
+  assert.equal(second.out, '');
+
+  // Nouvelle session : elle revient.
+  const autreSession = await runHook({ ...payload, session_id: 'def' }, env);
+  assert.equal(autreSession.code, 0);
+  assert.match(autreSession.out, /arbre de contexte contextree/);
+
+  // L'invariant qui prime sur tout le reste : un payload cassé ne bloque pas le
+  // prompt, et n'injecte rien.
+  const casse = await runHook('pas du json', env);
+  assert.equal(casse.code, 0);
+  assert.equal(casse.out, '');
+});
+
+/** Un vrai client MCP branché sur le serveur, en mémoire. On passe par le
+ *  protocole et pas par les internes du SDK : c'est ce que voit l'agent, et
+ *  c'est ce qui doit rester vrai d'une version du SDK à l'autre. */
+async function mcpClient(cwd) {
+  const server = await createServer(cwd);
+  const client = new Client({ name: 'test', version: '0' });
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
+  return client;
+}
+
+const textOf = res => res.content.map(c => c.text ?? '').join('\n');
+
+test("mcp : write_root crée l'arbre s'il n'existe pas — l'IA n'a pas besoin d'un terminal", async () => {
+  const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-wr-'));
+  const client = await mcpClient(projet);
+
+  const res = await client.callTool({
+    name: 'write_root',
+    arguments: { content: '# Projet\n\nCe que fait ce dépôt.', why: 'poser la racine' },
+  });
+  assert.equal(res.isError, undefined);
+  // Le dossier ET la racine, sans qu'aucune commande n'ait été tapée.
+  assert.equal(await fs.readFile(path.join(projet, '.contextree', 'root.md'), 'utf8'),
+    '# Projet\n\nCe que fait ce dépôt.\n');
+  // L'utilisateur doit apprendre qu'un dossier vient d'apparaître dans son projet.
+  assert.match(textOf(res), /Arbre créé/);
+
+  // Deuxième écriture : l'arbre existe déjà, on ne l'annonce plus.
+  const encore = await client.callTool({
+    name: 'write_root',
+    arguments: { content: '# Projet\n\nCorrigé.', why: 'préciser' },
+  });
+  assert.ok(!/Arbre créé/.test(textOf(encore)));
+});
+
+test("mcp : la consigne bootstrap est un outil, atteignable sans terminal ni slash-command", async () => {
+  const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-bp-'));
+  await fs.writeFile(path.join(projet, 'CLAUDE.md'), '# consignes', 'utf8');
+  const client = await mcpClient(projet);
+
+  // Le modèle voit l'outil dans sa liste : un prompt MCP, lui, ne lui est
+  // jamais exposé.
+  const outils = (await client.listTools()).tools.map(t => t.name);
+  assert.ok(outils.includes('bootstrap_prompt'));
+
+  const res = await client.callTool({ name: 'bootstrap_prompt', arguments: {} });
+  // Exactement le texte du prompt MCP et de `contextree bootstrap` : une seule
+  // copie, quatre surfaces.
+  assert.equal(textOf(res), renderBootstrapPrompt(['CLAUDE.md']));
+
+  // Le prompt reste, pour l'utilisateur qui le lance à la main.
+  const prompts = (await client.listPrompts()).prompts.map(p => p.name);
+  assert.ok(prompts.includes('bootstrap'));
+});
+
+test("mcp : upsert_branch sans arbre refuse, et nomme write_root", async () => {
+  const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-ub-'));
+  const client = await mcpClient(projet);
+
+  const res = await client.callTool({
+    name: 'upsert_branch',
+    arguments: {
+      title: 'Une branche', type: 'context', load_when: 'quand on teste',
+      content: 'du contenu', why: 'pour le test',
+    },
+  });
+
+  // Écrire une branche avant la racine est l'ordre inverse de la consigne :
+  // l'outil refuse, mais il dit par où commencer.
+  assert.equal(res.isError, true);
+  assert.match(textOf(res), /write_root/);
+  await assert.rejects(fs.stat(path.join(projet, '.contextree')));
 });
 
 test('journal : les tours s\'empilent, du plus ancien au plus récent', async () => {

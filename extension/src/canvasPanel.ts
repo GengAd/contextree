@@ -10,6 +10,8 @@ import type { Core } from './treeProvider.js';
 /** Ce que la webview reçoit. Plat et sans Map : ça passe par postMessage. */
 type CanvasTree = {
   rootContent: string;
+  /** L'écriture de l'IA sur la racine (`write_root`), si elle est fraîche. */
+  rootWrite?: { at: number; op: string; why?: string };
   branches: Array<{
     path: string;
     parent: string | null;
@@ -248,8 +250,14 @@ export class CanvasPanel {
 }
 
 function flatten(tree: ContextTree, writes: Map<string, AiWrite>): CanvasTree {
+  // La racine est écrite par `write_root` comme une branche l'est par
+  // `upsert_branch` : sa trace voyage par le même chemin, sous `:root`.
+  const rootWrite = writes.get(':root');
   return {
     rootContent: tree.rootContent,
+    ...(rootWrite
+      ? { rootWrite: { at: rootWrite.at, op: rootWrite.op, ...(rootWrite.why ? { why: rootWrite.why } : {}) } }
+      : {}),
     branches: tree.order.flatMap(p => {
       const b = tree.branches.get(p);
       if (!b) return [];

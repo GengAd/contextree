@@ -16,7 +16,7 @@ src/core/     le moteur, sans I/O externe autre que le disque
   session.ts      la sélection dont hérite le tour suivant (~/.contextree)
   journal.ts      les tours de routage et les écritures de l'IA
   eval.ts         la comparaison qui mesure le routage (npm run eval)
-src/mcp/server.ts serveur MCP stdio, 7 outils
+src/mcp/server.ts serveur MCP stdio, 9 outils
 src/cli.ts        toutes les commandes, dont `hook` et `mcp`
 src/install.ts    câblage par agent : .mcp.json, .claude/settings.json,
                   ~/.codex/config.toml, AGENTS.md

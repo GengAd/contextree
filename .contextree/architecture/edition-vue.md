@@ -33,8 +33,8 @@ Régime assumé depuis le 7 septembre 2026 : l'IA écrit directement, sans valid
 
 Trois mécanismes, tous nécessaires :
 
-- **`why` est un paramètre obligatoire** de `upsert_branch` et `delete_branch` (optionnel sur `move_branch`, qui est du rangement). Une écriture sans raison énoncée n'est pas possible.
+- **`why` est un paramètre obligatoire** de `upsert_branch`, `write_root` et `delete_branch` (optionnel sur `move_branch`, qui est du rangement). Une écriture sans raison énoncée n'est pas possible.
 - **L'annonce** : le texte que renvoie l'outil demande au modèle de dire ce qu'il vient d'écrire et pourquoi, et les `instructions` du serveur posent la règle — écrire en silence est la seule façon de mal faire.
-- **La trace** : chaque écriture est journalisée (`appendAiWrite`, 100 dernières), et les deux vues la montrent pendant 15 minutes — pastille `IA il y a 2 min` et icône colorée dans la barre latérale, liseré et `✎` sur la carte, le `why` dans l'infobulle. Un battement d'une minute fait vieillir puis disparaître la pastille ; il ne tourne que tant qu'il reste quelque chose à afficher.
+- **La trace** : chaque écriture est journalisée (`appendAiWrite`, 100 dernières) — y compris celle de la racine, sous `:root` — et les deux vues la montrent pendant 15 minutes — pastille `IA il y a 2 min` et icône colorée dans la barre latérale, liseré et `✎` sur la carte, le `why` dans l'infobulle. Un battement d'une minute fait vieillir puis disparaître la pastille ; il ne tourne que tant qu'il reste quelque chose à afficher.
 
 `import_pack` n'est pas tracé : c'est une greffe en masse, annoncée par nature, pas une capitalisation au fil de l'eau.

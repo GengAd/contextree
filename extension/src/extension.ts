@@ -194,6 +194,24 @@ export function activate(context: vscode.ExtensionContext): void {
         );
       }
     }),
+    vscode.commands.registerCommand('contextree.copyBootstrap', async () => {
+      try {
+        const core = await loadCore();
+        const found = await core.detectInstructionFiles(searchFrom);
+        await vscode.env.clipboard.writeText(core.renderBootstrapPrompt(found));
+        // On dit ce qui a été trouvé : la consigne cite ces fichiers, et
+        // l'utilisateur doit pouvoir vérifier qu'elle vise les bons.
+        void vscode.window.showInformationMessage(
+          found.length
+            ? `Consigne copiée — elle fera lire : ${found.join(', ')}. Colle-la dans ton IA.`
+            : 'Consigne copiée — aucun fichier de consignes trouvé, elle fera lire le dépôt.',
+        );
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `contextree : ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }),
     vscode.commands.registerCommand('contextree.openCanvas', () =>
       CanvasPanel.show(context, loadCore, searchFrom),
     ),

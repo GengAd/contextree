@@ -23,7 +23,9 @@ Hors périmètre, assumé :
   Ce que ça coûte, et qui reste vrai : la carte n'est pas un éditeur. Pas de coloration, pas de recherche, pas de multi-curseur — le `.md` reste la source de vérité et reste à un clic, bouton compris. Trois garde-fous tiennent la ligne, et se cassent ensemble si on les oublie (`extension/src/edit.ts`, `saveBranch`) : **le cœur sérialise** le frontmatter, jamais la webview ; le **`load_when` est aplati** sur une ligne avant écriture ; un **onglet aux modifications non enregistrées gagne** sur la carte, sauf décision explicite.
 
   Ce qui reste hors périmètre, lui, n'a pas bougé : faire de la webview un éditeur de texte à part entière.
-- la génération de l'arbre **en masse**, à partir du code : un arbre entier deviné d'un coup n'est relu par personne, et c'est le `load_when` qui en fait les frais.
+- la génération de l'arbre **par contextree lui-même** : il n'y a pas de moteur de découpe dans le cœur, pas d'heuristique qui devine des `load_when`, et il n'y en aura pas. Un arbre entier deviné d'un coup n'est relu par personne, et c'est le `load_when` — le seul champ que l'utilisateur sait écrire et que le modèle devine mal — qui en fait les frais.
+
+  **Ce qui est dans le périmètre, depuis le 9 septembre 2026 : inviter.** Sur un projet qui a déjà un `CLAUDE.md`, des règles Cursor ou un README nourri, `renderBootstrapPrompt` donne à l'IA *de l'utilisateur* une consigne pour les lire et écrire l'arbre elle-même, avec ses propres outils. La différence n'est pas cosmétique : le travail est fait par un agent qui a le projet sous les yeux, l'utilisateur voit passer chaque écriture, et le résultat est borné (6 à 12 branches) et tracé. contextree ne fournit que le texte — une seule copie, trois surfaces : prompt MCP `bootstrap`, `contextree bootstrap`, bouton de la vue.
 
   L'écriture **au fil de l'eau**, elle, est le régime assumé depuis le 7 septembre 2026 : quand l'IA repère un fait durable, elle l'écrit dans l'arbre directement, sans étape de validation. Le garde-fou est la **visibilité, pas l'interdiction** — chaque écriture est tracée, annoncée en conversation, et signalée dans les vues pendant un quart d'heure.
 
