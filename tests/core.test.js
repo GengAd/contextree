@@ -12,7 +12,7 @@ import { createServer } from '../dist/mcp/server.js';
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
 import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree, detectInstructionFiles } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
-import { route, pickEngine, isCliEngine, parseIndices } from '../dist/core/router.js';
+import { route, pickEngine, isCliEngine, parseIndices, timeoutFor } from '../dist/core/router.js';
 import { evaluateRouting, parseEvalCases } from '../dist/core/eval.js';
 import { renderContext, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite } from '../dist/core/render.js';
 import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand } from '../dist/install.js';
@@ -127,6 +127,39 @@ test("routeur : sans moteur, tout l'arbre — et aucun type privilégié", async
   } finally {
     if (previous === undefined) delete process.env.CONTEXTREE_ROUTER;
     else process.env.CONTEXTREE_ROUTER = previous;
+  }
+});
+
+test("routeur : le budget dépend de qui attend, pas du moteur seul", () => {
+  const avant = process.env.CONTEXTREE_ROUTER_TIMEOUT_MS;
+  delete process.env.CONTEXTREE_ROUTER_TIMEOUT_MS;
+  try {
+    // Un CLI démarre un process et passe par la file d'un abonnement — mesuré
+    // entre 5 et 60 s. Un prompt ne peut pas attendre autant qu'une mesure que
+    // personne ne regarde.
+    assert.equal(timeoutFor('cli', 'prompt'), 45_000);
+    // Un agent qui appelle `get_context` attend déjà — mais son client, lui,
+    // abandonne à 60 s. Le budget reste dessous pour que le repli arrive :
+    // mieux vaut un contexte trop large qu'aucun contexte.
+    assert.equal(timeoutFor('cli', 'tool'), 45_000);
+    assert.ok(timeoutFor('cli', 'tool') < 60_000);
+    assert.equal(timeoutFor('cli', 'batch'), 120_000);
+    // Une API répond en centaines de ms ; si elle met des secondes, elle est
+    // cassée, pas lente.
+    assert.equal(timeoutFor('api', 'prompt'), 2500);
+    assert.equal(timeoutFor('api', 'tool'), 2500);
+    assert.equal(timeoutFor('api', 'batch'), 10_000);
+
+    // L'échappatoire de l'utilisateur écrase tout le reste.
+    process.env.CONTEXTREE_ROUTER_TIMEOUT_MS = '7000';
+    assert.equal(timeoutFor('cli', 'prompt'), 7000);
+    assert.equal(timeoutFor('api', 'batch'), 7000);
+    // Une valeur absurde n'a pas le droit de ramener le budget à zéro.
+    process.env.CONTEXTREE_ROUTER_TIMEOUT_MS = 'beaucoup';
+    assert.equal(timeoutFor('cli', 'tool'), 45_000);
+  } finally {
+    if (avant === undefined) delete process.env.CONTEXTREE_ROUTER_TIMEOUT_MS;
+    else process.env.CONTEXTREE_ROUTER_TIMEOUT_MS = avant;
   }
 });
 

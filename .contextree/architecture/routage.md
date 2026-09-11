@@ -35,7 +35,23 @@ Autres contraintes :
 - court-circuit à ≤ 3 branches : on injecte tout, le routage ne se rentabilise pas ;
 - **deux garde-fous anti-récursion**, parce que le hook tourne *dans* Claude Code et que le routeur relance un `claude` : `--setting-sources ''` sur le fils (donc aucun hook), et `CONTEXTREE_ROUTING=1` dans son environnement, que `cmdHook` teste pour sortir immédiatement.
 
-Les budgets par défaut : **2500 ms sur API, 20 000 ms en CLI**. Ce dernier est taillé pour un prompt, pas pour un outil qu'on attend : `route-bg` et `route --eval` le relèvent à 120 s. Un `contextree route` interactif garde les 20 s et montre donc parfois un repli là où le routeur aurait répondu en 25 s.
+**Le budget dépend de qui attend, pas du moteur seul** (`RouteWaiter`, 11 septembre 2026). Trois appelants, trois patiences :
+
+| `waiter` | qui attend | CLI | API |
+|---|---|---|---|
+| `prompt` | un humain devant son curseur — hook bloquant, `contextree route` | 45 s | 2,5 s |
+| `tool` | un agent qui a appelé `get_context` et attend déjà | 45 s | 2,5 s |
+| `batch` | personne — `route-bg`, `route --eval` | 120 s | 10 s |
+
+`CONTEXTREE_ROUTER_TIMEOUT_MS` écrase tout, et c'est la seule échappatoire.
+
+**Le budget CLI était à 20 s, soit la moitié basse de ce que le code mesurait lui-même** (« entre 5 et 60 s », écrit juste au-dessus de la constante). On l'a payé deux fois : 9 cas d'éval sur 20 tombés dans le repli le 9 septembre, puis deux prompts ciblés sur trois lors du passage « depuis zéro » du 11 — 20 007 et 20 006 ms, donc l'arbre entier injecté. Les mêmes, budget relevé : 11 420, **37 282** et 20 554 ms, tous routés. Le second dit pourquoi 45 s et pas 30 : la file d'un abonnement n'a pas de médiane utile, elle a une queue.
+
+**Un budget serré ne protège de rien ici.** Le repli *injecte plus* — il n'abrège pas. La seule chose qu'un budget trop court fait gagner, c'est le temps d'écrire le contexte qu'on voulait éviter.
+
+**Le budget d'un outil est plafonné par le client, pas par notre patience.** Le SDK MCP abandonne une requête à 60 s. Poussé à 60 s côté serveur, `get_context` expirait **côté client** avant d'avoir pu rendre son repli : plus de contexte du tout, au lieu d'un contexte trop large. D'où les 45 s, nettement dessous, pour que le repli arrive toujours.
+
+**Ce qui reste ouvert** : sous moteur CLI, `get_context` ne peut pas *garantir* un routage. La queue de latence (37 s mesuré, parfois plus) frôle ce qu'un client tolère, et il n'y a pas de mode différé côté MCP — un agent sans hook n'a que cette surface. Les deux sorties possibles sont une clé API pour les surfaces synchrones (2,5 s, sans queue) ou un routage de fond côté serveur, qui servirait au tour suivant comme le fait le hook.
 
 `CONTEXTREE_ROUTER` (`auto`|`anthropic`|`openai`|`claude`|`codex`|`gemini`|`off` ; `sdk` et `cli` restent compris), `CONTEXTREE_ROUTER_MODEL`, `CONTEXTREE_ROUTER_TIMEOUT_MS`, `OPENAI_BASE_URL`, `CONTEXTREE_CLAUDE_BIN`.
 
@@ -47,7 +63,7 @@ Les budgets par défaut : **2500 ms sur API, 20 000 ms en CLI**. Ce dernier est 
 
 Deux choses apprises le jour même :
 
-- **Une éval ne se mesure pas au budget d'un prompt.** Au premier passage, 9 cas sur 20 ont expiré à 20 s et sont tombés dans le repli « arbre entier » : précision 24 %, rappel 81 % — on mesurait le timeout, pas le routeur. `--eval` relève donc le budget à 120 s comme le fait `route-bg`. Personne n'attend une mesure.
+- **Une éval ne se mesure pas au budget d'un prompt.** Au premier passage, 9 cas sur 20 ont expiré à 20 s et sont tombés dans le repli « arbre entier » : précision 24 %, rappel 81 % — on mesurait le timeout, pas le routeur. `--eval` passe donc en `waiter: 'batch'`, comme `route-bg`. Personne n'attend une mesure. C'était le premier signe que le budget était mal posé ; il a fallu le payer une seconde fois, sur le scénario « depuis zéro », pour le corriger à la racine.
 - **Toute la perte de rappel tient à une seule branche.** `identite` est manquée dans 13 cas sur 20 ; **hors `identite`, le rappel est de 100 %** — aucune branche de fond n'a été ratée. Son `load_when` dit « toujours pertinent », ce qui n'est pas une condition : c'est un vœu, et le routeur l'honore une fois sur trois. Le choix est ouvert, et il n'est pas dans le code : soit on lui écrit une vraie condition et elle est routée comme les autres, soit on assume qu'elle n'est pas toujours chargée. Ce qu'on ne fera pas, c'est la garantir par son type — aucun type n'est privilégié.
 
 **Le défaut de modèle sur clé Anthropic reste `claude-opus-5`**, faute de mesure : aucune clé n'était disponible sur la machine le jour de la mesure, et le chemin CLI (le seul mesuré) utilise `haiku`. Le changer sans chiffres reviendrait à remplacer un choix arbitraire par un autre. À reprendre dès qu'une clé permet de comparer haiku / sonnet / opus sur le même jeu.

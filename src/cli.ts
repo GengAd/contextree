@@ -353,11 +353,6 @@ const EVAL_FILE = path.join('tests', 'routing.eval.json');
  * c'est mauvais** : c'est une mesure qu'on lit, pas une porte qui claque.
  */
 async function cmdEval(file: string | undefined): Promise<number> {
-  // Personne n'attend une mesure : on laisse au moteur le temps de répondre,
-  // comme le routage de fond. Sans ça, un CLI d'agent expire à 20 s, la moitié
-  // des cas tombent dans le repli « arbre entier », et on mesure le timeout au
-  // lieu du routeur — 9 cas sur 20 à la première mesure, le 9 septembre 2026.
-  process.env['CONTEXTREE_ROUTER_TIMEOUT_MS'] ??= '120000';
   const { dir, tree } = await open();
   const target = path.resolve(path.dirname(dir), file ?? EVAL_FILE);
 
@@ -377,7 +372,11 @@ async function cmdEval(file: string | undefined): Promise<number> {
     `${cases.length} cas · ${tree.order.length} branches · ${describeEngine()}\n\n`,
   );
 
-  const report = await evaluateRouting(tree, cases, p => route(tree, p));
+  // Personne n'attend une mesure : `batch` laisse au moteur le temps de
+  // répondre. Sans ça, on mesure le timeout au lieu du routeur — 9 cas sur 20
+  // tombés dans le repli « arbre entier » à la première mesure, le 9 septembre
+  // 2026.
+  const report = await evaluateRouting(tree, cases, p => route(tree, p, { waiter: 'batch' }));
   process.stdout.write(formatEval(report));
   return 0;
 }
@@ -800,12 +799,11 @@ async function cmdRouteBackground(flags: Flags): Promise<number> {
     const encoded = str(flags.prompt64);
     if (!dir || !encoded) return 0;
     const sessionId = str(flags.session) ?? 'default';
-    process.env['CONTEXTREE_ROUTER_TIMEOUT_MS'] ??= '120000';
 
     const tree = await loadTree(dir);
     const previous = await readSelection(dir, sessionId);
     const prompt = Buffer.from(encoded, 'base64').toString('utf8');
-    const { selected, reason } = await route(tree, prompt, { previousSelection: previous });
+    const { selected, reason } = await route(tree, prompt, { previousSelection: previous, waiter: 'batch' });
     if (reason !== 'routed') return 0;
     const at = Number(str(flags.at)) || Date.now();
     await writeSelection(dir, sessionId, selected, { at, routed: true });

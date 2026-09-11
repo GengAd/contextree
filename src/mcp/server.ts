@@ -167,7 +167,10 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       if (!found) return text(await invite());
 
       const { dir, tree } = await open();
-      const { selected, reason, error } = await route(tree, query);
+      // `waiter: 'tool'` : l'agent a appelé cet outil et attend déjà sa réponse.
+      // C'est aussi la seule surface des agents sans hook — un repli ici leur
+      // injecte l'arbre entier, c'est-à-dire tout ce qu'on cherche à éviter.
+      const { selected, reason, error } = await route(tree, query, { waiter: 'tool' });
       // Le chat de Cursor et les autres clients MCP passent par ici : sans cette
       // ligne, le journal ne verrait que les tours de Claude Code.
       await appendTurn(dir, {

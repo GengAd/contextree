@@ -15,17 +15,48 @@ const ANTHROPIC_MODEL = ROUTER_MODEL ?? 'claude-opus-5';
 const OPENAI_MODEL = ROUTER_MODEL ?? 'gpt-4o-mini';
 
 /**
- * Budget latence, lu à chaque appel (le routage en tâche de fond le relève).
+ * **Qui attend le routage.** C'est ce qui fixe le budget, pas le moteur seul.
  *
- * Une API répond en une poignée de centaines de ms ; un CLI, lui, démarre un
- * process complet et passe par la file d'un abonnement — mesuré entre 5 et 60 s
- * sur ce repo. D'où deux budgets, et d'où le mode différé du hook : on ne fait
- * pas attendre un prompt derrière une file d'attente.
+ * - `prompt` — un humain a tapé quelque chose et regarde son curseur. Le hook
+ *   bloquant, `contextree route` en interactif.
+ * - `tool` — un agent a appelé un outil et attend déjà sa réponse : `get_context`.
+ *   Son budget n'est **pas** fixé par notre patience mais par celle du client :
+ *   le SDK MCP abandonne une requête au bout de 60 s (constaté le 11 septembre
+ *   2026 en poussant le budget à 60 s — l'appel expirait côté client avant que
+ *   le serveur n'ait pu rendre son repli, donc pas de contexte du tout au lieu
+ *   d'un contexte trop large). On reste nettement dessous, pour que le repli
+ *   arrive toujours.
+ * - `batch` — personne n'attend : `route-bg`, `route --eval`.
  */
-function timeoutFor(kind: 'api' | 'cli'): number {
+export type RouteWaiter = 'prompt' | 'tool' | 'batch';
+
+/**
+ * Budget latence, lu à chaque appel.
+ *
+ * Une API répond en une poignée de centaines de ms ; un CLI démarre un process
+ * complet et passe par la file d'un abonnement — **mesuré entre 5 et 60 s** sur
+ * ce repo. C'est de là que vient le mode différé du hook : on ne fait pas
+ * attendre un prompt derrière une file d'attente.
+ *
+ * Le budget CLI d'un prompt était à 20 s, la moitié basse de ce que le
+ * commentaire ci-dessus mesurait. Corrigé le 11 septembre 2026, après l'avoir
+ * payé deux fois : neuf cas d'éval sur vingt tombés dans le repli (on mesurait
+ * le timeout, pas le routeur), puis deux prompts ciblés sur trois lors du
+ * passage « depuis zéro » — 20 007 et 20 006 ms, donc l'arbre entier injecté.
+ *
+ * Les mêmes trois prompts, une fois le budget relevé : 11 420, **37 282** et
+ * 20 554 ms, tous routés. Le second dit à lui seul pourquoi 45 s et pas 30 : la
+ * file d'un abonnement n'a pas de médiane utile, elle a une queue.
+ *
+ * Un budget serré ne protège de rien ici : le repli **injecte plus**, il
+ * n'abrège pas. La seule chose qu'un budget trop court fait gagner, c'est le
+ * temps d'écrire le contexte qu'on voulait éviter.
+ */
+export function timeoutFor(kind: 'api' | 'cli', waiter: RouteWaiter): number {
   const override = Number(process.env['CONTEXTREE_ROUTER_TIMEOUT_MS']);
   if (Number.isFinite(override) && override > 0) return override;
-  return kind === 'cli' ? 20_000 : 2500;
+  if (kind === 'api') return waiter === 'batch' ? 10_000 : 2500;
+  return waiter === 'batch' ? 120_000 : 45_000;
 }
 
 /** En dessous de ce seuil, un aller-retour de routage coûte plus (latence +
@@ -171,7 +202,7 @@ const CLIS: CliSpec[] = [
 export async function route(
   tree: ContextTree,
   prompt: string,
-  opts: { previousSelection?: string[]; apiKey?: string } = {},
+  opts: { previousSelection?: string[]; apiKey?: string; waiter?: RouteWaiter } = {},
 ): Promise<RouteResult> {
   const branches = allBranches(tree);
   if (branches.length === 0) return { selected: new Set(), reason: 'all' };
@@ -199,7 +230,7 @@ export async function route(
   )}`;
 
   try {
-    const indices = await ask(engine, message, opts.apiKey);
+    const indices = await ask(engine, message, opts.waiter ?? 'prompt', opts.apiKey);
     if (!indices) {
       return { selected: fallback, reason: 'fallback', error: 'routeur : réponse illisible' };
     }
@@ -223,12 +254,13 @@ export async function route(
 function ask(
   engine: RouterEngine,
   message: string,
+  waiter: RouteWaiter,
   apiKey?: string,
 ): Promise<number[] | null> {
   const spec = CLIS.find(c => c.engine === engine);
-  if (spec) return askCli(spec, message, timeoutFor('cli'));
-  if (engine === 'openai') return askOpenAI(message, timeoutFor('api'));
-  return askAnthropic(message, timeoutFor('api'), apiKey);
+  if (spec) return askCli(spec, message, timeoutFor('cli', waiter));
+  if (engine === 'openai') return askOpenAI(message, timeoutFor('api', waiter));
+  return askAnthropic(message, timeoutFor('api', waiter), apiKey);
 }
 
 /**
@@ -402,7 +434,7 @@ function run(bin: string, args: string[], stdin: string, timeout: number): Promi
     let err = '';
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      reject(new Error(`timeout ${timeout} ms`));
+      reject(new Error(`budget de ${timeout} ms dépassé`));
     }, timeout);
 
     child.stdout.setEncoding('utf8');
