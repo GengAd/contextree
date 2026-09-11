@@ -875,6 +875,45 @@ test("mcp : la consigne bootstrap est un outil, atteignable sans terminal ni sla
   assert.ok(prompts.includes('bootstrap'));
 });
 
+test("mcp : sous moteur CLI, get_context diffère au lieu de faire attendre le client", async () => {
+  const dir = await scratch();
+  await writeRoot(dir, 'racine');
+  for (const p of ['a', 'b', 'c', 'd']) {
+    await writeBranch(dir, {
+      path: p, type: 'context', title: p.toUpperCase(),
+      loadWhen: `quand ${p}`, content: `contenu ${p}`,
+    });
+  }
+  const projet = path.dirname(dir);
+
+  // Une session précédente a routé sur cet arbre : c'est ce dont une session
+  // MCP neuve doit hériter, plutôt que de faire attendre le client.
+  await writeSelection(dir, 'session-precedente', ['b'], { routed: true });
+
+  const saved = process.env.CONTEXTREE_ROUTER;
+  process.env.CONTEXTREE_ROUTER = 'claude';
+  try {
+    const client = await mcpClient(projet);
+    const t0 = Date.now();
+    const res = await client.callTool({
+      name: 'get_context', arguments: { query: 'une demande quelconque' },
+    });
+    const txt = textOf(res);
+
+    // Rendu tout de suite : c'est tout l'intérêt. Un routage CLI met entre 5 et
+    // 60 s, et le client abandonne à 60 — on ne se met pas sur ce chemin.
+    assert.ok(Date.now() - t0 < 2000);
+    // Et il le dit : jamais de boîte noire.
+    assert.match(txt, /différé/);
+    // La sélection héritée, pas l'arbre entier.
+    assert.match(txt, /contenu b/);
+    assert.ok(!/contenu a/.test(txt));
+  } finally {
+    if (saved === undefined) delete process.env.CONTEXTREE_ROUTER;
+    else process.env.CONTEXTREE_ROUTER = saved;
+  }
+});
+
 test("mcp : upsert_branch sans arbre refuse, et nomme write_root", async () => {
   const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-ub-'));
   const client = await mcpClient(projet);

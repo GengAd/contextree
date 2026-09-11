@@ -7,8 +7,10 @@ import { z } from 'zod';
 import { findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch, detectInstructionFiles, DIR_NAME, ROOT_FILE } from '../core/store.js';
 import { allBranches, formatTree } from '../core/tree.js';
 import { renderContext, renderTrace, renderBootstrapPrompt, renderBootstrapInvite } from '../core/render.js';
-import { route } from '../core/router.js';
+import { route, pickEngine, isCliEngine, withoutRouting, routeInBackground } from '../core/router.js';
 import { appendTurn, appendAiWrite } from '../core/journal.js';
+import { readSelection, writeSelection } from '../core/session.js';
+import { randomUUID } from 'node:crypto';
 import { decodePack, encodePack, extractPack, applyPack } from '../core/pack.js';
 import { BRANCH_TYPES } from '../core/types.js';
 import type { ContextTree } from '../core/types.js';
@@ -45,6 +47,17 @@ const branchTypeSchema = z.enum(BRANCH_TYPES);
 const ROOT_PATH = ':root';
 
 export async function createServer(cwd: string = process.cwd()): Promise<McpServer> {
+  /**
+   * Ce qui tient lieu de session pour un serveur MCP.
+   *
+   * Il n'a pas de notion de tour — mais l'agent le **relance à chaque session**,
+   * donc la durée de vie du process *est* la session. Un id tiré au démarrage
+   * suffit à ranger le cache de sélection, et il ne collisionne pas avec celui
+   * du hook : quand les deux surfaces tournent côte à côte, chacune a sa piste,
+   * et le second niveau du cache (la dernière sélection routée de l'arbre,
+   * toutes sessions confondues) les fait quand même se parler.
+   */
+  const sessionId = `mcp-${randomUUID()}`;
   /** Ce que l'IA doit faire ici quand il n'y a rien : proposer l'arbre.
    *
    *  Une seule copie pour les deux surfaces du serveur — les `instructions` et
@@ -167,14 +180,41 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       if (!found) return text(await invite());
 
       const { dir, tree } = await open();
-      // `waiter: 'tool'` : l'agent a appelé cet outil et attend déjà sa réponse.
-      // C'est aussi la seule surface des agents sans hook — un repli ici leur
-      // injecte l'arbre entier, c'est-à-dire tout ce qu'on cherche à éviter.
-      const { selected, reason, error } = await route(tree, query, { waiter: 'tool' });
+
+      /**
+       * Sous moteur CLI, on **ne route pas devant l'appel** — on diffère, comme
+       * le hook le fait depuis le début (11 septembre 2026).
+       *
+       * Mesuré : un routage CLI met entre 5 et 60 s, et le client MCP abandonne
+       * à 60 s. Router en synchrone, c'était choisir entre l'arbre entier (un
+       * repli à 45 s) et rien du tout (l'appel expire côté client). Aucune des
+       * deux n'est une réponse pour Cursor, Codex ou Copilot — qui n'ont que
+       * cette surface, et pour qui `get_context` *est* contextree.
+       *
+       * Donc : on rend tout de suite la sélection héritée, on lance le routage
+       * derrière, et il sert à l'appel suivant. C'est un aveu utile plutôt qu'une
+       * attente inutile — et `renderTrace` l'annonce comme « différé ».
+       *
+       * Sous clé API, rien de tout ça : 2500 ms, pas de file d'attente, on route
+       * en synchrone et l'agent a sa réponse juste du premier coup.
+       */
+      const deferred =
+        isCliEngine(pickEngine()) && process.env['CONTEXTREE_ROUTER_BLOCKING'] !== '1';
+      const at = Date.now();
+      const previous = await readSelection(dir, sessionId);
+
+      const { selected, reason, error } = deferred
+        ? { selected: withoutRouting(tree, previous), reason: 'deferred' as const, error: undefined }
+        : await route(tree, query, { waiter: 'tool', previousSelection: previous });
+
+      // En différé, c'est le process de fond qui écrira la sélection : l'écraser
+      // ici effacerait le routage avant qu'il n'arrive.
+      if (deferred) routeInBackground(dir, sessionId, query, at);
+      else await writeSelection(dir, sessionId, selected, { at, routed: reason === 'routed' });
       // Le chat de Cursor et les autres clients MCP passent par ici : sans cette
       // ligne, le journal ne verrait que les tours de Claude Code.
       await appendTurn(dir, {
-        at: Date.now(),
+        at,
         prompt: query,
         selected: [...selected],
         reason,

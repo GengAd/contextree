@@ -9,7 +9,7 @@ Tous les agents n'ont pas de hook. Trois surfaces, par ordre de qualité — c'e
 | Surface | Où | Qualité |
 |---|---|---|
 | Hook par prompt | `.claude/settings.json` | **une avance gratuite** — mais routée sur le prompt seul |
-| Serveur MCP | `.mcp.json`, `.cursor/mcp.json`, `~/.codex/config.toml`, … | portable, mais l'agent doit vouloir appeler `get_context` |
+| Serveur MCP | `.mcp.json`, `.cursor/mcp.json`, `~/.codex/config.toml`, … | portable, mais l'agent doit vouloir appeler `get_context` — différé comme le hook sous moteur CLI (voir *Mécanique du routage*) |
 | Fichier de consignes | `AGENTS.md` | dernier recours, pour qui n'a ni l'un ni l'autre |
 
 **Le registre `AGENTS`** (dans `src/install.ts`) tient cinq agents : Claude Code (hook + MCP), Cursor (`.cursor/mcp.json` — le projet, pas le home), Codex (`config.toml` + `AGENTS.md`), Windsurf, Claude Desktop. Quatre partagent la forme `{ "mcpServers": … }` : une seule fonction (`installMcpJson`) et une table de chemins, pas un adaptateur par agent qui divergerait au premier correctif.

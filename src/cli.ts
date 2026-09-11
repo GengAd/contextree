@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, deleteBranch, moveBranch, initTree, detectInstructionFiles } from './core/store.js';
 import { allBranches, formatTree } from './core/tree.js';
 import { renderContext, renderTrace, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite } from './core/render.js';
-import { route, pickEngine, isCliEngine, engineBin, withoutRouting } from './core/router.js';
+import { route, pickEngine, isCliEngine, engineBin, withoutRouting, routeInBackground } from './core/router.js';
 import { encodePack, extractPack, applyPack } from './core/pack.js';
 import { readSelection, writeSelection, claimBootstrapInvite } from './core/session.js';
 import { appendTurn } from './core/journal.js';
@@ -752,35 +752,6 @@ async function cmdHook(): Promise<number> {
     // bloqué est une panne.
   }
   return 0;
-}
-
-/**
- * Le routage de ce prompt, lancé derrière et laissé seul.
- *
- * Détaché et sans stdio : il survit à la sortie du hook — c'est tout l'intérêt.
- * Le prompt passe en base64, un `argv` n'a pas à deviner ce qu'un utilisateur
- * peut écrire. Toute panne ici est un routage en moins, jamais un prompt bloqué.
- */
-function routeInBackground(dir: string, sessionId: string, prompt: string, at: number): void {
-  try {
-    const entry = process.argv[1];
-    if (!entry) return;
-    const child = spawn(
-      process.execPath,
-      [
-        entry,
-        'route-bg',
-        '--dir', dir,
-        '--session', sessionId,
-        '--prompt64', Buffer.from(prompt.slice(0, 4000), 'utf8').toString('base64'),
-        '--at', String(at),
-      ],
-      { detached: true, stdio: 'ignore' },
-    );
-    child.unref();
-  } catch {
-    // Pas de routage de fond : le tour suivant repartira du tour précédent.
-  }
 }
 
 /**

@@ -264,6 +264,44 @@ function ask(
 }
 
 /**
+ * Le routage de ce prompt, lancé derrière et laissé seul.
+ *
+ * Détaché et sans stdio : il survit à la sortie du hook — c'est tout l'intérêt.
+ * Le prompt passe en base64, un `argv` n'a pas à deviner ce qu'un utilisateur
+ * peut écrire. Toute panne ici est un routage en moins, jamais un prompt bloqué.
+ *
+ * **Deux appelants** depuis le 11 septembre 2026 : le hook, et `get_context` du
+ * serveur MCP. Les deux ont le même problème — un moteur CLI met entre 5 et 60 s,
+ * et personne ne peut attendre ça devant un prompt ou sous le timeout d'un
+ * client. Vit ici plutôt que dans la CLI parce que c'est du routage, et que
+ * deux copies auraient divergé au premier correctif.
+ *
+ * Il relance `process.argv[1]`, c'est-à-dire l'entrée de la CLI — vrai pour le
+ * hook (`cli.js hook`) comme pour le serveur (`cli.js mcp`).
+ */
+export function routeInBackground(dir: string, sessionId: string, prompt: string, at: number): void {
+  try {
+    const entry = process.argv[1];
+    if (!entry) return;
+    const child = spawn(
+      process.execPath,
+      [
+        entry,
+        'route-bg',
+        '--dir', dir,
+        '--session', sessionId,
+        '--prompt64', Buffer.from(prompt.slice(0, 4000), 'utf8').toString('base64'),
+        '--at', String(at),
+      ],
+      { detached: true, stdio: 'ignore' },
+    );
+    child.unref();
+  } catch {
+    // Pas de routage de fond : le tour suivant repartira du tour précédent.
+  }
+}
+
+/**
  * Ce qu'on injecte quand on ne route pas : la sélection du tour précédent,
  * sinon l'arbre entier.
  *
