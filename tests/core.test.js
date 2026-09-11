@@ -15,7 +15,7 @@ import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { route, pickEngine, isCliEngine, parseIndices, timeoutFor } from '../dist/core/router.js';
 import { evaluateRouting, parseEvalCases } from '../dist/core/eval.js';
 import { renderContext, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite } from '../dist/core/render.js';
-import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand } from '../dist/install.js';
+import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand, AGENTS } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
 import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites, turnLabelKey } from '../dist/core/journal.js';
 import { readSelection, writeSelection, claimBootstrapInvite } from '../dist/core/session.js';
@@ -282,6 +282,75 @@ test("install : on inscrit la commande qui tourne, pas npx en dur", async () => 
   }
 });
 
+test("vscode : la forme est `servers`, pas `mcpServers` — et le bloc va dans les deux fichiers", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-vscode-'));
+  const report = await installAgent('vscode', projectDir, '## bloc');
+
+  const mcp = JSON.parse(await fs.readFile(path.join(projectDir, '.vscode', 'mcp.json'), 'utf8'));
+  // Le piège du palier : un JSON valide à la mauvaise forme est ignoré en
+  // silence par VS Code — ça ressemble à une réussite.
+  assert.ok(mcp.servers?.contextree, 'la clé racine est `servers`');
+  assert.equal(mcp.mcpServers, undefined);
+  assert.equal(mcp.servers.contextree.type, 'stdio');
+
+  // Copilot lit toujours `copilot-instructions.md` ; `AGENTS.md` sert à tout ce
+  // qui ouvre le dépôt ensuite. Le même bloc dans les deux, une seule source.
+  assert.match(
+    await fs.readFile(path.join(projectDir, '.github', 'copilot-instructions.md'), 'utf8'),
+    /## bloc/,
+  );
+  assert.match(await fs.readFile(path.join(projectDir, 'AGENTS.md'), 'utf8'), /## bloc/);
+  assert.equal(report.length, 3);
+
+  // Câblé, et idempotent : un `install` répété ne salit pas un diff.
+  const [statut] = (await agentStatus(projectDir)).filter(a => a.id === 'vscode');
+  assert.equal(statut.wired, true);
+  const encore = await installAgent('vscode', projectDir, '## bloc');
+  assert.ok(encore.every(r => r.action === 'unchanged'));
+});
+
+test("gemini : les deux surfaces dans un seul fichier, et « câblé » exige les deux", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-gemini-'));
+  await installAgent('gemini', projectDir, '## bloc');
+
+  const file = path.join(projectDir, '.gemini', 'settings.json');
+  const config = JSON.parse(await fs.readFile(file, 'utf8'));
+  assert.ok(config.mcpServers?.contextree);
+  // `BeforeAgent` est le seul équivalent de `UserPromptSubmit` hors Claude Code,
+  // et sa structure est imbriquée — une liste de matchers, chacun ses commandes.
+  const cmd = config.hooks.BeforeAgent[0].hooks[0].command;
+  assert.match(cmd, /contextree/);
+  assert.match(cmd, /--agent gemini/);
+  assert.match(await fs.readFile(path.join(projectDir, 'GEMINI.md'), 'utf8'), /## bloc/);
+
+  const wired = async () => (await agentStatus(projectDir)).find(a => a.id === 'gemini').wired;
+  assert.equal(await wired(), true);
+
+  // Le serveur sans le hook n'est pas un câblage terminé : l'annoncer comme tel
+  // serait mentir sur la surface qui donne l'avance.
+  delete config.hooks;
+  await fs.writeFile(file, JSON.stringify(config), 'utf8');
+  assert.equal(await wired(), false);
+});
+
+test("install : un fichier de consignes ne se reconnaît pas à son nom", async () => {
+  // Deux agents rangent leur config dans un `settings.json`, et deux formats de
+  // MCP cohabitent. Le registre doit rester lisible sans que `isWired` devine.
+  const parNom = new Map();
+  for (const spec of AGENTS) {
+    for (const f of spec.files('/projet')) {
+      const nom = path.basename(f);
+      parNom.set(nom, (parNom.get(nom) ?? new Set()).add(spec.id));
+    }
+  }
+  // Le cas qui a cassé : `settings.json` appartient à deux agents distincts.
+  assert.ok(parNom.get('settings.json').size >= 2);
+
+  // Et chaque agent déclare au moins un fichier — sans quoi `isWired` le dirait
+  // câblé par défaut (`every` sur une liste vide).
+  for (const spec of AGENTS) assert.ok(spec.files('/projet').length > 0, spec.id);
+});
+
 test('codex : la table MCP est ajoutée à la fin, jamais réécrite', async () => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-codex-'));
   const saved = process.env.CODEX_HOME;
@@ -316,17 +385,25 @@ test("install : l'état d'un agent se lit sans rien écrire, et le câblage est 
   // plutôt que de tenter et d'échouer en silence.
   assert.deepEqual(await fs.readdir(projectDir), []);
 
-  const report = await installAgent('cursor', projectDir);
-  assert.equal(report[0].action, 'created');
+  // Sans arbre, pas de bloc de consignes à écrire : le serveur MCP est posé,
+  // mais le câblage n'est **pas** terminé — et `--status` doit le dire plutôt
+  // que d'annoncer une surface qui n'existe pas encore.
+  const sansArbre = await installAgent('cursor', projectDir);
+  assert.equal(sansArbre[0].action, 'created');
   const written = JSON.parse(await fs.readFile(path.join(projectDir, '.cursor', 'mcp.json'), 'utf8'));
   assert.equal(written.mcpServers.contextree.command, selfCommand('mcp').command);
   assert.deepEqual(written.mcpServers.contextree.args, selfCommand('mcp').args);
+  assert.equal((await agentStatus(projectDir)).find(a => a.id === 'cursor').wired, false);
+
+  // Avec l'arbre, le fichier de consignes arrive et le câblage est complet.
+  const report = await installAgent('cursor', projectDir, '## bloc');
+  assert.ok(report.some(r => r.file.endsWith('AGENTS.md') && r.action === 'created'));
 
   const after = await agentStatus(projectDir);
   assert.equal(after.find(a => a.id === 'cursor').wired, true);
 
-  const again = await installAgent('cursor', projectDir);
-  assert.equal(again[0].action, 'unchanged');
+  const again = await installAgent('cursor', projectDir, '## bloc');
+  assert.ok(again.every(r => r.action === 'unchanged'));
 });
 
 test('install : Claude Code est câblé quand le hook ET le serveur MCP y sont', async () => {

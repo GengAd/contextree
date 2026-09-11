@@ -188,6 +188,10 @@ async function cmdInstall(flags: Flags): Promise<number> {
       process.stdout.write(`${state.padEnd(12)} ${a.label}\n`);
       for (const f of a.files) process.stdout.write(`             ${shorten(f)}\n`);
     }
+    // Les agents sans surface à câbler existent aussi, et l'outil les sert :
+    // le dire ici évite de chercher une ligne « non détecté » qui ne viendra pas.
+    process.stdout.write('\nChatGPT / Claude web : rien à câbler — `contextree render --copy`,\n');
+    process.stdout.write('                      ou `contextree route "<ta demande>" --copy`.\n');
     process.stdout.write(`\n${wiredCommands()}`);
     process.stdout.write(`Routage : ${describeEngine()}\n`);
     return 0;
@@ -204,10 +208,14 @@ async function cmdInstall(flags: Flags): Promise<number> {
     asked ? asked === 'all' || asked === a.id : a.detected || a.id === 'claude-code',
   );
 
-  // Le bloc `AGENTS.md` n'est calculé que si un agent en veut un : sans arbre,
+  // Le bloc de consignes n'est calculé que si un agent en veut un : sans arbre,
   // `install` doit rester possible pour câbler d'abord et créer ensuite.
+  //
+  // Ils sont quatre à en vouloir un depuis le 11 septembre 2026 — la liste se
+  // lit dans le registre plutôt que d'être recopiée ici, sinon un agent ajouté
+  // demain recevrait un `AGENTS.md` vide sans que personne ne le remarque.
   let block: string | undefined;
-  if (targets.some(a => a.id === 'codex')) {
+  if (targets.some(a => AGENTS.find(x => x.id === a.id)?.files('').some(f => f.endsWith('.md')))) {
     const dir = await findTreeDir();
     if (dir) block = renderAgentsBlock(await loadTree(dir));
   }
@@ -216,6 +224,16 @@ async function cmdInstall(flags: Flags): Promise<number> {
   for (const a of targets) report.push(...(await installAgent(a.id, process.cwd(), block)));
 
   for (const r of report) process.stdout.write(`${r.action.padEnd(9)} ${shorten(r.file)}\n`);
+
+  // Sans arbre, le fichier de consignes ne peut pas être écrit : le dire ici,
+  // sinon `--status` répondra « à câbler » sans qu'on comprenne ce qui manque.
+  if (!block && targets.some(a => AGENTS.find(x => x.id === a.id)?.files('').some(f => f.endsWith('.md')))) {
+    process.stdout.write(
+      '\nPas encore de fichier de consignes : il se remplit depuis l\'arbre, qui n\'existe pas ici.\n' +
+        'Crée-le (ou laisse ton IA te le proposer), puis relance `install` — ces agents\n' +
+        "resteront « à câbler » d'ici là, et c'est exact : la moitié de leur surface manque.\n",
+    );
+  }
 
   // Seulement quand on n'a rien demandé de précis : sur `--agent cursor`, les
   // autres ne sont pas « non détectés », ils ne sont pas le sujet.
