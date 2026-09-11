@@ -14,7 +14,7 @@ Chaque palier n'ouvre que quand le précédent est **utilisé pour de vrai**, pa
 |---|---|---|---|
 | ~~P1 usage perso~~ **fait le 9 septembre 2026** | `p1-usage-perso` (mergée) | l'outil marche sur les autres projets d'Adrien, et la vue dit la vérité sur le routage | **franchie** — voir plus bas |
 | ~~P2 dogfooding~~ **fait le 9 septembre 2026** | `p2-dogfooding` (mergée) | plus aucun `.md` de consignes hors de l'arbre dans ce repo (`README.md` = procédure, seule exception) | **à moitié franchie** — voir plus bas |
-| P3 depuis zéro | `p3-depuis-zero` | sur un dossier vierge, l'IA propose l'arbre, le construit proprement, renvoie à la toile | ratés corrigés le 10 septembre 2026 ; **reste à constater sur un passage d'une traite** — voir plus bas |
+| P3 depuis zéro | `p3-depuis-zero` | sur un dossier vierge, l'IA propose l'arbre, le construit proprement, renvoie à la toile | **pas franchie au 11 septembre 2026** — 6 critères sur 7 ; le routage tombe en fallback sur timeout. Voir plus bas |
 | P4 tous les agents | `p4-tous-les-agents` | Claude Code, VS Code + Copilot (cible probable de l'entreprise), Cursor, Codex, Gemini ; ChatGPT web = presse-papier | la matrice est cochée ligne par ligne |
 | P5 démo | `p5-demo` | dix minutes devant l'entreprise ; le partage par git, déroulé à deux | la démo tourne sur l'éditeur de la boîte, réseau coupé si besoin |
 | P6 distribution | `p6-distribution` | npm, Open VSX, hook pinné, README procédure — pour que des collègues installent | `npx -y @gengad/contextree init` marche sur une machine vierge |
@@ -67,6 +67,16 @@ Trois enseignements, un seul motif : **ce qui n'est pas un outil n'existe pas po
 **Les trois ratés ont été corrigés le jour même** (`79ee8d4`, `ac2b9a9`, et le rappel d'écriture) : `write_root` crée le dossier, `bootstrap_prompt` rend la consigne au modèle, et le rappel d'enrichir arrive avec le contexte du tour au lieu d'être lu à la connexion. Le scénario va maintenant de « bonjour » à l'arbre écrit sans qu'aucune commande ne soit tapée, et l'étape 7 produit une branche. **La porte reste à constater sur un passage propre, d'un bout à l'autre, sans reprise** — celui du 10 septembre a été joué en réparant au fur et à mesure, ce qui ne prouve pas qu'il passe d'une traite.
 
 Une mesure à garder : les garde-fous d'une consigne ne valent que si elle est lue. Même projet, même modèle — **sans** la consigne `bootstrap` : 15 branches, un `load_when` d'identité en « Toujours utile… ». **Avec** : 12 branches, aucun « toujours ». Et une consigne sans **moment** ne vaut guère mieux qu'une consigne absente : « écris ce que tu découvres » n'a rien changé ; « avant de terminer ta réponse, dis ce que tu as appris » a produit la branche.
+
+## Le passage d'une traite, 11 septembre 2026 — porte toujours pas franchie
+
+Rejoué sur un clone neuf d'`ai-tree`, sans aucune reprise : `install`, « bonjour, on fait quoi ? », « oui ».
+
+**Six critères sur sept.** L'IA propose sans créer ; elle écrit l'arbre **sans terminal** — 9 branches, dans la borne, aucun `load_when` en « toujours », aucun fichier source touché ; et sur une tâche réelle (« comment marche la persistance des conversations ? ») elle écrit une branche et l'annonce avec sa motivation, en nommant précisément ce qui manquait à l'arbre. Les trois corrections de la veille tiennent sur un passage propre.
+
+**Ce qui a cassé : le routage.** Deux prompts ciblés sur trois sont partis en **fallback sur timeout à 20 s** — donc l'arbre entier injecté, ce que l'outil existe pour éviter. Relancés avec un budget de 60 s, les mêmes prompts routent en 13-14 s sur 1 à 2 branches : le routeur fait son travail, c'est le budget qui coupe trop tôt. Le code se contredisait d'ailleurs tout seul — `timeoutFor` est commenté « mesuré entre 5 et 60 s » et rendait `20_000`.
+
+La leçon vaut au-delà du budget : **la veille, les mêmes prompts passaient en 6, 11 et 17 s**. On vivait au bord sans le savoir, et un seul passage réussi ne le disait pas. Un critère qui ne tient qu'à quelques secondes près n'est pas tenu — il est en sursis.
 
 ## Décisions tranchées le 9 septembre 2026
 
