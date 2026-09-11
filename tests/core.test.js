@@ -10,7 +10,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createServer } from '../dist/mcp/server.js';
 
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
-import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree, detectInstructionFiles } from '../dist/core/store.js';
+import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree, detectInstructionFiles, ensureLocalIgnored } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { route, pickEngine, isCliEngine, parseIndices, timeoutFor } from '../dist/core/router.js';
 import { evaluateRouting, parseEvalCases } from '../dist/core/eval.js';
@@ -85,6 +85,50 @@ test('store : delete emporte les enfants', async () => {
   await writeBranch(dir, { path: 'a/b', type: 'context', title: 'B', loadWhen: 'x', content: '' });
   await deleteBranch(dir, 'a');
   assert.equal((await loadTree(dir)).order.length, 0);
+});
+
+test("partage git : un dépôt dans l'arbre n'est pas une branche", async () => {
+  const dir = await scratch();
+  await writeRoot(dir, 'racine');
+  await writeBranch(dir, {
+    path: 'vraie', type: 'context', title: 'Vraie', loadWhen: 'quand', content: 'du contenu',
+  });
+
+  // Le cas « l'arbre est lui-même un dépôt » : `.git` est un **dossier**.
+  await fs.mkdir(path.join(dir, '.git', 'refs'), { recursive: true });
+  await fs.writeFile(path.join(dir, '.git', 'HEAD'), 'ref: refs/heads/main\n', 'utf8');
+  // Le cas submodule : `.git` est un **fichier** qui pointe ailleurs.
+  const sub = await scratch();
+  await writeRoot(sub, 'racine');
+  await fs.writeFile(path.join(sub, '.git'), 'gitdir: ../.git/modules/.contextree\n', 'utf8');
+
+  const tree = await loadTree(dir);
+  assert.deepEqual(tree.order, ['vraie']);
+  assert.equal((await loadTree(sub)).order.length, 0);
+});
+
+test("partage git : le calque personnel est ignoré par git dès la création de l'arbre", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-ignore-'));
+
+  // Hors dépôt git, rien à faire : un `.gitignore` dans un dossier non
+  // versionné serait du bruit.
+  assert.equal(await ensureLocalIgnored(projectDir), 'skipped');
+  await assert.rejects(fs.stat(path.join(projectDir, '.gitignore')));
+
+  // Dans un dépôt, la ligne arrive avec l'arbre. Sans elle, tout le choix du
+  // calque en dossier frère ne tient plus : un `git add -A` pousserait les
+  // notes personnelles au groupe.
+  await fs.mkdir(path.join(projectDir, '.git'));
+  await fs.writeFile(path.join(projectDir, '.gitignore'), 'node_modules/\n', 'utf8');
+  await initTree(projectDir);
+  const ignore = await fs.readFile(path.join(projectDir, '.gitignore'), 'utf8');
+  assert.match(ignore, /^\.contextree\.local\/$/m);
+  // Ce qui y était reste : le fichier appartient à l'utilisateur.
+  assert.match(ignore, /node_modules\//);
+
+  // Idempotent : on ajoute une ligne, on ne réécrit jamais.
+  assert.equal(await ensureLocalIgnored(projectDir), 'present');
+  assert.equal(await fs.readFile(path.join(projectDir, '.gitignore'), 'utf8'), ignore);
 });
 
 test('store : findTreeDir remonte comme .git', async () => {

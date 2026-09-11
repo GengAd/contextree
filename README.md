@@ -51,6 +51,27 @@ cursor --install-extension extension/contextree-vscode-0.1.0.vsix
 
 Elle montre l'arbre dans la barre latérale, surligne les branches réellement lues au dernier tour, et ouvre une toile 2D où l'on édite une branche et où l'on essaie un prompt sans lancer de conversation.
 
+## Partager un arbre avec son équipe (git)
+
+Une équipe qui a déjà un dépôt commun n'a besoin de rien d'autre : versionne
+`.contextree/` avec le projet, ou monte-le en submodule si plusieurs dépôts
+partagent le même contexte.
+
+```bash
+git submodule add <url-de-l-arbre> .contextree   # au choix : ou simplement le dossier du repo
+```
+
+Pull, push, conflits, historique et revue sont ceux de git. `.contextree.local/`
+— ton calque personnel — est **gitignoré dès la création de l'arbre** : ce que tu
+y surcharges ne part jamais au groupe.
+
+Deux choses à savoir avant le premier merge : un conflit non résolu dans le corps
+d'une branche **part au modèle** tel quel, et un conflit dans le frontmatter
+**ne se voit pas** — le `load_when` affiché est alors l'un des deux, au hasard.
+Après un merge qui touche `.contextree/`, relis les `load_when` concernés.
+
+Le détail (`contextree list`, puis la branche « Partager un arbre par git »).
+
 ## La documentation de ce projet est son arbre
 
 Il n'y a pas d'autre `.md` à la racine : tout vit dans `.contextree/`, une branche par sujet, chargée quand elle sert.

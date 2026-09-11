@@ -4,7 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-import { findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch, detectInstructionFiles, DIR_NAME, ROOT_FILE } from '../core/store.js';
+import { findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch, detectInstructionFiles, ensureLocalIgnored, DIR_NAME, ROOT_FILE } from '../core/store.js';
 import { allBranches, formatTree } from '../core/tree.js';
 import { renderContext, renderTrace, renderBootstrapPrompt, renderBootstrapInvite } from '../core/render.js';
 import { route, pickEngine, isCliEngine, withoutRouting, routeInBackground } from '../core/router.js';
@@ -366,6 +366,8 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       // mauvaise.
       const existing = await findTreeDir(cwd);
       const dir = existing ?? path.join(cwd, DIR_NAME);
+      // L'arbre naît ici aussi, donc le garde-fou du calque personnel aussi.
+      if (!existing) await ensureLocalIgnored(cwd);
       await writeRoot(dir, content);
       // Tracée comme une branche, sous le chemin que les vues emploient déjà
       // pour la racine : la pastille « écrite par l'IA » s'allume au même

@@ -23,6 +23,8 @@ Deux comportements à préserver :
 
 **`findTreeDir` remonte l'arborescence** comme `.git` : la CLI se lance depuis n'importe quel sous-dossier.
 
+**Un dépôt git *dans* l'arbre est ignoré**, ce qui rend le submodule possible. `walk()` écarte les dossiers commençant par `.`, et ne lit que les `.md` — or `.git` est un **dossier** dans un clone et un **fichier** dans un submodule (`gitdir: …`). Les deux passent à travers sans cas particulier. Vérifié le 11 septembre 2026 en montant un vrai submodule : l'arbre se lit, `findTreeDir` remonte, `install --status` ne bouge pas.
+
 ## Le calque local
 
 Le calque personnel est un **dossier frère**, `.contextree.local/`, de format identique — pas un champ `overrides:` dans le frontmatter (tranché le 7 septembre 2026). Il est gitignoré : il n'est à personne d'autre.

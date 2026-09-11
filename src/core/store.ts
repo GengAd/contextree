@@ -391,6 +391,50 @@ export function slugify(input: string): string {
  * par personne. Celles-ci sont des amorces à corriger, et leur `load_when` est
  * écrit comme une condition — c'est la forme qu'on veut voir imitée.
  */
+/**
+ * Le calque local n'est « à personne d'autre » que si git l'ignore.
+ *
+ * Tout le choix de faire du calque un **dossier frère** plutôt qu'un champ du
+ * frontmatter reposait là-dessus : deux dossiers rendent impossible qu'un
+ * réglage personnel parte au groupe. Sauf que rien ne l'écrivait (constaté le
+ * 11 septembre 2026, en montant un vrai submodule) — ce dépôt-ci avait la ligne
+ * à la main, et un projet qui créait son arbre n'obtenait rien. Un `git add -A`
+ * chez un utilisateur poussait ses notes au groupe : exactement ce que le design
+ * prétendait rendre impossible par construction.
+ *
+ * On **ajoute une ligne**, on ne réécrit jamais : le `.gitignore` appartient à
+ * l'utilisateur. Rien à faire hors d'un dépôt git — un `.gitignore` posé dans un
+ * dossier non versionné serait du bruit.
+ */
+export async function ensureLocalIgnored(projectDir: string): Promise<'added' | 'present' | 'skipped'> {
+  try {
+    // Pas de dépôt, pas de sujet. `.git` est un dossier dans un clone, un
+    // *fichier* dans un submodule : `stat` répond oui aux deux.
+    await fs.stat(path.join(projectDir, '.git'));
+  } catch {
+    return 'skipped';
+  }
+
+  const file = path.join(projectDir, '.gitignore');
+  let existing = '';
+  try {
+    existing = await fs.readFile(file, 'utf8');
+  } catch {
+    // Absent : on le crée avec la seule ligne qui nous regarde.
+  }
+
+  const wanted = `${LOCAL_DIR_NAME}/`;
+  if (existing.split('\n').some(l => l.trim() === wanted || l.trim() === LOCAL_DIR_NAME)) {
+    return 'present';
+  }
+
+  const body = existing.trim()
+    ? `${existing.replace(/\n*$/, '')}\n\n# contextree : le calque personnel ne se partage pas\n${wanted}\n`
+    : `# contextree : le calque personnel ne se partage pas\n${wanted}\n`;
+  await fs.writeFile(file, body, 'utf8');
+  return 'added';
+}
+
 export async function initTree(
   projectDir: string,
   opts: { force?: boolean } = {},
@@ -400,6 +444,7 @@ export async function initTree(
     throw new Error(`${DIR_NAME}/ existe déjà.`);
   }
   const project = path.basename(projectDir);
+  await ensureLocalIgnored(projectDir);
 
   await writeRoot(
     dir,
