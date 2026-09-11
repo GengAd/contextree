@@ -24,7 +24,14 @@ import * as path from 'node:path';
 export type InstallReport = { file: string; action: 'created' | 'updated' | 'unchanged' }[];
 
 /** Les agents qu'on sait câbler. */
-export type AgentId = 'claude-code' | 'cursor' | 'codex' | 'windsurf' | 'claude-desktop';
+export type AgentId =
+  | 'claude-code'
+  | 'vscode'
+  | 'cursor'
+  | 'codex'
+  | 'gemini'
+  | 'windsurf'
+  | 'claude-desktop';
 
 const PACKAGE = '@gengad/contextree';
 
@@ -96,6 +103,87 @@ export async function installMcpJson(file: string, report: InstallReport): Promi
 async function mcpJsonWired(file: string): Promise<boolean> {
   const config = (await readJson(file)) as { mcpServers?: Record<string, unknown> } | null;
   return Boolean(config?.mcpServers?.['contextree']);
+}
+
+/**
+ * VS Code : `.vscode/mcp.json`, et **ce n'est pas la même forme**.
+ *
+ * Clé racine `servers` et non `mcpServers`, avec un `type: "stdio"` explicite
+ * (vérifié le 11 septembre 2026 sur la doc VS Code). Écrire la forme des autres
+ * ici donnerait un fichier valide en JSON que VS Code ignore en silence — la
+ * panne la plus coûteuse de ce projet, parce qu'elle ressemble à une réussite.
+ *
+ * D'où une fonction à part plutôt qu'un paramètre de plus sur `installMcpJson` :
+ * deux formats, deux fonctions courtes, et aucun risque de servir l'un pour
+ * l'autre.
+ */
+export async function installVscodeMcp(projectDir: string, report: InstallReport): Promise<void> {
+  const file = path.join(projectDir, '.vscode', 'mcp.json');
+  const existed = (await readJson(file)) !== null;
+  const config = (await readJson(file)) ?? {};
+  const servers = ((config as any).servers ??= {});
+  if (servers.contextree) {
+    report.push({ file, action: 'unchanged' });
+    return;
+  }
+  const { command, args } = selfCommand('mcp');
+  servers.contextree = { type: 'stdio', command, args };
+  await writeJson(file, config);
+  report.push({ file, action: existed ? 'updated' : 'created' });
+}
+
+/**
+ * Gemini CLI : `.gemini/settings.json` porte **les deux** surfaces à la fois —
+ * le serveur MCP (`mcpServers`, la forme commune) et un hook par prompt.
+ *
+ * `BeforeAgent` est le seul équivalent de `UserPromptSubmit` en dehors de Claude
+ * Code : son `hookSpecificOutput.additionalContext` est ajouté au prompt du tour
+ * (vérifié le 11 septembre 2026). La structure est imbriquée comme celle de
+ * Claude Code — une liste de matchers, chacun portant sa liste de hooks — et pas
+ * une simple commande, ce qui se devine mal.
+ *
+ * Le hook appelle `hook --agent gemini` : le cœur est le même, seule l'enveloppe
+ * change (Gemini veut du JSON sur stdout, Claude Code du texte brut). Cette
+ * enveloppe est la carte suivante ; ici on n'écrit que la config qui l'appelle.
+ */
+export async function installGemini(projectDir: string, report: InstallReport): Promise<void> {
+  const file = path.join(projectDir, '.gemini', 'settings.json');
+  const existed = (await readJson(file)) !== null;
+  const config = (await readJson(file)) ?? {};
+
+  let changed = false;
+  const servers = ((config as any).mcpServers ??= {});
+  if (!servers.contextree) {
+    const { command, args } = selfCommand('mcp');
+    servers.contextree = { command, args };
+    changed = true;
+  }
+
+  const hooks = ((config as any).hooks ??= {});
+  const before: any[] = (hooks.BeforeAgent ??= []);
+  const already = before.some(entry =>
+    (entry?.hooks ?? []).some((h: any) => typeof h?.command === 'string' && h.command.includes('contextree')),
+  );
+  if (!already) {
+    before.push({
+      hooks: [
+        {
+          type: 'command',
+          name: 'contextree',
+          command: `${selfCommand('hook').shell} --agent gemini`,
+          timeout: 15,
+        },
+      ],
+    });
+    changed = true;
+  }
+
+  if (!changed) {
+    report.push({ file, action: 'unchanged' });
+    return;
+  }
+  await writeJson(file, config);
+  report.push({ file, action: existed ? 'updated' : 'created' });
 }
 
 export async function installHook(projectDir: string, report: InstallReport): Promise<void> {
@@ -180,6 +268,9 @@ export async function syncAgentsFile(
     // Fichier absent : on le crée.
   }
 
+  // `copilot-instructions.md` vit sous `.github/`, qui peut ne pas exister.
+  await fs.mkdir(path.dirname(file), { recursive: true });
+
   const marked = `${MARK_START}\n${block.trim()}\n${MARK_END}`;
   const start = existing.indexOf(MARK_START);
   const end = existing.indexOf(MARK_END);
@@ -251,13 +342,50 @@ export const AGENTS: AgentSpec[] = [
     },
   },
   {
+    id: 'vscode',
+    label: 'VS Code + Copilot',
+    // Deux fichiers de consignes et non un : `copilot-instructions.md` est
+    // toujours lu par Copilot, `AGENTS.md` l'est aussi et sert à tout ce qui
+    // ouvre le dépôt ensuite. Le même bloc dans les deux — une seule source.
+    //
+    // Pas de hook : Copilot en a (préversion), mais la sortie de son
+    // `UserPromptSubmit` est **ignorée**. Un hook qu'on poserait là n'injecterait
+    // rien, en silence. Le fichier de consignes fait le travail sans process.
+    files: p => [
+      path.join(p, '.vscode', 'mcp.json'),
+      path.join(p, '.github', 'copilot-instructions.md'),
+      path.join(p, 'AGENTS.md'),
+    ],
+    marks: p => [
+      path.join(p, '.vscode'),
+      path.join(home(), '.vscode'),
+      path.join(home(), 'Library', 'Application Support', 'Code'),
+      path.join(home(), '.config', 'Code'),
+    ],
+    install: async (p, report, block) => {
+      await installVscodeMcp(p, report);
+      if (block) {
+        await syncAgentsFile(p, block, report, path.join('.github', 'copilot-instructions.md'));
+        await syncAgentsFile(p, block, report);
+      }
+    },
+  },
+  {
     id: 'cursor',
     label: 'Cursor',
     // Le fichier du projet, pas celui du home : un arbre de contexte est
     // attaché à un dépôt, pas à une machine.
-    files: p => [path.join(p, '.cursor', 'mcp.json')],
+    //
+    // `AGENTS.md` en plus du MCP (11 septembre 2026) : Cursor le lit, et ses
+    // hooks ne savent pas injecter par prompt — `beforeSubmitPrompt` ne peut que
+    // bloquer. Sans le fichier, un agent qui n'appelle pas `get_context` de
+    // lui-même ne reçoit rien du tout.
+    files: p => [path.join(p, '.cursor', 'mcp.json'), path.join(p, 'AGENTS.md')],
     marks: p => [path.join(p, '.cursor'), path.join(home(), '.cursor')],
-    install: (p, report) => installMcpJson(path.join(p, '.cursor', 'mcp.json'), report),
+    install: async (p, report, block) => {
+      await installMcpJson(path.join(p, '.cursor', 'mcp.json'), report);
+      if (block) await syncAgentsFile(p, block, report);
+    },
   },
   {
     id: 'codex',
@@ -267,6 +395,19 @@ export const AGENTS: AgentSpec[] = [
     install: async (p, report, block) => {
       await installCodexMcp(report);
       if (block) await syncAgentsFile(p, block, report);
+    },
+  },
+  {
+    id: 'gemini',
+    label: 'Gemini CLI',
+    // Le deuxième agent à avoir un vrai hook par prompt, après Claude Code :
+    // `BeforeAgent` ajoute son `additionalContext` au tour en cours. Les deux
+    // surfaces vivent dans le même fichier, et « câblé » exige les deux.
+    files: p => [path.join(p, '.gemini', 'settings.json'), path.join(p, 'GEMINI.md')],
+    marks: p => [path.join(p, '.gemini'), path.join(home(), '.gemini')],
+    install: async (p, report, block) => {
+      await installGemini(p, report);
+      if (block) await syncAgentsFile(p, block, report, 'GEMINI.md');
     },
   },
   {
@@ -315,24 +456,67 @@ export async function agentStatus(projectDir: string): Promise<AgentStatus[]> {
   );
 }
 
-/** Câblé = **tous** ses fichiers le sont. Un hook posé sans serveur MCP est un
- *  câblage à moitié fait, et l'annoncer comme terminé serait mentir. */
+/**
+ * Câblé = **tous** ses fichiers le sont. Un hook posé sans serveur MCP est un
+ * câblage à moitié fait, et l'annoncer comme terminé serait mentir.
+ *
+ * Chaque fichier se vérifie selon **son format**, reconnu par son chemin et non
+ * par son seul nom (11 septembre 2026). Deux agents rangent leur configuration
+ * dans un fichier qui s'appelle `settings.json`, et deux formats de MCP
+ * cohabitent : tester `basename === 'settings.json'` faisait passer le
+ * `.gemini/` pour un `.claude/`, et le `.vscode/mcp.json` pour la forme
+ * `mcpServers` qu'il n'a pas. Un `--status` qui se trompe est pire qu'absent —
+ * il dit « câblé » sur un agent qui ne reçoit rien.
+ */
 async function isWired(spec: AgentSpec, projectDir: string): Promise<boolean> {
-  const checks = spec.files(projectDir).map(async file => {
-    if (file.endsWith('.toml')) return /^\s*\[mcp_servers\.contextree\]/m.test(await readText(file));
-    if (file.endsWith('AGENTS.md')) return (await readText(file)).includes(MARK_START);
-    if (path.basename(file) === 'settings.json') {
-      const settings = (await readJson(file)) as { hooks?: { UserPromptSubmit?: unknown[] } } | null;
-      return (settings?.hooks?.UserPromptSubmit ?? []).some((entry: any) =>
-        (entry?.hooks ?? []).some(
-          (h: any) => typeof h?.command === 'string' && h.command.includes('contextree'),
-        ),
-      );
-    }
-    return mcpJsonWired(file);
-  });
+  const checks = spec.files(projectDir).map(file => wiredIn(file));
   const results = await Promise.all(checks);
   return results.length > 0 && results.every(Boolean);
+}
+
+/** contextree est-il présent dans ce fichier-là, au format de ce fichier-là ? */
+async function wiredIn(file: string): Promise<boolean> {
+  const parts = file.split(path.sep);
+  const dir = parts[parts.length - 2];
+  const name = path.basename(file);
+
+  // Un fichier de consignes : le bloc borné. `AGENTS.md`, `GEMINI.md`,
+  // `copilot-instructions.md` — tous le même bloc, tous la même vérification.
+  if (name.endsWith('.md')) return (await readText(file)).includes(MARK_START);
+  if (name.endsWith('.toml')) return /^\s*\[mcp_servers\.contextree\]/m.test(await readText(file));
+
+  // VS Code : clé `servers`, pas `mcpServers`.
+  if (dir === '.vscode' && name === 'mcp.json') {
+    const config = (await readJson(file)) as { servers?: Record<string, unknown> } | null;
+    return Boolean(config?.servers?.['contextree']);
+  }
+
+  // Gemini : les **deux** surfaces dans le même fichier. L'une sans l'autre
+  // n'est pas un câblage terminé.
+  if (dir === '.gemini' && name === 'settings.json') {
+    const config = (await readJson(file)) as {
+      mcpServers?: Record<string, unknown>;
+      hooks?: { BeforeAgent?: unknown[] };
+    } | null;
+    return Boolean(config?.mcpServers?.['contextree']) && hasHook(config?.hooks?.BeforeAgent);
+  }
+
+  if (dir === '.claude' && name === 'settings.json') {
+    const settings = (await readJson(file)) as { hooks?: { UserPromptSubmit?: unknown[] } } | null;
+    return hasHook(settings?.hooks?.UserPromptSubmit);
+  }
+
+  return mcpJsonWired(file);
+}
+
+/** La forme imbriquée que partagent Claude Code et Gemini : une liste de
+ *  matchers, chacun portant sa liste de commandes. */
+function hasHook(list: unknown[] | undefined): boolean {
+  return (list ?? []).some((entry: any) =>
+    (entry?.hooks ?? []).some(
+      (h: any) => typeof h?.command === 'string' && h.command.includes('contextree'),
+    ),
+  );
 }
 
 /** Câble un agent nommé. Rend ce qui a été écrit — jamais rien en silence. */

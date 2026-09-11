@@ -45,13 +45,21 @@ Autres contraintes :
 
 `CONTEXTREE_ROUTER_TIMEOUT_MS` écrase tout, et c'est la seule échappatoire.
 
+**Le différé ne dépend pas de l'agent.** Le hook part en tâche de fond sous moteur CLI quel que soit son dialecte — Claude Code, Gemini, Codex : c'est le même `cmdHook`, seule l'enveloppe de sortie change.
+
 **Le budget CLI était à 20 s, soit la moitié basse de ce que le code mesurait lui-même** (« entre 5 et 60 s », écrit juste au-dessus de la constante). On l'a payé deux fois : 9 cas d'éval sur 20 tombés dans le repli le 9 septembre, puis deux prompts ciblés sur trois lors du passage « depuis zéro » du 11 — 20 007 et 20 006 ms, donc l'arbre entier injecté. Les mêmes, budget relevé : 11 420, **37 282** et 20 554 ms, tous routés. Le second dit pourquoi 45 s et pas 30 : la file d'un abonnement n'a pas de médiane utile, elle a une queue.
 
 **Un budget serré ne protège de rien ici.** Le repli *injecte plus* — il n'abrège pas. La seule chose qu'un budget trop court fait gagner, c'est le temps d'écrire le contexte qu'on voulait éviter.
 
 **Le budget d'un outil est plafonné par le client, pas par notre patience.** Le SDK MCP abandonne une requête à 60 s. Poussé à 60 s côté serveur, `get_context` expirait **côté client** avant d'avoir pu rendre son repli : plus de contexte du tout, au lieu d'un contexte trop large. D'où les 45 s, nettement dessous, pour que le repli arrive toujours.
 
-**Ce qui reste ouvert** : sous moteur CLI, `get_context` ne peut pas *garantir* un routage. La queue de latence (37 s mesuré, parfois plus) frôle ce qu'un client tolère, et il n'y a pas de mode différé côté MCP — un agent sans hook n'a que cette surface. Les deux sorties possibles sont une clé API pour les surfaces synchrones (2,5 s, sans queue) ou un routage de fond côté serveur, qui servirait au tour suivant comme le fait le hook.
+**Sous moteur CLI, `get_context` diffère aussi** (11 septembre 2026). Router en synchrone revenait à choisir entre l'arbre entier (un repli à 45 s) et rien du tout (l'appel expire côté client) — aucune des deux n'est une réponse pour Cursor, Codex ou Copilot, qui n'ont que cette surface et pour qui `get_context` **est** contextree. L'outil rend donc tout de suite la sélection héritée, lance le routage derrière, et celui-ci sert à l'appel suivant : exactement ce que le hook fait depuis le début. Sous clé API, rien de tout ça — 2500 ms, pas de file, on route en synchrone.
+
+Mesuré, dix appels d'affilée sur le vrai serveur stdio, arbre de 8 branches : **3 à 18 ms** chacun, aucun n'expire, et après le premier la sélection descend à 1, 4 ou 7 branches. Une session MCP neuve sur un projet déjà routé hérite du second niveau du cache — 1 branche sur 8, en 6 ms. L'arbre entier n'arrive plus que sur un projet jamais routé : un démarrage à froid, pas un échec.
+
+**Ce qui tient lieu de session pour un serveur MCP** : le process lui-même. Il n'a pas de notion de tour, mais l'agent le relance à chaque session, donc sa durée de vie *est* la session — un id tiré au démarrage suffit à ranger le cache. Il ne collisionne pas avec celui du hook : quand les deux surfaces tournent côte à côte, chacune a sa piste, et le second niveau du cache les fait quand même se parler.
+
+`routeInBackground` vit dans `router.ts` et non dans la CLI depuis qu'il a **deux appelants** — le hook et le serveur. Deux copies auraient divergé au premier correctif.
 
 `CONTEXTREE_ROUTER` (`auto`|`anthropic`|`openai`|`claude`|`codex`|`gemini`|`off` ; `sdk` et `cli` restent compris), `CONTEXTREE_ROUTER_MODEL`, `CONTEXTREE_ROUTER_TIMEOUT_MS`, `OPENAI_BASE_URL`, `CONTEXTREE_CLAUDE_BIN`.
 

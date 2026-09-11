@@ -8,13 +8,40 @@ Tous les agents n'ont pas de hook. Trois surfaces, par ordre de qualité — c'e
 
 | Surface | Où | Qualité |
 |---|---|---|
-| Hook par prompt | `.claude/settings.json` | **une avance gratuite** — mais routée sur le prompt seul |
-| Serveur MCP | `.mcp.json`, `.cursor/mcp.json`, `~/.codex/config.toml`, … | portable, mais l'agent doit vouloir appeler `get_context` |
-| Fichier de consignes | `AGENTS.md` | dernier recours, pour qui n'a ni l'un ni l'autre |
+| Hook par prompt | `.claude/settings.json`, `.gemini/settings.json` | **une avance gratuite** — mais routée sur le prompt seul |
+| Serveur MCP | `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `~/.codex/config.toml`, … | portable, mais l'agent doit vouloir appeler `get_context` — différé comme le hook sous moteur CLI (voir *Mécanique du routage*) |
+| Fichier de consignes | `AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md` | dernier recours, pour qui n'a ni l'un ni l'autre |
 
-**Le registre `AGENTS`** (dans `src/install.ts`) tient cinq agents : Claude Code (hook + MCP), Cursor (`.cursor/mcp.json` — le projet, pas le home), Codex (`config.toml` + `AGENTS.md`), Windsurf, Claude Desktop. Quatre partagent la forme `{ "mcpServers": … }` : une seule fonction (`installMcpJson`) et une table de chemins, pas un adaptateur par agent qui divergerait au premier correctif.
+**Le registre `AGENTS`** (dans `src/install.ts`) tient **sept** agents depuis le 11 septembre 2026 — un agent = le serveur MCP, plus **la meilleure surface d'injection qu'il sait offrir** :
+
+| Agent | MCP | Injection |
+|---|---|---|
+| Claude Code | `.mcp.json` | hook `UserPromptSubmit` |
+| Gemini CLI | `.gemini/settings.json` | hook `BeforeAgent` |
+| VS Code + Copilot | `.vscode/mcp.json` — forme **`servers`** | `.github/copilot-instructions.md` + `AGENTS.md` |
+| Cursor | `.cursor/mcp.json` (le projet, pas le home) | `AGENTS.md` |
+| Codex | `~/.codex/config.toml` | `AGENTS.md` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | — |
+| Claude Desktop | config du système | — |
+| ChatGPT / Claude web | — | presse-papier (`render --copy`) |
+
+Quatre partagent la forme `{ "mcpServers": … }` : une seule fonction (`installMcpJson`) et une table de chemins, pas un adaptateur par agent qui divergerait au premier correctif.
+
+**Les deux exceptions sont des exceptions de format, et elles ont leur fonction.** VS Code veut `{ "servers": { … , "type": "stdio" } }` — écrire la forme commune donne un JSON valide **que VS Code ignore en silence**, la panne la plus coûteuse de ce projet parce qu'elle ressemble à une réussite. Gemini met ses deux surfaces dans un seul fichier, et « câblé » exige les deux.
+
+**Un fichier ne se reconnaît pas à son nom.** `isWired` testait `basename === 'settings.json'` : deux agents en ont un, et le `.gemini/` passait pour un `.claude/`. Chaque fichier se vérifie selon son format, reconnu par son **chemin**. Un `--status` qui se trompe est pire qu'absent — il dit « câblé » sur un agent qui ne reçoit rien.
+
+**Les hooks qu'on ne câble pas, et pourquoi.** Copilot en a (préversion) mais **ignore la sortie** de son `UserPromptSubmit` ; Cursor a `beforeSubmitPrompt`, qui ne sait que bloquer. Poser un hook là serait poser un process qui n'injecte rien, en silence. Le fichier de consignes fait le même travail sans process. Pour Codex, la doc du 11 septembre 2026 ne confirme ni l'événement `UserPromptSubmit` ni le statut expérimental qu'on lui prêtait : tant que ce n'est pas vérifiable, on n'écrit pas une config muette.
+
+**Sans arbre, le câblage est à moitié fait, et `install` le dit.** Le bloc de consignes se remplit depuis l'arbre ; s'il n'y en a pas, les agents qui en dépendent restent « à câbler ». C'est exact, et c'est la même règle que pour le hook sans MCP — mais il fallait le dire, sinon `--status` accuse sans expliquer.
 
 **Regarder n'écrit jamais.** `agentStatus()` répond « câblé / à câbler / non détecté » sans toucher au disque. C'est ce qui permet au bouton de l'extension et à `install --status` de *montrer* l'état plutôt que de tenter l'écriture pour découvrir le résultat. **Câblé = tous ses fichiers le sont** : un serveur MCP posé sans le hook est un câblage à moitié fait, et l'annoncer comme terminé serait mentir sur la surface qui donne l'avance.
+
+**Le hook parle trois dialectes, et ne change qu'une enveloppe** (11 septembre 2026). `contextree hook [--agent claude|gemini|codex]`, défaut `claude`. Vérifié : Gemini lit le **même payload** que Claude Code — `prompt`, `cwd`, `session_id` — et seule la **sortie** diffère. Claude Code et Codex prennent le texte brut ; Gemini veut `{"hookSpecificOutput":{"hookEventName":"BeforeAgent","additionalContext":"<bloc>"}}` et **rien d'autre** sur stdout.
+
+D'où une table de deux enveloppes (`HOOK_DIALECTS`) et non un `cmdHook` par agent : ce qui varie tient en une fonction d'une ligne, et tout le reste — routage différé, journal, cache de session, invitation sans arbre — doit rester rigoureusement identique. **Toute** écriture sur stdout passe par l'enveloppe, l'invitation comprise : du texte nu casserait le JSON de Gemini. La trace reste sur stderr pour les trois.
+
+Un `--agent` inconnu retombe sur le texte brut au lieu de lever — le hook ne bloque jamais un prompt, pas même pour un drapeau mal tapé.
 
 **Codex** n'a pas d'équivalent de `UserPromptSubmit`. La table `[mcp_servers.contextree]` est ajoutée **à la fin** de `config.toml` — pas de parseur TOML (ce serait la 4e dépendance pour six lignes), et une table finale ne peut être avalée par aucune table précédente.
 

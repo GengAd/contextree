@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, deleteBranch, moveBranch, initTree, detectInstructionFiles } from './core/store.js';
 import { allBranches, formatTree } from './core/tree.js';
 import { renderContext, renderTrace, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite } from './core/render.js';
-import { route, pickEngine, isCliEngine, engineBin, withoutRouting } from './core/router.js';
+import { route, pickEngine, isCliEngine, engineBin, withoutRouting, routeInBackground } from './core/router.js';
 import { encodePack, extractPack, applyPack } from './core/pack.js';
 import { readSelection, writeSelection, claimBootstrapInvite } from './core/session.js';
 import { appendTurn } from './core/journal.js';
@@ -106,7 +106,7 @@ async function main(argv: string[]): Promise<number> {
       await new Promise<never>(() => {});
       return 0;
     case 'hook':
-      return cmdHook();
+      return cmdHook(str(flags.agent) ?? 'claude');
     case 'remote':
       return cmdRemote(flags._[0], flags._[1]);
     case 'login':
@@ -188,6 +188,10 @@ async function cmdInstall(flags: Flags): Promise<number> {
       process.stdout.write(`${state.padEnd(12)} ${a.label}\n`);
       for (const f of a.files) process.stdout.write(`             ${shorten(f)}\n`);
     }
+    // Les agents sans surface à câbler existent aussi, et l'outil les sert :
+    // le dire ici évite de chercher une ligne « non détecté » qui ne viendra pas.
+    process.stdout.write('\nChatGPT / Claude web : rien à câbler — `contextree render --copy`,\n');
+    process.stdout.write('                      ou `contextree route "<ta demande>" --copy`.\n');
     process.stdout.write(`\n${wiredCommands()}`);
     process.stdout.write(`Routage : ${describeEngine()}\n`);
     return 0;
@@ -204,10 +208,14 @@ async function cmdInstall(flags: Flags): Promise<number> {
     asked ? asked === 'all' || asked === a.id : a.detected || a.id === 'claude-code',
   );
 
-  // Le bloc `AGENTS.md` n'est calculé que si un agent en veut un : sans arbre,
+  // Le bloc de consignes n'est calculé que si un agent en veut un : sans arbre,
   // `install` doit rester possible pour câbler d'abord et créer ensuite.
+  //
+  // Ils sont quatre à en vouloir un depuis le 11 septembre 2026 — la liste se
+  // lit dans le registre plutôt que d'être recopiée ici, sinon un agent ajouté
+  // demain recevrait un `AGENTS.md` vide sans que personne ne le remarque.
   let block: string | undefined;
-  if (targets.some(a => a.id === 'codex')) {
+  if (targets.some(a => AGENTS.find(x => x.id === a.id)?.files('').some(f => f.endsWith('.md')))) {
     const dir = await findTreeDir();
     if (dir) block = renderAgentsBlock(await loadTree(dir));
   }
@@ -216,6 +224,16 @@ async function cmdInstall(flags: Flags): Promise<number> {
   for (const a of targets) report.push(...(await installAgent(a.id, process.cwd(), block)));
 
   for (const r of report) process.stdout.write(`${r.action.padEnd(9)} ${shorten(r.file)}\n`);
+
+  // Sans arbre, le fichier de consignes ne peut pas être écrit : le dire ici,
+  // sinon `--status` répondra « à câbler » sans qu'on comprenne ce qui manque.
+  if (!block && targets.some(a => AGENTS.find(x => x.id === a.id)?.files('').some(f => f.endsWith('.md')))) {
+    process.stdout.write(
+      '\nPas encore de fichier de consignes : il se remplit depuis l\'arbre, qui n\'existe pas ici.\n' +
+        'Crée-le (ou laisse ton IA te le proposer), puis relance `install` — ces agents\n' +
+        "resteront « à câbler » d'ici là, et c'est exact : la moitié de leur surface manque.\n",
+    );
+  }
 
   // Seulement quand on n'a rien demandé de précis : sur `--agent cursor`, les
   // autres ne sont pas « non détectés », ils ne sont pas le sujet.
@@ -683,7 +701,44 @@ async function remote(run: () => Promise<void>): Promise<number> {
   }
 }
 
-async function cmdHook(): Promise<number> {
+/**
+ * Les dialectes de hook — **même cœur, trois enveloppes**.
+ *
+ * Vérifié le 11 septembre 2026 : Gemini CLI (`BeforeAgent`) lit le *même*
+ * payload que Claude Code — `prompt`, `cwd`, `session_id` — et c'est seulement
+ * la **sortie** qui diffère. Claude Code et Codex prennent le texte brut ;
+ * Gemini veut du JSON, et **rien d'autre** sur stdout.
+ *
+ * D'où une table de deux enveloppes plutôt qu'un `cmdHook` par agent : ce qui
+ * varie tient en une fonction d'une ligne, et tout le reste — routage différé,
+ * journal, cache de session, invitation sans arbre — doit rester rigoureusement
+ * identique. Trois copies auraient divergé au premier correctif, et la divergence
+ * se serait vue sur l'agent qu'on teste le moins.
+ *
+ * **L'invariant compte double ici** : sous Gemini, un code de sortie 2 *bloque*
+ * le tour et efface le prompt. Sortir en 0 quoi qu'il arrive n'est plus
+ * seulement une politesse, c'est ce qui sépare un contexte manquant d'un prompt
+ * perdu.
+ *
+ * `codex` partage l'enveloppe texte de Claude Code. Sa config n'est pas écrite
+ * par `install` — la doc ne confirme pas l'événement — mais le dialecte existe :
+ * qui active le hook à la main ne tombe pas sur un agent inconnu.
+ */
+const HOOK_DIALECTS: Record<string, (block: string) => string> = {
+  claude: block => `${block}\n`,
+  codex: block => `${block}\n`,
+  // `additionalContext` est ajouté au prompt du tour, et rien d'autre ne doit
+  // sortir sur stdout : la trace continue de partir sur stderr.
+  gemini: block =>
+    `${JSON.stringify({
+      hookSpecificOutput: { hookEventName: 'BeforeAgent', additionalContext: block },
+    })}\n`,
+};
+
+async function cmdHook(agent: string): Promise<number> {
+  // Un agent inconnu retombe sur le texte brut plutôt que de lever : le hook ne
+  // bloque jamais un prompt, pas même pour un drapeau mal tapé.
+  const envelope = HOOK_DIALECTS[agent] ?? HOOK_DIALECTS['claude']!;
   try {
     // Le routeur peut lancer `claude -p` : si ce process relançait le hook, on
     // partirait en boucle. Il se tait.
@@ -705,7 +760,9 @@ async function cmdHook(): Promise<number> {
     // rien demandé.
     if (!dir) {
       if (await claimBootstrapInvite(cwd, sessionId)) {
-        process.stdout.write(`${renderBootstrapInvite(await detectInstructionFiles(cwd))}\n`);
+        // L'invitation passe par l'enveloppe comme le reste : sous Gemini, du
+        // texte nu sur stdout casserait le JSON qu'il attend.
+        process.stdout.write(envelope(renderBootstrapInvite(await detectInstructionFiles(cwd))));
       }
       return 0;
     }
@@ -745,42 +802,15 @@ async function cmdHook(): Promise<number> {
     });
 
     const block = renderContext(tree, selected);
-    if (block) process.stdout.write(`${block}\n`);
+    if (block) process.stdout.write(envelope(block));
+    // La trace part sur stderr, pour les trois : l'inverser polluerait le
+    // contexte du modèle, et casserait le JSON de Gemini.
     process.stderr.write(`${renderTrace(tree, selected, reason)}\n`);
   } catch {
     // Silence délibéré : un contexte manquant est un désagrément, un prompt
     // bloqué est une panne.
   }
   return 0;
-}
-
-/**
- * Le routage de ce prompt, lancé derrière et laissé seul.
- *
- * Détaché et sans stdio : il survit à la sortie du hook — c'est tout l'intérêt.
- * Le prompt passe en base64, un `argv` n'a pas à deviner ce qu'un utilisateur
- * peut écrire. Toute panne ici est un routage en moins, jamais un prompt bloqué.
- */
-function routeInBackground(dir: string, sessionId: string, prompt: string, at: number): void {
-  try {
-    const entry = process.argv[1];
-    if (!entry) return;
-    const child = spawn(
-      process.execPath,
-      [
-        entry,
-        'route-bg',
-        '--dir', dir,
-        '--session', sessionId,
-        '--prompt64', Buffer.from(prompt.slice(0, 4000), 'utf8').toString('base64'),
-        '--at', String(at),
-      ],
-      { detached: true, stdio: 'ignore' },
-    );
-    child.unref();
-  } catch {
-    // Pas de routage de fond : le tour suivant repartira du tour précédent.
-  }
 }
 
 /**
