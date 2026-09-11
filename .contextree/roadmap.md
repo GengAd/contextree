@@ -15,7 +15,7 @@ Chaque palier n'ouvre que quand le précédent est **utilisé pour de vrai**, pa
 | ~~P1 usage perso~~ **fait le 9 septembre 2026** | `p1-usage-perso` (mergée) | l'outil marche sur les autres projets d'Adrien, et la vue dit la vérité sur le routage | **franchie** — voir plus bas |
 | ~~P2 dogfooding~~ **fait le 9 septembre 2026** | `p2-dogfooding` (mergée) | plus aucun `.md` de consignes hors de l'arbre dans ce repo (`README.md` = procédure, seule exception) | **à moitié franchie** — voir plus bas |
 | ~~P3 depuis zéro~~ **fait le 11 septembre 2026** | `p3-depuis-zero` (mergée) | sur un dossier vierge, l'IA propose l'arbre, le construit proprement, renvoie à la toile | **franchie** — sept critères sur sept, au troisième passage d'une traite ; voir plus bas |
-| P4 tous les agents | `p4-tous-les-agents` | Claude Code, VS Code + Copilot (cible probable de l'entreprise), Cursor, Codex, Gemini ; ChatGPT web = presse-papier | la matrice est cochée ligne par ligne |
+| P4 tous les agents | `p4-tous-les-agents` | Claude Code, VS Code + Copilot (cible probable de l'entreprise), Cursor, Codex, Gemini ; ChatGPT web = presse-papier | **pas franchie au 11 septembre 2026** — sept câblages vérifiés, un seul agent déroulé ; voir *Matrice des agents* |
 | P5 démo | `p5-demo` | dix minutes devant l'entreprise ; le partage par git, déroulé à deux | la démo tourne sur l'éditeur de la boîte, réseau coupé si besoin |
 | P6 distribution | `p6-distribution` | npm, Open VSX, hook pinné, README procédure — pour que des collègues installent | `npx -y @gengad/contextree init` marche sur une machine vierge |
 | P7 serveur | `p7-serveur` | le backend sert à deux : compte, invitation par code, premier vrai pull/push, calques et montages | un second compte pull un arbre poussé par le premier, et le monte dans un autre projet |
@@ -110,6 +110,14 @@ Le dernier point mérite d'être lu pour ce qu'il est : l'IA **n'a pas écrit** 
 - **Ce qui n'est pas un outil n'existe pas pour l'agent.** Une consigne dans les `instructions`, un prompt MCP, une invitation en texte — tout cela informe, rien de tout cela n'agit.
 - **Une consigne sans moment est une consigne qu'on remet à plus tard.** Vérifié deux fois, sur deux consignes différentes. Le détail est dans *Surfaces d'injection par agent*.
 - **Un scénario qu'on répare en le déroulant ne prouve rien.** Trois passages ont été nécessaires : le premier a produit trois cartes, le deuxième a révélé le budget de routage, le troisième la formulation de l'invitation. Chaque passage « réussi » cachait un critère qui ne tenait qu'à peu de chose.
+
+## P4, au 11 septembre 2026 — câblé partout, déroulé sur un seul
+
+Sept agents au registre, sept câblages vérifiés, **un seul agent déroulé**. La porte de sortie de P4 — « la matrice est cochée ligne par ligne » — n'est donc **pas** franchie, et elle ne peut pas l'être sans Adrien : lancer Copilot Chat, l'agent de Cursor ou un CLI qui n'est pas installé n'est pas quelque chose qu'une session en terminal sait faire.
+
+Ce que le palier a donné jusqu'ici : `get_context` diffère sous moteur CLI (les agents sans hook ne reçoivent plus l'arbre entier une fois sur deux), VS Code + Copilot et Gemini CLI entrent au registre, Cursor gagne son fichier de consignes, et le hook parle trois dialectes. Le détail par agent est dans *Matrice des agents*.
+
+**Ce que la matrice apprend sur la façon de mesurer** : la moitié d'une ligne se vérifie sans l'agent — la forme des fichiers, le contenu du bloc, la sortie du hook exécutée telle quelle. L'autre moitié ne se déduit de rien : l'agent lit-il ce qu'on lui écrit ? Distinguer les deux dans le tableau vaut mieux qu'une colonne « OK » qui mélangerait une observation et une intention.
 
 ## Décisions tranchées le 9 septembre 2026
 
