@@ -854,9 +854,9 @@ test("bootstrap : l'invitation se pose une fois par session et par dossier", asy
 /** Le hook tel qu'un agent le lance : un payload JSON sur stdin, le contexte sur
  *  stdout. Le seul test qui passe par le vrai binaire — c'est le contrat que
  *  Claude Code exécute, et il ne se vérifie pas en appelant les fonctions. */
-function runHook(payload, env = {}) {
+function runHook(payload, env = {}, args = []) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['dist/cli.js', 'hook'], {
+    const child = spawn(process.execPath, ['dist/cli.js', 'hook', ...args], {
       env: { ...process.env, ...env },
     });
     let out = '';
@@ -867,6 +867,57 @@ function runHook(payload, env = {}) {
     child.stdin.end(JSON.stringify(payload));
   });
 }
+
+test('hook : trois dialectes, une seule enveloppe qui change', async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-dial-state-'));
+  const dir = await scratch();
+  await writeRoot(dir, 'la racine');
+  for (const p of ['a', 'b', 'c', 'd']) {
+    await writeBranch(dir, {
+      path: p, type: 'context', title: p.toUpperCase(),
+      loadWhen: `quand ${p}`, content: `contenu ${p}`,
+    });
+  }
+  const projet = path.dirname(dir);
+  // Le payload est le **même** pour Claude Code et Gemini : prompt, cwd,
+  // session_id. Seule la sortie diffère — c'est tout l'intérêt d'une table.
+  const payload = { prompt: 'une demande', cwd: projet, session_id: 'd1' };
+  const env = { CONTEXTREE_STATE_DIR: stateDir, CONTEXTREE_ROUTER: 'off' };
+
+  // Claude Code, et Codex : le bloc brut.
+  for (const agent of ['claude', 'codex']) {
+    const r = await runHook(payload, env, agent === 'claude' ? [] : ['--agent', agent]);
+    assert.equal(r.code, 0);
+    assert.match(r.out, /^<contextree>/);
+  }
+
+  // Gemini : du JSON, et **rien d'autre** sur stdout.
+  const gem = await runHook(payload, env, ['--agent', 'gemini']);
+  assert.equal(gem.code, 0);
+  const parsed = JSON.parse(gem.out);
+  assert.equal(parsed.hookSpecificOutput.hookEventName, 'BeforeAgent');
+  assert.match(parsed.hookSpecificOutput.additionalContext, /^<contextree>/);
+  assert.match(parsed.hookSpecificOutput.additionalContext, /la racine/);
+
+  // Un drapeau mal tapé retombe sur le texte : le hook ne bloque jamais un
+  // prompt, pas même pour ça.
+  const inconnu = await runHook(payload, env, ['--agent', 'nimportequoi']);
+  assert.equal(inconnu.code, 0);
+  assert.match(inconnu.out, /^<contextree>/);
+});
+
+test('hook : un payload cassé sort en 0 et neutre, dans les trois dialectes', async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-dial-err-'));
+  const env = { CONTEXTREE_STATE_DIR: stateDir };
+  // Sous Gemini, un code 2 **bloque le tour et efface le prompt** : l'invariant
+  // du code 0 n'y est plus une politesse, il sépare un contexte manquant d'un
+  // prompt perdu.
+  for (const args of [[], ['--agent', 'gemini'], ['--agent', 'codex']]) {
+    const r = await runHook('pas du json', env, args);
+    assert.equal(r.code, 0);
+    assert.equal(r.out, '');
+  }
+});
 
 test("hook : sans arbre, l'invitation sort une fois par session — et jamais un code non nul", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-hook-state-'));

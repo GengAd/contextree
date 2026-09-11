@@ -37,6 +37,12 @@ Quatre partagent la forme `{ "mcpServers": … }` : une seule fonction (`install
 
 **Regarder n'écrit jamais.** `agentStatus()` répond « câblé / à câbler / non détecté » sans toucher au disque. C'est ce qui permet au bouton de l'extension et à `install --status` de *montrer* l'état plutôt que de tenter l'écriture pour découvrir le résultat. **Câblé = tous ses fichiers le sont** : un serveur MCP posé sans le hook est un câblage à moitié fait, et l'annoncer comme terminé serait mentir sur la surface qui donne l'avance.
 
+**Le hook parle trois dialectes, et ne change qu'une enveloppe** (11 septembre 2026). `contextree hook [--agent claude|gemini|codex]`, défaut `claude`. Vérifié : Gemini lit le **même payload** que Claude Code — `prompt`, `cwd`, `session_id` — et seule la **sortie** diffère. Claude Code et Codex prennent le texte brut ; Gemini veut `{"hookSpecificOutput":{"hookEventName":"BeforeAgent","additionalContext":"<bloc>"}}` et **rien d'autre** sur stdout.
+
+D'où une table de deux enveloppes (`HOOK_DIALECTS`) et non un `cmdHook` par agent : ce qui varie tient en une fonction d'une ligne, et tout le reste — routage différé, journal, cache de session, invitation sans arbre — doit rester rigoureusement identique. **Toute** écriture sur stdout passe par l'enveloppe, l'invitation comprise : du texte nu casserait le JSON de Gemini. La trace reste sur stderr pour les trois.
+
+Un `--agent` inconnu retombe sur le texte brut au lieu de lever — le hook ne bloque jamais un prompt, pas même pour un drapeau mal tapé.
+
 **Codex** n'a pas d'équivalent de `UserPromptSubmit`. La table `[mcp_servers.contextree]` est ajoutée **à la fin** de `config.toml` — pas de parseur TOML (ce serait la 4e dépendance pour six lignes), et une table finale ne peut être avalée par aucune table précédente.
 
 **Le bloc injecté** (`renderContext`) est encadré par `<contextree>…</contextree>` et assemblé dans cet ordre : le contenu de `root.md` (toujours), `## Rules` (les branches `identity` et `rule` retenues), `## Context` (tout le reste), `## Catalogue — branches non chargées` (une ligne par branche écartée : titre, type, `load_when`), puis **une ligne de rappel : écrire ce qu'on vient d'apprendre**. Les règles passent avant le contexte parce que ce sont des contraintes — le modèle doit les avoir en tête avant de lire la doc de domaine. Le catalogue passe en dernier : on le lit une fois qu'on sait ce qu'on a reçu.

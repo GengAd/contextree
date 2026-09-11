@@ -45,6 +45,8 @@ Autres contraintes :
 
 `CONTEXTREE_ROUTER_TIMEOUT_MS` écrase tout, et c'est la seule échappatoire.
 
+**Le différé ne dépend pas de l'agent.** Le hook part en tâche de fond sous moteur CLI quel que soit son dialecte — Claude Code, Gemini, Codex : c'est le même `cmdHook`, seule l'enveloppe de sortie change.
+
 **Le budget CLI était à 20 s, soit la moitié basse de ce que le code mesurait lui-même** (« entre 5 et 60 s », écrit juste au-dessus de la constante). On l'a payé deux fois : 9 cas d'éval sur 20 tombés dans le repli le 9 septembre, puis deux prompts ciblés sur trois lors du passage « depuis zéro » du 11 — 20 007 et 20 006 ms, donc l'arbre entier injecté. Les mêmes, budget relevé : 11 420, **37 282** et 20 554 ms, tous routés. Le second dit pourquoi 45 s et pas 30 : la file d'un abonnement n'a pas de médiane utile, elle a une queue.
 
 **Un budget serré ne protège de rien ici.** Le repli *injecte plus* — il n'abrège pas. La seule chose qu'un budget trop court fait gagner, c'est le temps d'écrire le contexte qu'on voulait éviter.
