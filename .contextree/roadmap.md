@@ -14,7 +14,7 @@ Chaque palier n'ouvre que quand le précédent est **utilisé pour de vrai**, pa
 |---|---|---|---|
 | ~~P1 usage perso~~ **fait le 9 septembre 2026** | `p1-usage-perso` (mergée) | l'outil marche sur les autres projets d'Adrien, et la vue dit la vérité sur le routage | **franchie** — voir plus bas |
 | ~~P2 dogfooding~~ **fait le 9 septembre 2026** | `p2-dogfooding` (mergée) | plus aucun `.md` de consignes hors de l'arbre dans ce repo (`README.md` = procédure, seule exception) | **à moitié franchie** — voir plus bas |
-| P3 depuis zéro | `p3-depuis-zero` | sur un dossier vierge, l'IA propose l'arbre, le construit proprement, renvoie à la toile | **pas franchie au 11 septembre 2026** — le routage tient désormais, la proposition rate 2 fois sur 6. Voir plus bas |
+| ~~P3 depuis zéro~~ **fait le 11 septembre 2026** | `p3-depuis-zero` (mergée) | sur un dossier vierge, l'IA propose l'arbre, le construit proprement, renvoie à la toile | **franchie** — sept critères sur sept, au troisième passage d'une traite ; voir plus bas |
 | P4 tous les agents | `p4-tous-les-agents` | Claude Code, VS Code + Copilot (cible probable de l'entreprise), Cursor, Codex, Gemini ; ChatGPT web = presse-papier | la matrice est cochée ligne par ligne |
 | P5 démo | `p5-demo` | dix minutes devant l'entreprise ; le partage par git, déroulé à deux | la démo tourne sur l'éditeur de la boîte, réseau coupé si besoin |
 | P6 distribution | `p6-distribution` | npm, Open VSX, hook pinné, README procédure — pour que des collègues installent | `npx -y @gengad/contextree init` marche sur une machine vierge |
@@ -87,6 +87,29 @@ Budget de routage corrigé, scénario rejoué sur un clone neuf. **L'étape 6 pa
 Rien de neuf sur le fond : c'est la leçon de la veille, sur une autre consigne. « Propose-le au bon moment, sans insister » se lit comme une permission de se taire, exactement comme « écris ce que tu découvres ». Le détail est dans *Surfaces d'injection par agent*.
 
 **Ce que le rejeu d'une traite aura prouvé, deux fois** : chaque passage réussi cachait un critère qui ne tenait qu'à peu de chose — quelques secondes de latence la première fois, une formulation permissive la seconde. Un scénario qu'on répare en le déroulant ne prouve rien ; c'est le passage sans reprise qui parle.
+
+## P3, franchie le 11 septembre 2026
+
+Troisième passage d'une traite, clone neuf d'`ai-tree`, aucune reprise. **Les sept critères passent :**
+
+| étape | résultat |
+|---|---|
+| `install`, pas `init` | le hook et le serveur MCP câblés, pas d'arbre |
+| l'IA propose sans créer | proposé, en fin de réponse — 6 sur 6 sur la mesure dédiée |
+| l'arbre écrit depuis la conversation | racine + **8 branches**, aucun terminal |
+| les `load_when` | aucun « toujours », aucun résumé |
+| les fichiers source | aucun touché |
+| le routage | 3 prompts, 3 routés — 2/8, 4/8, 6/8 (24 710, 10 374, 13 363 ms) |
+| l'enrichissement pendant une tâche | « rien à retenir de neuf : c'est déjà dans `REFERENCES.md` » — dit, pas tu |
+
+Le dernier point mérite d'être lu pour ce qu'il est : l'IA **n'a pas écrit** de branche, et c'est le bon comportement. Elle a vérifié, jugé que le fait existait déjà, et l'a dit. Le critère n'a jamais été « écrire à chaque fois » mais « ne pas se taire ».
+
+**Les étapes 4-5 (la toile, corriger deux `load_when` à la souris) n'ont jamais été jouées** : elles demandent l'éditeur ouvert sur le clone. La porte est franchie sur les sept critères automatisables ; le geste humain reste à faire une fois, et il relève d'Adrien.
+
+**Ce que ce palier aura appris, et qui vaut pour la suite :**
+- **Ce qui n'est pas un outil n'existe pas pour l'agent.** Une consigne dans les `instructions`, un prompt MCP, une invitation en texte — tout cela informe, rien de tout cela n'agit.
+- **Une consigne sans moment est une consigne qu'on remet à plus tard.** Vérifié deux fois, sur deux consignes différentes. Le détail est dans *Surfaces d'injection par agent*.
+- **Un scénario qu'on répare en le déroulant ne prouve rien.** Trois passages ont été nécessaires : le premier a produit trois cartes, le deuxième a révélé le budget de routage, le troisième la formulation de l'invitation. Chaque passage « réussi » cachait un critère qui ne tenait qu'à peu de chose.
 
 ## Décisions tranchées le 9 septembre 2026
 
