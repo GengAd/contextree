@@ -16,7 +16,7 @@ Chaque palier n'ouvre que quand le précédent est **utilisé pour de vrai**, pa
 | ~~P2 dogfooding~~ **fait le 9 septembre 2026** | `p2-dogfooding` (mergée) | plus aucun `.md` de consignes hors de l'arbre dans ce repo (`README.md` = procédure, seule exception) | **à moitié franchie** — voir plus bas |
 | ~~P3 depuis zéro~~ **fait le 11 septembre 2026** | `p3-depuis-zero` (mergée) | sur un dossier vierge, l'IA propose l'arbre, le construit proprement, renvoie à la toile | **franchie** — sept critères sur sept, au troisième passage d'une traite ; voir plus bas |
 | ~~P4 tous les agents~~ **mergé le 11 septembre 2026** | `p4-tous-les-agents` (mergée) | Claude Code, VS Code + Copilot (cible probable de l'entreprise), Cursor, Codex, Gemini ; ChatGPT web = presse-papier | **porte reportée** — sept câblages vérifiés, un seul agent déroulé ; le reste attend un geste humain. Voir *Matrice des agents* |
-| P5 démo | `p5-demo` | dix minutes devant l'entreprise ; le partage par git, déroulé à deux | **répétée le 11 septembre 2026 sur Claude Code** — l'éditeur de la boîte reste à confirmer (carte humaine). Voir plus bas |
+| ~~P5 démo~~ **mergé le 11 septembre 2026** | `p5-demo` (mergée) | dix minutes devant l'entreprise ; le partage par git, déroulé à deux | **porte reportée** — répétée sur Claude Code, chrono en main ; l'éditeur de la boîte et la date restent à Adrien. Voir plus bas |
 | P6 distribution | `p6-distribution` | npm, Open VSX, hook pinné, README procédure — pour que des collègues installent | `npx -y @gengad/contextree init` marche sur une machine vierge |
 | P7 serveur | `p7-serveur` | le backend sert à deux : compte, invitation par code, premier vrai pull/push, calques et montages | un second compte pull un arbre poussé par le premier, et le monte dans un autre projet |
 | P8 visibilité | `p8-visibilite` | plusieurs arbres par personne (l'arbre perso monté partout), privé/groupe/lien/public, annuaire, fork et amont | un arbre public est monté par quelqu'un qui n'est dans aucun groupe |
@@ -128,6 +128,8 @@ Le partage par git marche, submodule compris, et le déroulé à deux a livré l
 **La démo a été répétée une fois, chrono en main, et elle ne tenait pas.** Six minutes trente d'attente machine pour dix minutes annoncées : quatre minutes rien que pour construire l'arbre en direct, 14 à 22 s par prompt routé sans clé API, et l'étape « l'IA écrit une branche » qui rate parce que l'IA répond — à juste titre — « rien à retenir, c'est déjà dans `REFERENCES.md` ».
 
 Les trois corrections sont dans *La démo de dix minutes*. La plus instructive est la dernière : **un garde-fou qui marche peut faire rater une démonstration**. On ne l'aurait jamais vu sans jouer la scène.
+
+**Mergé sans que la porte soit franchie**, comme P4 et pour la même raison : ce qui manque n'est pas du code mais une décision et un geste — quel éditeur, quel repo, quelle date. Deux paliers de suite s'arrêtent au même endroit, et ce n'est pas un hasard : **tout ce qui se code est fait ; tout ce qui reste demande quelqu'un devant un écran.**
 
 **Ce que la répétition a aussi donné, et qui sert au-delà de la démo** : les deux chiffres qui disent l'outil en une phrase — 15 997 caractères injectés à chaque prompt avec un gros fichier de consignes, 4 007 avec l'arbre routé sur la même question.
 
