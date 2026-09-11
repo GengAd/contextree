@@ -14,7 +14,7 @@ Chaque palier n'ouvre que quand le précédent est **utilisé pour de vrai**, pa
 |---|---|---|---|
 | ~~P1 usage perso~~ **fait le 9 septembre 2026** | `p1-usage-perso` (mergée) | l'outil marche sur les autres projets d'Adrien, et la vue dit la vérité sur le routage | **franchie** — voir plus bas |
 | ~~P2 dogfooding~~ **fait le 9 septembre 2026** | `p2-dogfooding` (mergée) | plus aucun `.md` de consignes hors de l'arbre dans ce repo (`README.md` = procédure, seule exception) | **à moitié franchie** — voir plus bas |
-| P3 depuis zéro | `p3-depuis-zero` | sur un dossier vierge, l'IA propose l'arbre, le construit proprement, renvoie à la toile | **pas franchie au 11 septembre 2026** — 6 critères sur 7 ; le routage tombe en fallback sur timeout. Voir plus bas |
+| P3 depuis zéro | `p3-depuis-zero` | sur un dossier vierge, l'IA propose l'arbre, le construit proprement, renvoie à la toile | **pas franchie au 11 septembre 2026** — le routage tient désormais, la proposition rate 2 fois sur 6. Voir plus bas |
 | P4 tous les agents | `p4-tous-les-agents` | Claude Code, VS Code + Copilot (cible probable de l'entreprise), Cursor, Codex, Gemini ; ChatGPT web = presse-papier | la matrice est cochée ligne par ligne |
 | P5 démo | `p5-demo` | dix minutes devant l'entreprise ; le partage par git, déroulé à deux | la démo tourne sur l'éditeur de la boîte, réseau coupé si besoin |
 | P6 distribution | `p6-distribution` | npm, Open VSX, hook pinné, README procédure — pour que des collègues installent | `npx -y @gengad/contextree init` marche sur une machine vierge |
@@ -77,6 +77,16 @@ Rejoué sur un clone neuf d'`ai-tree`, sans aucune reprise : `install`, « bonjo
 **Ce qui a cassé : le routage.** Deux prompts ciblés sur trois sont partis en **fallback sur timeout à 20 s** — donc l'arbre entier injecté, ce que l'outil existe pour éviter. Relancés avec un budget de 60 s, les mêmes prompts routent en 13-14 s sur 1 à 2 branches : le routeur fait son travail, c'est le budget qui coupe trop tôt. Le code se contredisait d'ailleurs tout seul — `timeoutFor` est commenté « mesuré entre 5 et 60 s » et rendait `20_000`.
 
 La leçon vaut au-delà du budget : **la veille, les mêmes prompts passaient en 6, 11 et 17 s**. On vivait au bord sans le savoir, et un seul passage réussi ne le disait pas. Un critère qui ne tient qu'à quelques secondes près n'est pas tenu — il est en sursis.
+
+## Deuxième passage d'une traite, 11 septembre 2026 — le routage tient, la proposition non
+
+Budget de routage corrigé, scénario rejoué sur un clone neuf. **L'étape 6 passe** : les trois prompts ciblés routent (11 420, 37 282 et 20 554 ms), là où deux tombaient en repli le matin même.
+
+**L'étape 3 lâche.** « bonjour, on fait quoi ? » sur un projet sans arbre : l'invitation est injectée — marqueur de session vérifié — et le modèle n'en dit rien **deux fois sur six**. Le critère « l'IA propose l'arbre » n'est pas tenu, il est probable.
+
+Rien de neuf sur le fond : c'est la leçon de la veille, sur une autre consigne. « Propose-le au bon moment, sans insister » se lit comme une permission de se taire, exactement comme « écris ce que tu découvres ». Le détail est dans *Surfaces d'injection par agent*.
+
+**Ce que le rejeu d'une traite aura prouvé, deux fois** : chaque passage réussi cachait un critère qui ne tenait qu'à peu de chose — quelques secondes de latence la première fois, une formulation permissive la seconde. Un scénario qu'on répare en le déroulant ne prouve rien ; c'est le passage sans reprise qui parle.
 
 ## Décisions tranchées le 9 septembre 2026
 

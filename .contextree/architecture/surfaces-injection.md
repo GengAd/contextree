@@ -26,6 +26,16 @@ Tous les agents n'ont pas de hook. Trois surfaces, par ordre de qualité — c'e
 
 **Le rappel d'écrire vit dans le bloc, et nulle part ailleurs** (10 septembre 2026). La consigne existait déjà dans les `instructions` du serveur — et ne suffisait pas : mesuré sur un prompt de tâche réelle, le modèle a trouvé un fait durable et exact, et n'a **rien** écrit ni dit qu'il n'écrivait pas. Les `instructions` sont lues une fois, à la connexion, avant que la moindre tâche n'existe. Le bloc, lui, arrive avec le contexte du tour — à chaque prompt sous un hook, à chaque `get_context` ailleurs — donc une seule copie couvre les deux surfaces.
 
+**Une consigne sans moment est une consigne qu'on remet à plus tard** — vérifié deux fois, sur deux consignes différentes, le 10 et le 11 septembre 2026. C'est le résultat le plus réutilisable de ce palier, et il vaut pour tout ce qu'on écrit à destination d'un modèle :
+
+| consigne | formulation | résultat |
+|---|---|---|
+| enrichir l'arbre | « écris ce que tu découvres » | jamais fait |
+| enrichir l'arbre | « **avant de terminer ta réponse**, dis ce que tu as appris » | fait |
+| proposer l'arbre | « propose-le **au bon moment**, sans insister » | 4 fois sur 6 |
+
+« Au bon moment » et « sans insister » se lisent comme une permission de se taire. Mesuré sur six passages identiques d'un même prompt (« bonjour, on fait quoi ? »), sur un projet sans arbre, l'invitation **injectée à chaque fois** : deux fois le modèle n'en a rien dit. Une consigne probabiliste ne tient pas un critère de sortie.
+
 **La formulation compte autant que l'endroit.** « Écris ce que tu découvres » n'a rien changé au deuxième essai : une consigne sans moment est une consigne qu'on remet à plus tard. Rattachée à un instant précis — « **avant de terminer ta réponse**, dis ce que cette tâche t'a appris ; si c'est le cas écris-le, sinon dis « rien à retenir » » —, elle a produit une branche juste, annoncée, avec sa motivation. Effet de bord redouté et non constaté : sur un prompt anodin, rien n'est écrit — le modèle ne fabrique pas une branche pour obéir.
 
 **Aucune surface ne reste muette sur un projet sans arbre** (10 septembre 2026). Les `instructions` du serveur valent quand il y a un arbre ; sans dossier `.contextree/`, elles deviennent l'invitation (`renderBootstrapInvite`), et le hook l'écrit sur stdout une fois par session. Le hook n'étant installé que par projet, rien ne fuit vers un dépôt qui n'a rien demandé. Le détail et le pourquoi sont dans *Démarrage à froid*.
