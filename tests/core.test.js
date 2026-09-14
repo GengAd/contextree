@@ -2725,6 +2725,15 @@ test("forme : un parent plus long que tous ses enfants réunis", async () => {
     { path: 'build', title: 'build' },
   ]);
   assert.deepEqual(lintTree(tree).map(w => [w.code, w.paths]), [['heavy-parent', ['composants']]]);
+
+  // Un seul enfant : le parent n'est injecté qu'une fois, rien à signaler.
+  const naissante = await treeOf('racine', [
+    { path: 'composants', title: 'composants', content: 'une très longue convention commune '.repeat(10) },
+    { path: 'composants/date', title: 'date', content: 'court' },
+    { path: 'build', title: 'build' },
+    { path: 'publier', title: 'publier' },
+  ]);
+  assert.deepEqual(lintTree(naissante), []);
 });
 
 test("forme : les avertissements parlent la langue de l'utilisateur", async () => {

@@ -22,10 +22,13 @@ Le test qui compte : **quelqu'un part d'un projet qui n'a jamais entendu parler 
 - **Aucun `load_when` qui soit un résumé.** C'est le seul champ qui décide de quelque chose ; un titre déguisé en condition est un échec silencieux, pas un détail de style.
 - **Le premier vrai prompt après création charge moins que tout l'arbre.** Un arbre qui se charge en entier n'a rien routé — autant garder le gros fichier de consignes.
 - **Aucun terminal après `install`.** Tout se fait depuis la conversation et la toile. Le terminal est le geste qu'on cherche à supprimer.
+- **Un plan avant toute écriture** (14 septembre 2026). Au premier tour, l'IA montre l'arborescence, les types et les `load_when`, et s'arrête : pas de `.contextree/` tant que l'utilisateur n'a pas dit oui.
+- **Des familles, pas une liste.** Un projet qui a des composants, des écrans ou des endpoints donne un parent et un enfant par élément — **même s'il n'y en a qu'un**. Aucune `rule` ne parle d'un seul élément.
+- **Le contrôle de forme est muet** sur l'arbre écrit : `contextree list` n'affiche aucun « ⚠ Forme de l'arbre ».
 
 ## Comment le mesurer sans y assister
 
-`claude -p "…"` puis `claude -p -c "oui"` déroulent les étapes 3 et 4 sans session interactive. Ce qui s'est passé se lit ensuite sans deviner : `contextree list` pour les branches et leurs `load_when`, `git status` dans le clone pour vérifier qu'aucune source n'a bougé, et le journal (`~/.contextree/journal/`) pour ce que chaque prompt a réellement chargé.
+`claude -p "…"` puis `claude -p -c "oui"` déroulent les étapes 3 et 4 sans session interactive. Ce qui s'est passé se lit ensuite sans deviner : `contextree list` pour les branches et leurs `load_when`, `git status` dans le clone pour vérifier qu'aucune source n'a bougé, et le journal (`<dossier d'état>/journal/`, voir *Journal des tours*) pour ce que chaque prompt a réellement chargé.
 
 ## Rejoué en anglais — 14 septembre 2026
 
@@ -36,4 +39,12 @@ Sur une copie de `lacis-site` (Astro, README en anglais écrit par quelqu'un, sa
 - **6** — « how does the deploy to Hostinger work? » : routé sur **1 branche sur 5**, la bonne, en 6 s.
 
 Pas rejoués : l'étape 5 (la toile) et l'étape 7 (une vraie tâche qui fait écrire une branche).
+
+## Rejeu « forme de l'arbre » — 14 septembre 2026
+
+Claude Code (`sonnet`, `claude -p`, serveur MCP seul, sans hook), sur deux dépôts témoins « bibliothèque de composants » : « Construis l'arbre de contexte contextree de ce projet », puis « Le plan me va, écris l'arbre ».
+- **3 composants** : au premier tour, liste de 10 demandes et plan en tableau (chemins, types, `load_when`), **aucun `.contextree/`**. Au second, 9 branches + racine : `composants` (`rule`, les conventions communes) et un enfant `context` par composant, `plateforme`, `commandes`, deux skills. Seule `rule` : le parent. Contrôle de forme : **aucun avertissement**. Aucun fichier source touché (seuls `.contextree/` et `.gitignore` apparaissent).
+- **1 composant** : même déroulé, **la famille est créée quand même** (`composants/datepicker`). Le contrôle signalait « parent plus long que ses enfants » : c'était la règle qui était fausse — avec un seul enfant rien ne se multiplie. Corrigée (à partir de deux enfants) ; l'arbre passe ensuite sans avertissement.
+
+Reste la mesure sous **Copilot** (carte H « Dérouler une ligne d'éditeur ») : même dépôt témoin, puis le projet réel d'Adrien.
 

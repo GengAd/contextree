@@ -79,9 +79,12 @@ export function lintTree(tree: ContextTree): ShapeWarning[] {
   }
 
   // Un parent est injecté avec **chacun** de ses enfants : plus long qu'eux
-  // tous réunis, il coûte plus que ce qu'il sert.
+  // tous réunis, il coûte plus que ce qu'il sert. **À partir de deux enfants**
+  // seulement : avec un seul, rien ne se multiplie, et une famille naissante —
+  // un composant et ses conventions communes — a normalement un parent plus
+  // long que son unique enfant (rejeu du 14 septembre 2026).
   for (const b of branches) {
-    if (!b.childPaths.length || !b.content.trim()) continue;
+    if (b.childPaths.length < 2 || !b.content.trim()) continue;
     const children = b.childPaths.reduce((n, p) => n + (tree.branches.get(p)?.content.trim().length ?? 0), 0);
     if (b.content.trim().length > children) {
       out.push({ code: 'heavy-parent', paths: [b.path], message: t.heavyParent(b.path) });
