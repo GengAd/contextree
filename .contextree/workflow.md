@@ -4,7 +4,7 @@ title: Workflow Trello et git
 load_when: quand on prend une tâche Trello, qu'on commence ou termine un ticket, qu'on se demande sur quelle branche git travailler, ou qu'on tourne en /loop
 ---
 
-Le tableau Trello **contextree** est la file de travail. Un ticket = une carte. Un ticket terminé = un commit. Rien ne se ferme sans commit, rien ne se commit sans `npm test` vert.
+Le tableau Trello **contextree** (id `6a9ebc7ca1b58d53d9cce21e`) est la file de travail. Le MCP Trello a un autre tableau actif par défaut : passer ce `boardId` à chaque appel. Un ticket = une carte. Un ticket terminé = un commit. Rien ne se ferme sans commit, rien ne se commit sans `npm test` vert.
 
 ## Les colonnes, dans l'ordre où on les lit
 

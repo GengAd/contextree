@@ -138,6 +138,7 @@ Les trois corrections sont dans *La démo de dix minutes*. La plus instructive e
 - **Branches git** : une par palier, mergée dans `main` (`--no-ff`) à la dernière carte du palier. `phase-2-contexte-commun` a été mergée dans `main` ce jour (fast-forward) et supprimée en local.
 - **`README.md` reste**, réduit à une procédure pour un humain. `CLAUDE.md`, `CONTEXT.md`, `REFERENCES.md` et `ROADMAP.md` sont partis dans l'arbre le 9 septembre 2026 : la racine n'a plus qu'un `.md`.
 - **Cible entreprise probable : VS Code + Copilot**, à confirmer par Adrien (carte humaine). P4 la traite juste après Claude Code, avant Cursor.
+  **Confirmé le 14 septembre 2026 : VS Code + Copilot, sur des PC Windows.** L'exigence posée ce jour-là : Copilot doit recevoir **des branches, jamais l'arbre entier** — y compris sans clé API ni CLI d'agent sur le poste. D'où cinq cartes P6 en tête de file (moteur `sampling`, catalogue au lieu de l'arbre entier en repli, `cwd` de `.vscode/mcp.json`, routage CLI sous Windows, bouton « Ajouter à une IA »).
 - **Le serveur est un remote, pas une source** : l'arbre local reste la copie de travail ; les arbres distants se montent en calques, sur disque ; le routage ne touche jamais le réseau.
 - **Pas de com, pas de télémétrie, pas de site.** La publication (P6) n'est qu'un moyen pour des collègues d'installer.
 - **Ce que l'IA ne peut pas faire** (comptes, clés, choix qui appartiennent à Adrien) vit dans la colonne *Bloqué — humain (Adrien)* ; une carte qui en dépend attend, le loop continue avec la suivante.
