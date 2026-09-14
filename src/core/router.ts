@@ -3,6 +3,7 @@ import { accessSync, constants } from 'node:fs';
 import { createRequire } from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { allBranches, withAncestors } from './tree.js';
 import type { ContextTree } from './types.js';
 
@@ -304,13 +305,17 @@ async function ask(
  * client. Vit ici plutôt que dans la CLI parce que c'est du routage, et que
  * deux copies auraient divergé au premier correctif.
  *
- * Il relance `process.argv[1]`, c'est-à-dire l'entrée de la CLI — vrai pour le
- * hook (`cli.js hook`) comme pour le serveur (`cli.js mcp`).
+ * Il relance **notre** `cli.js`, résolu depuis ce module — pas `process.argv[1]`
+ * (14 septembre 2026). `argv[1]` est l'entrée de la CLI quand le hook ou le
+ * serveur tournent pour de vrai, mais pas pour tout appelant : sous
+ * `node --test`, c'est le fichier de tests. Le test du différé relançait donc
+ * la suite entière en tâche de fond, qui relançait le test du différé, qui… —
+ * une chaîne sans fin de process détachés, constatée à la main, que rien dans
+ * `npm test` ne pouvait signaler.
  */
 export function routeInBackground(dir: string, sessionId: string, prompt: string, at: number): void {
   try {
-    const entry = process.argv[1];
-    if (!entry) return;
+    const entry = fileURLToPath(new URL('../cli.js', import.meta.url));
     const child = spawn(
       process.execPath,
       [

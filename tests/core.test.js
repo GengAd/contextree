@@ -1075,7 +1075,11 @@ test("mcp : sous moteur CLI, get_context diffère au lieu de faire attendre le c
   await writeSelection(dir, 'session-precedente', ['b'], { routed: true });
 
   const saved = process.env.CONTEXTREE_ROUTER;
+  const savedBin = process.env.CONTEXTREE_CLAUDE_BIN;
   process.env.CONTEXTREE_ROUTER = 'claude';
+  // Le routage de fond part pour de vrai : sans ça, chaque `npm test` lancerait
+  // un `claude -p` sur l'abonnement de celui qui teste.
+  process.env.CONTEXTREE_CLAUDE_BIN = path.join(projet, 'pas-de-claude');
   try {
     const client = await mcpClient(projet);
     const t0 = Date.now();
@@ -1095,6 +1099,8 @@ test("mcp : sous moteur CLI, get_context diffère au lieu de faire attendre le c
   } finally {
     if (saved === undefined) delete process.env.CONTEXTREE_ROUTER;
     else process.env.CONTEXTREE_ROUTER = saved;
+    if (savedBin === undefined) delete process.env.CONTEXTREE_CLAUDE_BIN;
+    else process.env.CONTEXTREE_CLAUDE_BIN = savedBin;
   }
 });
 
