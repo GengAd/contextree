@@ -1,4 +1,5 @@
 import { deflateSync, inflateSync } from 'node:zlib';
+import { coreText } from './messages.js';
 import { allBranches } from './tree.js';
 import { writeBranch, writeRoot } from './store.js';
 import { isBranchType, type ContextPack, type ContextTree } from './types.js';
@@ -71,7 +72,7 @@ export function decodePack(payload: string): ContextPack {
   try {
     json = inflateSync(Buffer.from(token, 'base64url')).toString('utf8');
   } catch {
-    throw new Error('Jeton contextree illisible (payload corrompu).');
+    throw new Error(coreText().packUnreadable);
   }
   const pack = JSON.parse(json) as ContextPack;
   validate(pack);
@@ -80,14 +81,14 @@ export function decodePack(payload: string): ContextPack {
 
 function validate(pack: ContextPack): void {
   if (pack?.v !== 1 || typeof pack.rootContent !== 'string' || !Array.isArray(pack.branches)) {
-    throw new Error('Format de pack non reconnu.');
+    throw new Error(coreText().packUnknownFormat);
   }
   for (const b of pack.branches) {
     if (!b.path || typeof b.content !== 'string' || !isBranchType(b.type)) {
-      throw new Error(`Branche invalide dans le pack : ${b?.path ?? '(sans path)'}`);
+      throw new Error(coreText().packInvalidBranch(b?.path ?? coreText().packNoPath));
     }
     if (b.path.includes('..') || b.path.startsWith('/')) {
-      throw new Error(`Chemin de branche refusé : ${b.path}`);
+      throw new Error(coreText().pathRefused(b.path));
     }
   }
 }

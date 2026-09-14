@@ -2,6 +2,8 @@ import { existsSync, promises as fs, realpathSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { findBin } from './core/router.js';
+import { currentLang } from './core/i18n.js';
+import { cliText } from './messages.js';
 
 /**
  * Câblage de l'injection, un agent à la fois.
@@ -71,6 +73,16 @@ export function selfCommand(
     find: findBin,
   },
 ): { command: string; args: string[]; shell: string } {
+  // La langue est inscrite en toutes lettres (14 septembre 2026) : l'agent lance
+  // le hook et le serveur avec un environnement appauvri, où ni `LANG` ni la
+  // préférence macOS ne sont garantis. Ce qu'on a résolu ici, dans le terminal
+  // ou l'extension de l'utilisateur, est ce qui arrivera là-bas.
+  const base = baseCommand(cmd, host);
+  const lang = ['--lang', currentLang()];
+  return { command: base.command, args: [...base.args, ...lang], shell: `${base.shell} ${lang.join(' ')}` };
+}
+
+function baseCommand(cmd: 'hook' | 'mcp', host: SelfHost): { command: string; args: string[]; shell: string } {
   // Sous l'hôte d'extensions, « ce qui tourne » n'est pas contextree : voir
   // `installedCommand`.
   if (host.electron) return installedCommand(cmd, host.find ?? findBin);
@@ -139,12 +151,7 @@ function installedCommand(
   }
   const node = find('node');
   if (!entry || !existsSync(entry) || !node) {
-    throw new NoCliError(
-      "contextree n'est pas installé en ligne de commande sur cette machine" +
-        (entry && !node ? ' (node introuvable)' : '') +
-        " : le bouton écrirait une commande qui ne lance rien. Installe-le — " +
-        '`npm install -g <le .tgz de contextree>` — puis recommence.',
-    );
+    throw new NoCliError(cliText().noCli(Boolean(entry && !node)));
   }
   return { command: node, args: [entry, cmd], shell: `"${node}" "${entry}" ${cmd}` };
 }
@@ -218,7 +225,7 @@ function runnableHere(entry: unknown): boolean {
  */
 function machineNote(): { note?: string } {
   if (selfCommand('mcp').command === 'npx') return {};
-  return { note: 'contient des chemins de cette machine — ne le commite pas' };
+  return { note: cliText().machinePathsNote };
 }
 
 /**
@@ -666,7 +673,7 @@ export async function installAgent(
   agentsBlock?: string,
 ): Promise<InstallReport> {
   const spec = AGENTS.find(a => a.id === id);
-  if (!spec) throw new Error(`Agent inconnu : ${id}`);
+  if (!spec) throw new Error(cliText().unknownAgentId(id));
   const report: InstallReport = [];
   await spec.install(projectDir, report, agentsBlock);
   return report;

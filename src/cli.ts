@@ -25,57 +25,27 @@ import { link, pull, push, readTracking } from './core/sync.js';
 import { isBranchType, type BranchType } from './core/types.js';
 import { AGENTS, agentStatus, installAgent, selfCommand, type InstallReport } from './install.js';
 import { resolvePack, runStdio } from './mcp/server.js';
+import { cliText } from './messages.js';
 
-const HELP = `contextree — un arbre de contexte partageable, routé, injecté à chaque appel IA.
-
-  contextree init                    crée .contextree/ avec un arbre de démarrage
-  contextree install [--agent a]     câble l'injection (--status pour voir l'état)
-  contextree list                    affiche l'arbre
-  contextree add                     crée une branche (--title --type --load-when [--parent])
-  contextree rm <chemin>             supprime une branche et ses enfants
-  contextree mv <de> <vers>          déplace ou renomme une branche (ses enfants suivent)
-  contextree route "<prompt>"        montre ce que le routeur chargerait
-  contextree route --eval [fichier]  mesure le routage sur un jeu de prompts
-  contextree bootstrap [--copy]      la consigne pour que ton IA construise l'arbre
-  contextree render [--agents]       affiche tout l'arbre assemblé (sans routage)
-                                     --agents : le bloc court pour un AGENTS.md
-                                     --copy   : dans le presse-papier (render, route)
-  contextree export [--token] [-o f] exporte l'arbre pour le partager
-  contextree import <source>         greffe un pack (jeton, JSON, ou fichier) [--prefix p]
-  contextree mcp                     lance le serveur MCP (stdio)
-  contextree hook                    point d'entrée du hook UserPromptSubmit
-
-Contexte partagé (phase 2) :
-  contextree remote <url> <clé>      pointe le backend Supabase
-  contextree login <email>           se connecte (mot de passe sur stdin ou --password)
-  contextree logout                  ferme la session
-  contextree whoami                  qui est connecté, et sur quels groupes
-  contextree group new <slug> <nom>  crée un groupe (on en devient propriétaire)
-  contextree link <grp>/<arbre>      rattache cette copie de travail [--create]
-  contextree pull [--mine|--theirs]  récupère l'arbre de groupe (fusion, jamais d'écrasement)
-  contextree push -m "<message>"     pousse ses changements locaux
-  contextree status                  ce que cette copie de travail suit
-
-Routage : aucune clé requise si un CLI d'agent (\`claude\`, \`codex\`, \`gemini\`) est
-          installé — c'est ton abonnement qui route. Une clé (ANTHROPIC_API_KEY,
-          OPENAI_API_KEY) est utilisée si elle est là.
-
-Variables : CONTEXTREE_ROUTER (auto | anthropic | openai | claude | codex | gemini | off),
-            CONTEXTREE_ROUTER_MODEL, CONTEXTREE_ROUTER_TIMEOUT_MS,
-            OPENAI_API_KEY / OPENAI_BASE_URL, CONTEXTREE_CLAUDE_BIN,
-            CONTEXTREE_STATE_DIR (où vit le journal des tours)
-`;
+/** L'aide vit dans le dictionnaire (`messages.ts`) : elle est la première chose
+ *  qu'on lit, dans sa langue. */
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
   const flags = parseFlags(rest);
+  // `--lang` vaut pour toute commande — c'est ce qu'`install` inscrit dans la
+  // commande du hook et du serveur MCP. Un `CONTEXTREE_LANG` déjà posé gagne :
+  // qui l'a mis dans son environnement l'a voulu.
+  const lang = str(flags.lang);
+  if (lang && !process.env['CONTEXTREE_LANG']) process.env['CONTEXTREE_LANG'] = lang;
+  const t = cliText();
 
   switch (command) {
     case undefined:
     case 'help':
     case '--help':
     case '-h':
-      process.stdout.write(HELP);
+      process.stdout.write(t.help);
       return 0;
     case 'init':
       return cmdInit(Boolean(flags.force));
@@ -128,7 +98,7 @@ async function main(argv: string[]): Promise<number> {
     case 'route-bg':
       return cmdRouteBackground(flags);
     default:
-      process.stderr.write(`Commande inconnue : ${command}\n\n${HELP}`);
+      process.stderr.write(`${t.unknownCommand(String(command))}\n\n${t.help}`);
       return 1;
   }
 }
@@ -138,14 +108,11 @@ async function main(argv: string[]): Promise<number> {
 async function cmdInit(force: boolean): Promise<number> {
   try {
     const { dir, branches } = await initTree(process.cwd(), { force });
-    process.stdout.write(
-      `${path.relative(process.cwd(), dir)}/ créé avec ${branches} branches de départ.\n` +
-        `Prochaine étape : édite les fichiers, puis \`contextree install\`.\n`,
-    );
+    process.stdout.write(`${cliText().initDone(path.relative(process.cwd(), dir), branches)}\n`);
     return 0;
   } catch (err) {
     process.stderr.write(
-      `${err instanceof Error ? err.message : String(err)} --force pour réécrire les fichiers de départ.\n`,
+      `${err instanceof Error ? err.message : String(err)} ${cliText().initForceHint}\n`,
     );
     return 1;
   }
@@ -172,35 +139,34 @@ async function cmdInit(force: boolean): Promise<number> {
  */
 function wiredCommands(): string {
   const mcp = selfCommand('mcp');
+  const label = cliText().wiredCommand;
   return (
-    `Commande écrite : ${selfCommand('hook').shell}\n` +
-    `                  ${[mcp.command, ...mcp.args].join(' ')}\n`
+    `${label}${selfCommand('hook').shell}\n` +
+    `${' '.repeat(label.length)}${[mcp.command, ...mcp.args].join(' ')}\n`
   );
 }
 
 async function cmdInstall(flags: Flags): Promise<number> {
+  const t = cliText();
   const asked = str(flags.agent);
   const statuses = await agentStatus(process.cwd());
 
   if (flags.status) {
     for (const a of statuses) {
-      const state = a.wired ? 'câblé' : a.detected ? 'à câbler' : 'non détecté';
-      process.stdout.write(`${state.padEnd(12)} ${a.label}\n`);
-      for (const f of a.files) process.stdout.write(`             ${shorten(f)}\n`);
+      const state = a.wired ? t.stateWired : a.detected ? t.stateToWire : t.stateNotDetected;
+      process.stdout.write(`${state.padEnd(13)} ${a.label}\n`);
+      for (const f of a.files) process.stdout.write(`              ${shorten(f)}\n`);
     }
     // Les agents sans surface à câbler existent aussi, et l'outil les sert :
     // le dire ici évite de chercher une ligne « non détecté » qui ne viendra pas.
-    process.stdout.write('\nChatGPT / Claude web : rien à câbler — `contextree render --copy`,\n');
-    process.stdout.write('                      ou `contextree route "<ta demande>" --copy`.\n');
+    process.stdout.write(`\n${t.noSurfaceAgents}\n`);
     process.stdout.write(`\n${wiredCommands()}`);
-    process.stdout.write(`Routage : ${describeEngine()}\n`);
+    process.stdout.write(`${t.routing(describeEngine())}\n`);
     return 0;
   }
 
   if (asked && asked !== 'all' && !AGENTS.some(a => a.id === asked)) {
-    process.stderr.write(
-      `Agent inconnu : ${asked} (${AGENTS.map(a => a.id).join(', ')}, all)\n`,
-    );
+    process.stderr.write(`${t.unknownAgent(asked, AGENTS.map(a => a.id).join(', '))}\n`);
     return 1;
   }
 
@@ -224,35 +190,24 @@ async function cmdInstall(flags: Flags): Promise<number> {
   for (const a of targets) report.push(...(await installAgent(a.id, process.cwd(), block)));
 
   for (const r of report) {
-    process.stdout.write(`${r.action.padEnd(9)} ${shorten(r.file)}${r.note ? ` — ${r.note}` : ''}\n`);
+    const action = { created: t.actionCreated, updated: t.actionUpdated, repaired: t.actionRepaired, unchanged: t.actionUnchanged }[r.action];
+    process.stdout.write(`${action.padEnd(10)} ${shorten(r.file)}${r.note ? ` — ${r.note}` : ''}\n`);
   }
 
   // Sans arbre, le fichier de consignes ne peut pas être écrit : le dire ici,
   // sinon `--status` répondra « à câbler » sans qu'on comprenne ce qui manque.
   if (!block && targets.some(a => AGENTS.find(x => x.id === a.id)?.files('').some(f => f.endsWith('.md')))) {
-    process.stdout.write(
-      '\nPas encore de fichier de consignes : il se remplit depuis l\'arbre, qui n\'existe pas ici.\n' +
-        'Crée-le (ou laisse ton IA te le proposer), puis relance `install` — ces agents\n' +
-        "resteront « à câbler » d'ici là, et c'est exact : la moitié de leur surface manque.\n",
-    );
+    process.stdout.write(`\n${t.noInstructionsYet}\n`);
   }
 
   // Seulement quand on n'a rien demandé de précis : sur `--agent cursor`, les
   // autres ne sont pas « non détectés », ils ne sont pas le sujet.
   const skipped = asked ? [] : statuses.filter(s => !targets.includes(s));
   if (skipped.length) {
-    process.stdout.write(
-      `\nNon câblé (non détecté) : ${skipped.map(s => s.id).join(', ')}` +
-        ` — \`--agent <id>\` pour forcer.\n`,
-    );
+    process.stdout.write(`\n${t.skippedAgents(skipped.map(s => s.id).join(', '))}\n`);
   }
   process.stdout.write(`\n${wiredCommands()}`);
-  process.stdout.write(
-    "Relance ton agent pour prendre en compte le hook et le serveur MCP.\n" +
-      "Aucune de ces surfaces (Claude sur le web, ChatGPT…) : `contextree render --copy`,\n" +
-      "ou `contextree route \"<ta demande>\" --copy`, et tu colles.\n" +
-      `Routage : ${describeEngine()}\n`,
-  );
+  process.stdout.write(`${t.relaunch}\n${t.routing(describeEngine())}\n`);
   return 0;
 }
 
@@ -266,7 +221,8 @@ function shorten(file: string): string {
 async function cmdList(): Promise<number> {
   const { tree } = await open();
   const branches = allBranches(tree);
-  process.stdout.write(branches.length ? `${formatTree(tree)}\n\n${branches.length} branche(s).\n` : 'Arbre vide.\n');
+  const t = cliText();
+  process.stdout.write(branches.length ? `${formatTree(tree)}\n\n${t.branchCount(branches.length)}\n` : `${t.emptyTree}\n`);
   return 0;
 }
 
@@ -276,16 +232,16 @@ async function cmdAdd(flags: Flags): Promise<number> {
   const type = str(flags.type);
   const loadWhen = str(flags['load-when']);
   if (!title || !type || !loadWhen) {
-    process.stderr.write('Usage : contextree add --title "…" --type rule --load-when "…" [--parent p] [--content "…"]\n');
+    process.stderr.write(`${cliText().usageAdd}\n`);
     return 1;
   }
   if (!isBranchType(type)) {
-    process.stderr.write(`Type inconnu : ${type} (identity, rule, context, reference, skill)\n`);
+    process.stderr.write(`${cliText().unknownType(type)}\n`);
     return 1;
   }
   const parent = str(flags.parent);
   if (parent && !tree.branches.has(parent)) {
-    process.stderr.write(`Parent inconnu : ${parent}\n`);
+    process.stderr.write(`${cliText().unknownParent(parent)}\n`);
     return 1;
   }
   const content = str(flags.content) ?? (await readStdin()) ?? '';
@@ -298,27 +254,27 @@ async function cmdAdd(flags: Flags): Promise<number> {
 
 async function cmdRemove(branchPath: string | undefined): Promise<number> {
   if (!branchPath) {
-    process.stderr.write('Usage : contextree rm <chemin>\n');
+    process.stderr.write(`${cliText().usageRm}\n`);
     return 1;
   }
   const { dir, tree } = await open();
   if (!tree.branches.has(branchPath)) {
-    process.stderr.write(`Branche inconnue : ${branchPath}\n`);
+    process.stderr.write(`${cliText().unknownBranch(branchPath)}\n`);
     return 1;
   }
   await deleteBranch(dir, branchPath);
-  process.stdout.write(`Supprimé : ${branchPath}\n`);
+  process.stdout.write(`${cliText().removed(branchPath)}\n`);
   return 0;
 }
 
 async function cmdMove(from: string | undefined, to: string | undefined): Promise<number> {
   if (!from || !to) {
-    process.stderr.write('Usage : contextree mv <de> <vers>\n');
+    process.stderr.write(`${cliText().usageMv}\n`);
     return 1;
   }
   const { dir, tree } = await open();
   if (!tree.branches.has(from)) {
-    process.stderr.write(`Branche inconnue : ${from}\n`);
+    process.stderr.write(`${cliText().unknownBranch(from)}\n`);
     return 1;
   }
   // Même garde que `add` : un parent inconnu se crée à la main. Sinon on
@@ -326,14 +282,14 @@ async function cmdMove(from: string | undefined, to: string | undefined): Promis
   // routeur route dessus.
   const parent = to.includes('/') ? to.slice(0, to.lastIndexOf('/')) : '';
   if (parent && !tree.branches.has(parent)) {
-    process.stderr.write(`Parent inconnu : ${parent}\n`);
+    process.stderr.write(`${cliText().unknownParent(parent)}\n`);
     return 1;
   }
   const kids = tree.branches.get(from)!.childPaths.length;
   try {
     const file = await moveBranch(dir, from, to);
     process.stdout.write(
-      `${from} → ${to}${kids ? ` (+ ${kids} enfant(s))` : ''}\n${path.relative(process.cwd(), file)}\n`,
+      `${from} → ${to}${kids ? cliText().children(kids) : ''}\n${path.relative(process.cwd(), file)}\n`,
     );
     return 0;
   } catch (err) {
@@ -345,7 +301,7 @@ async function cmdMove(from: string | undefined, to: string | undefined): Promis
 async function cmdRoute(prompt: string, flags: Flags): Promise<number> {
   if (flags.eval) return cmdEval(typeof flags.eval === 'string' ? flags.eval : str(flags._[0]));
   if (!prompt.trim()) {
-    process.stderr.write('Usage : contextree route "<prompt>"\n');
+    process.stderr.write(`${cliText().usageRoute}\n`);
     return 1;
   }
   const { tree } = await open();
@@ -380,17 +336,15 @@ async function cmdEval(file: string | undefined): Promise<number> {
   try {
     cases = parseEvalCases(JSON.parse(await fs.readFile(target, 'utf8')));
   } catch {
-    process.stderr.write(`Jeu d'éval illisible : ${shorten(target)}\n`);
+    process.stderr.write(`${cliText().evalUnreadable(shorten(target))}\n`);
     return 1;
   }
   if (!cases.length) {
-    process.stderr.write(`Aucun cas dans ${shorten(target)}\n`);
+    process.stderr.write(`${cliText().evalEmpty(shorten(target))}\n`);
     return 1;
   }
 
-  process.stderr.write(
-    `${cases.length} cas · ${tree.order.length} branches · ${describeEngine()}\n\n`,
-  );
+  process.stderr.write(`${cliText().evalHeader(cases.length, tree.order.length, describeEngine())}\n\n`);
 
   // Personne n'attend une mesure : `batch` laisse au moteur le temps de
   // répondre. Sans ça, on mesure le timeout au lieu du routeur — 9 cas sur 20
@@ -404,6 +358,7 @@ async function cmdEval(file: string | undefined): Promise<number> {
 /** Une ligne par cas — `●` attendu et obtenu, `+` en trop, `−` manquant — puis
  *  le total. Les titres, pas les chemins : c'est ce que montrent les vues. */
 function formatEval(report: EvalReport): string {
+  const t = cliText();
   const out: string[] = [];
   for (const c of report.cases) {
     const bits = [
@@ -414,17 +369,13 @@ function formatEval(report: EvalReport): string {
     out.push(`${bits.join(' · ')}  ${c.prompt}`);
     if (c.missing.length) out.push(`   − ${c.missing.join(', ')}`);
     if (c.extra.length) out.push(`   + ${c.extra.join(', ')}`);
-    if (c.unknown.length) out.push(`   ? ${c.unknown.join(', ')} — absent de l'arbre`);
+    if (c.unknown.length) out.push(`   ? ${c.unknown.join(', ')} — ${t.evalNotInTree}`);
     if (c.error) out.push(`   ! ${c.error}`);
   }
   const pct = (n: number): string => `${Math.round(n * 100)} %`;
   out.push('');
-  out.push(
-    `précision ${pct(report.precision)} · rappel ${pct(report.recall)} · ${report.avgMs} ms en moyenne`,
-  );
-  out.push(
-    'précision = ce qui a été chargé et servait ; rappel = ce qui servait et a été chargé.',
-  );
+  out.push(t.evalTotals(pct(report.precision), pct(report.recall), report.avgMs));
+  out.push(t.evalLegend);
   return `${out.join('\n')}\n`;
 }
 
@@ -438,9 +389,7 @@ function formatEval(report: EvalReport): string {
 async function cmdBootstrap(flags: Flags): Promise<number> {
   const found = await detectInstructionFiles(process.cwd());
   process.stderr.write(
-    found.length
-      ? `Fichiers de consignes trouvés : ${found.join(', ')}\n`
-      : "Aucun fichier de consignes trouvé — la consigne fera lire le dépôt.\n",
+    `${found.length ? cliText().bootstrapFound(found.join(', ')) : cliText().bootstrapNone}\n`,
   );
   return emit(renderBootstrapPrompt(found), Boolean(flags.copy));
 }
@@ -462,10 +411,10 @@ async function cmdRender(flags: Flags): Promise<number> {
  */
 async function emit(text: string, copy: boolean): Promise<number> {
   if (copy && (await toClipboard(text))) {
-    process.stderr.write(`${text.length} caractères copiés dans le presse-papier.\n`);
+    process.stderr.write(`${cliText().copied(text.length)}\n`);
     return 0;
   }
-  if (copy) process.stderr.write('Presse-papier indisponible — sortie sur stdout.\n');
+  if (copy) process.stderr.write(`${cliText().clipboardUnavailable}\n`);
   process.stdout.write(`${text}\n`);
   return 0;
 }
@@ -498,7 +447,7 @@ async function cmdExport(flags: Flags): Promise<number> {
   const out = str(flags.o) ?? str(flags.out);
   if (out) {
     await fs.writeFile(out, `${payload}\n`, 'utf8');
-    process.stdout.write(`${pack.branches.length} branche(s) → ${out}\n`);
+    process.stdout.write(`${cliText().exported(pack.branches.length, out)}\n`);
   } else {
     process.stdout.write(`${payload}\n`);
   }
@@ -508,13 +457,13 @@ async function cmdExport(flags: Flags): Promise<number> {
 async function cmdImport(flags: Flags): Promise<number> {
   const source = flags._[0];
   if (!source) {
-    process.stderr.write('Usage : contextree import <jeton|fichier.json> [--prefix equipe]\n');
+    process.stderr.write(`${cliText().usageImport}\n`);
     return 1;
   }
   const dir = (await findTreeDir()) ?? path.join(process.cwd(), DIR_NAME);
   const pack = await resolvePack(source);
   const written = await applyPack(dir, pack, { prefix: str(flags.prefix), mergeRoot: true });
-  process.stdout.write(`${written.length} branche(s) importée(s) dans ${path.relative(process.cwd(), dir)}/\n`);
+  process.stdout.write(`${cliText().imported(written.length, path.relative(process.cwd(), dir))}\n`);
   return 0;
 }
 
@@ -534,35 +483,35 @@ async function cmdImport(flags: Flags): Promise<number> {
 
 async function cmdRemote(url: string | undefined, anonKey: string | undefined): Promise<number> {
   if (!url || !anonKey) {
-    process.stderr.write('Usage : contextree remote <url> <clé anon>\n');
+    process.stderr.write(`${cliText().usageRemote}\n`);
     return 1;
   }
   const stored = await setRemoteConfig({ url, anonKey });
-  process.stdout.write(`Backend : ${stored.config.url}\n${stored.file}\n`);
+  process.stdout.write(`${cliText().backend(stored.config.url)}\n${stored.file}\n`);
   return 0;
 }
 
 async function cmdLogin(email: string | undefined, password: string | undefined): Promise<number> {
   if (!email) {
-    process.stderr.write('Usage : contextree login <email> [--password <mdp>]\n');
+    process.stderr.write(`${cliText().usageLogin}\n`);
     return 1;
   }
   // Un mot de passe sur la ligne de commande finit dans l'historique du shell :
   // stdin est le chemin par défaut, `--password` reste possible pour un script.
   const secret = password ?? (await readStdin())?.trim();
   if (!secret) {
-    process.stderr.write('Mot de passe attendu sur stdin, ou via --password.\n');
+    process.stderr.write(`${cliText().passwordExpected}\n`);
     return 1;
   }
   return remote(async () => {
     const session = await signIn(email, secret);
-    process.stdout.write(`Connecté : ${session.email ?? session.userId}\n`);
+    process.stdout.write(`${cliText().loggedIn(session.email ?? session.userId)}\n`);
   });
 }
 
 async function cmdLogout(): Promise<number> {
   await signOut();
-  process.stdout.write('Session fermée.\n');
+  process.stdout.write(`${cliText().loggedOut}\n`);
   return 0;
 }
 
@@ -570,13 +519,13 @@ async function cmdWhoami(): Promise<number> {
   return remote(async () => {
     const account = await me();
     if (!account) {
-      process.stdout.write('Personne n\'est connecté. Lance : contextree login <email>\n');
+      process.stdout.write(`${cliText().nobodyLoggedIn}\n`);
       return;
     }
     process.stdout.write(`${account.email ?? account.id}\n`);
     const groups = await myGroups();
     if (!groups.length) {
-      process.stdout.write('Aucun groupe. Lance : contextree group new <slug> <nom>\n');
+      process.stdout.write(`${cliText().noGroups}\n`);
       return;
     }
     for (const g of groups) process.stdout.write(`  ${g.slug} — ${g.name} (${g.role})\n`);
@@ -586,28 +535,26 @@ async function cmdWhoami(): Promise<number> {
 async function cmdGroup(args: string[]): Promise<number> {
   const [sub, slug, ...rest] = args;
   if (sub !== 'new' || !slug) {
-    process.stderr.write('Usage : contextree group new <slug> <nom>\n');
+    process.stderr.write(`${cliText().usageGroup}\n`);
     return 1;
   }
   const name = rest.join(' ') || slug;
   return remote(async () => {
     const group = await createGroup(slug, name);
-    process.stdout.write(`Groupe créé : ${group.slug} — ${group.name} (${group.role})\n`);
+    process.stdout.write(`${cliText().groupCreated(group.slug, group.name, group.role)}\n`);
   });
 }
 
 async function cmdLink(target: string | undefined, create: boolean): Promise<number> {
   const [groupSlug, treeSlug] = (target ?? '').split('/');
   if (!groupSlug || !treeSlug) {
-    process.stderr.write('Usage : contextree link <groupe>/<arbre> [--create]\n');
+    process.stderr.write(`${cliText().usageLink}\n`);
     return 1;
   }
   const { dir } = await open();
   return remote(async () => {
     const tracking = await link(dir, groupSlug, treeSlug, { create });
-    process.stdout.write(
-      `Rattaché à ${tracking.groupSlug}/${tracking.treeSlug}\nLance : contextree pull\n`,
-    );
+    process.stdout.write(`${cliText().linked(`${tracking.groupSlug}/${tracking.treeSlug}`)}\n`);
   });
 }
 
@@ -615,14 +562,12 @@ async function cmdStatus(): Promise<number> {
   const { dir } = await open();
   const tracking = await readTracking(dir);
   if (!tracking) {
-    process.stdout.write(
-      "Copie de travail non rattachée.\nLance : contextree link <groupe>/<arbre> [--create]\n",
-    );
+    process.stdout.write(`${cliText().notLinked}\n`);
     return 0;
   }
   process.stdout.write(
     `${tracking.groupSlug}/${tracking.treeSlug}\n` +
-      `base : ${tracking.baseVersionId ?? '(aucune — rien n\'a encore été poussé ni récupéré)'}\n`,
+      `${cliText().base(tracking.baseVersionId ?? null)}\n`,
   );
   return 0;
 }
@@ -633,37 +578,29 @@ async function cmdPull(resolve?: 'mine' | 'theirs'): Promise<number> {
   const result = await remote(async () => {
     const report = await pull(dir, resolve ? { resolve } : {});
     if (report.status === 'vierge') {
-      process.stdout.write("L'arbre distant est vierge. Lance : contextree push -m \"…\"\n");
+      process.stdout.write(`${cliText().remoteBlank}\n`);
       return;
     }
     if (report.status === 'à jour') {
-      process.stdout.write('Déjà à jour.\n');
+      process.stdout.write(`${cliText().upToDate}\n`);
       return;
     }
     // Un conflit se montre, il ne se tranche pas à ta place. Rien n'a été écrit.
     if (report.status === 'conflit') {
-      process.stderr.write(
-        `${report.conflicts.length} branche(s) modifiée(s) des deux côtés — rien n'a été écrit :\n` +
-          report.conflicts.map(p => `  ✗ ${p}\n`).join('') +
-          '\nRègle chacune à la main en éditant son .md, puis tranche en une fois :\n' +
-          '  contextree pull --mine     garde ta version des branches en conflit\n' +
-          '  contextree pull --theirs   prend celle du groupe\n',
-      );
+      process.stderr.write(`${cliText().conflicts(report.conflicts)}\n`);
       code = 1;
       return;
     }
     for (const d of report.incoming) process.stdout.write(`  ↓ ${d.kind.padEnd(9)} ${d.path}\n`);
-    for (const p of report.kept) process.stdout.write(`  = gardée    ${p}\n`);
-    process.stdout.write(
-      `${report.incoming.length} branche(s) récupérée(s), ${report.kept.length} gardée(s).\n`,
-    );
+    for (const p of report.kept) process.stdout.write(`  = ${cliText().kept} ${p}\n`);
+    process.stdout.write(`${cliText().pulled(report.incoming.length, report.kept.length)}\n`);
   });
   return result || code;
 }
 
 async function cmdPush(message: string | undefined): Promise<number> {
   if (!message) {
-    process.stderr.write('Usage : contextree push -m "<message>"\n');
+    process.stderr.write(`${cliText().usagePush}\n`);
     return 1;
   }
   const { dir } = await open();
@@ -671,19 +608,16 @@ async function cmdPush(message: string | undefined): Promise<number> {
   const result = await remote(async () => {
     const report = await push(dir, message);
     if (report.status === 'rien à pousser') {
-      process.stdout.write('Rien à pousser.\n');
+      process.stdout.write(`${cliText().nothingToPush}\n`);
       return;
     }
     if (report.status === 'en retard') {
-      process.stderr.write(
-        "Le distant a avancé depuis ta dernière synchronisation.\n" +
-          'Lance `contextree pull` d\'abord — pousser écraserait le travail de quelqu\'un d\'autre.\n',
-      );
+      process.stderr.write(`${cliText().behind}\n`);
       code = 1;
       return;
     }
     for (const d of report.outgoing) process.stdout.write(`  ↑ ${d.kind.padEnd(9)} ${d.path}\n`);
-    process.stdout.write(`Poussé : ${report.outgoing.length} changement(s).\n`);
+    process.stdout.write(`${cliText().pushed(report.outgoing.length)}\n`);
   });
   return result || code;
 }
@@ -858,18 +792,19 @@ async function cmdRouteBackground(flags: Flags): Promise<number> {
  *  question qu'on se pose quand rien ne se charge. */
 function describeEngine(): string {
   const engine = pickEngine();
+  const t = cliText();
   switch (engine) {
     case 'anthropic':
-      return 'clé API Anthropic';
+      return t.engineAnthropic;
     case 'openai':
-      return `endpoint compatible OpenAI — ${process.env['OPENAI_BASE_URL'] ?? 'api.openai.com'}`;
+      return t.engineOpenai(process.env['OPENAI_BASE_URL'] ?? 'api.openai.com');
     case 'sampling':
       // Seulement forcé : hors du serveur MCP, il n'y a pas de client à qui le demander.
-      return 'sampling MCP — le modèle du client, disponible seulement dans le serveur MCP : `route` et `route --eval` ne peuvent pas s\'en servir, ils tomberont dans le repli'
+      return t.engineSampling;
     case 'none':
-      return 'aucun moteur — arbre entier injecté (installe un CLI `claude`/`codex`/`gemini`, ou pose ANTHROPIC_API_KEY / OPENAI_API_KEY)';
+      return t.engineNone;
     default:
-      return `CLI \`${engine}\` (ton abonnement) — ${engineBin(engine) ?? 'introuvable'}`;
+      return t.engineCli(engine, engineBin(engine));
   }
 }
 
@@ -878,7 +813,7 @@ function describeEngine(): string {
 async function open() {
   const dir = await findTreeDir();
   if (!dir) {
-    process.stderr.write(`Aucun ${DIR_NAME}/ trouvé. Lance : contextree init\n`);
+    process.stderr.write(`${cliText().noTree(DIR_NAME)}\n`);
     process.exit(1);
   }
   return { dir, tree: await loadTree(dir) };

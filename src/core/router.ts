@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { allBranches, withAncestors } from './tree.js';
 import type { ContextTree } from './types.js';
+import { coreText } from './messages.js';
 
 /** Modèle du routeur. Défaut par moteur — voir la branche `architecture/routage`. */
 const ROUTER_MODEL = process.env['CONTEXTREE_ROUTER_MODEL'];
@@ -113,6 +114,13 @@ export function isCliEngine(engine: RouterEngine): boolean {
   return CLIS.some(spec => spec.engine === engine);
 }
 
+/**
+ * Le prompt du routeur **reste en français, quelle que soit la langue de
+ * l'outil** (14 septembre 2026). Personne ne le lit — il part au modèle qui
+ * trie, et ne demande qu'un tableau d'entiers —, et le changer invaliderait les
+ * mesures de `npm run eval`. Les modèles lisent le français ; le catalogue
+ * qu'il accompagne est dans la langue des branches, quelle qu'elle soit.
+ */
 const ROUTER_SYSTEM =
   "Tu es un routeur de contexte. On te donne un catalogue de sections de " +
   "documentation, chacune avec sa condition de chargement, et le message d'un " +
@@ -240,8 +248,7 @@ export async function route(
     return {
       selected: new Set(branches.map(b => b.path)),
       reason: 'all',
-      error:
-        'aucun moteur de routage (ni clé API, ni client MCP qui propose le sampling, ni CLI `claude`/`codex`/`gemini`) — arbre entier injecté',
+      error: coreText().routerNoEngine,
     };
   }
 
@@ -255,7 +262,7 @@ export async function route(
   try {
     const indices = await ask(engine, message, opts.waiter ?? 'prompt', opts.apiKey, opts.sampler);
     if (!indices) {
-      return { selected: fallback, reason: 'fallback', error: 'routeur : réponse illisible', engine };
+      return { selected: fallback, reason: 'fallback', error: coreText().routerUnreadable, engine };
     }
 
     const picked = indices
@@ -267,7 +274,7 @@ export async function route(
     return {
       selected: fallback,
       reason: 'fallback',
-      error: `routeur : ${err instanceof Error ? err.message : String(err)}`,
+      error: coreText().routerError(err instanceof Error ? err.message : String(err)),
       engine,
     };
   }
@@ -288,7 +295,7 @@ async function ask(
   if (engine === 'sampling') {
     // Forcé par `CONTEXTREE_ROUTER=sampling` hors d'un serveur MCP — `route`,
     // `route --eval`, le hook : il n'y a pas de client à qui demander.
-    if (!sampler) throw new Error('sampling : aucun client MCP ne le propose ici (seul le serveur MCP peut le demander)');
+    if (!sampler) throw new Error(coreText().routerNoSampler);
     // Le budget d'un CLI et non d'une API : au premier appel, VS Code demande
     // son consentement à l'utilisateur, et c'est un humain qui clique. Le
     // plafond de 45 s d'un outil reste sous les 60 s du client.
@@ -442,7 +449,7 @@ async function askAnthropic(
     { timeout },
   );
 
-  if (response.stop_reason === 'refusal') throw new Error('refus');
+  if (response.stop_reason === 'refusal') throw new Error(coreText().routerRefusal);
   return parseIndices(response.content.find(b => b.type === 'text')?.text ?? '');
 }
 
@@ -479,7 +486,7 @@ async function askOpenAI(message: string, timeout: number): Promise<number[] | n
       }),
       signal: controller.signal,
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status} sur ${base}`);
+    if (!response.ok) throw new Error(coreText().routerHttp(response.status, base));
     const data = (await response.json()) as {
       choices?: { message?: { content?: unknown } }[];
     };
@@ -499,7 +506,7 @@ async function askOpenAI(message: string, timeout: number): Promise<number[] | n
  */
 async function askCli(spec: CliSpec, message: string, timeout: number): Promise<number[] | null> {
   const bin = findBin(spec.bin);
-  if (!bin) throw new Error(`CLI \`${spec.bin}\` introuvable`);
+  if (!bin) throw new Error(coreText().routerCliMissing(spec.bin));
 
   const model = ROUTER_MODEL ?? spec.defaultModel;
   // Un shim `.cmd` passe par `cmd.exe`, qui coupe une ligne de commande au
@@ -569,7 +576,7 @@ function run(bin: string, args: string[], stdin: string, timeout: number): Promi
     let err = '';
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      reject(new Error(`budget de ${timeout} ms dépassé`));
+      reject(new Error(coreText().routerTimeout(timeout)));
     }, timeout);
 
     child.stdout.setEncoding('utf8');
@@ -585,9 +592,7 @@ function run(bin: string, args: string[], stdin: string, timeout: number): Promi
       if (code === 0) resolve(out);
       else
         reject(
-          new Error(
-            `${path.basename(bin)} : code ${code}${err.trim() ? ` — ${err.trim().split('\n')[0]}` : ''}`,
-          ),
+          new Error(coreText().routerExitCode(path.basename(bin), code, err.trim().split('\n')[0] ?? '')),
         );
     });
 

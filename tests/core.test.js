@@ -14,6 +14,8 @@ import { createServer } from '../dist/mcp/server.js';
 
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
 import { resolveLang, fromLocale } from '../dist/core/i18n.js';
+import { CORE_MESSAGES } from '../dist/core/messages.js';
+import { CLI_MESSAGES } from '../dist/messages.js';
 import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree, detectInstructionFiles, ensureLocalIgnored } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { route, pickEngine, isCliEngine, parseIndices, timeoutFor, findBinIn, cmdLine } from '../dist/core/router.js';
@@ -406,17 +408,17 @@ test("install : on inscrit la commande qui tourne, pas npx en dur", async () => 
     process.argv[1] = path.join(os.homedir(), '.npm', '_npx', 'abc123', 'node_modules', '@gengad', 'contextree', 'dist', 'cli.js');
     const viaNpx = selfCommand('hook');
     assert.equal(viaNpx.command, 'npx');
-    assert.deepEqual(viaNpx.args, ['-y', '@gengad/contextree', 'hook']);
-    assert.equal(viaNpx.shell, 'npx -y @gengad/contextree hook');
+    assert.deepEqual(viaNpx.args, ['-y', '@gengad/contextree', 'hook', '--lang', 'fr']);
+    assert.equal(viaNpx.shell, 'npx -y @gengad/contextree hook --lang fr');
 
     // Sinon : node + le script, en absolu et entre guillemets. Sans ça, un
     // paquet non publié échoue en silence sur tout autre projet que celui-ci.
     process.argv[1] = path.join('dist', 'cli.js');
     const local = selfCommand('mcp');
     assert.equal(local.command, process.execPath);
-    assert.deepEqual(local.args, [path.resolve('dist', 'cli.js'), 'mcp']);
+    assert.deepEqual(local.args, [path.resolve('dist', 'cli.js'), 'mcp', '--lang', 'fr']);
     assert.ok(path.isAbsolute(local.args[0]));
-    assert.equal(local.shell, `"${process.execPath}" "${path.resolve('dist', 'cli.js')}" mcp`);
+    assert.equal(local.shell, `"${process.execPath}" "${path.resolve('dist', 'cli.js')}" mcp --lang fr`);
 
     // La détection « déjà câblé » cherche `contextree` dans la commande : elle
     // doit rester vraie sur les deux formes.
@@ -667,7 +669,7 @@ test("install : sous l'hôte d'extensions, la commande inscrite lance contextree
 
   // Le terminal ne change pas : ce qui tourne est contextree.
   const terminal = selfCommand('mcp', { execPath: process.execPath, argv1: path.resolve('dist/cli.js') });
-  assert.deepEqual(terminal.args, [path.resolve('dist/cli.js'), 'mcp']);
+  assert.deepEqual(terminal.args, [path.resolve('dist/cli.js'), 'mcp', '--lang', 'fr']);
   assert.equal(terminal.command, process.execPath);
 });
 
@@ -1132,6 +1134,83 @@ function runHook(payload, env = {}, args = []) {
     child.stdin.end(JSON.stringify(payload));
   });
 }
+
+/** La CLI lancée pour de vrai : ce qu'un humain lit, stdout et stderr confondus. */
+function runCli(args, { cwd, env = {}, stdin = '' } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [path.resolve('dist/cli.js'), ...args], {
+      cwd, env: { ...process.env, ...env },
+    });
+    let out = '';
+    child.stdout.on('data', d => { out += d; });
+    child.stderr.on('data', d => { out += d; });
+    child.on('error', reject);
+    child.on('close', code => resolve({ code, out }));
+    child.stdin.end(stdin);
+  });
+}
+
+/** Des mots qui trahissent l'autre langue. Des mots, pas des lettres : un chemin
+ *  ou un nom propre n'a pas à faire échouer le test. */
+const FRENCH = /[éèàùêçœ]|\b(branche|arbre|charger quand|câblé|aucun|introuvable|inconnue?|trouvé|Routage|Lance|consignes?)\b/i;
+const ENGLISH = /\b(branch(es)?|tree|load when|wired|not found|unknown|Routing|Run:|written)\b/i;
+
+test("i18n : les deux dictionnaires ont exactement les mêmes clés", () => {
+  for (const dicts of [CORE_MESSAGES, CLI_MESSAGES]) {
+    assert.deepEqual(Object.keys(dicts.en).sort(), Object.keys(dicts.fr).sort());
+    for (const key of Object.keys(dicts.fr)) {
+      assert.equal(typeof dicts.en[key], typeof dicts.fr[key], key);
+    }
+  }
+});
+
+test("i18n : la CLI parle anglais ou français, jamais un mélange — aide, install, list, erreur", async () => {
+  const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-cli-lang-'));
+  const dir = path.join(projet, '.contextree');
+  await writeRoot(dir, 'root');
+  for (const p of ['alpha', 'beta']) {
+    await writeBranch(dir, { path: p, type: 'context', title: p, loadWhen: p, content: p });
+  }
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-cli-state-'));
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-cli-home-'));
+  const commands = [['--help'], ['install', '--status'], ['list'], ['rm', 'nope'], ['frobnicate']];
+
+  for (const [lang, other] of [['en', FRENCH], ['fr', ENGLISH]]) {
+    const env = { CONTEXTREE_LANG: lang, CONTEXTREE_STATE_DIR: stateDir, CONTEXTREE_ROUTER: 'off', HOME: home };
+    for (const args of commands) {
+      const { out } = await runCli(args, { cwd: projet, env });
+      // L'aide cite la variable et le drapeau de langue, et `fr|en` : on les retire.
+      const seen = out.replace(/contextree/g, '').replace(/--lang fr\|en/g, '');
+      assert.ok(!other.test(seen), `${lang} · ${args.join(' ')} :\n${out.match(other)?.[0]}\n${out}`);
+    }
+  }
+
+  // `--lang` sur la ligne de commande vaut CONTEXTREE_LANG.
+  const env = { CONTEXTREE_STATE_DIR: stateDir, HOME: home };
+  delete process.env.CONTEXTREE_LANG;
+  try {
+    assert.match((await runCli(['list', '--lang', 'en'], { cwd: projet, env })).out, /branch\(es\)/);
+  } finally {
+    process.env.CONTEXTREE_LANG = 'fr';
+  }
+});
+
+test("i18n : init pose un arbre de départ dans la langue de l'utilisateur", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-init-state-'));
+  for (const [lang, root, first] of [['en', /^# Context —/, 'identity.md'], ['fr', /^# Contexte —/, 'identite.md']]) {
+    const projet = await fs.mkdtemp(path.join(os.tmpdir(), `contextree-init-${lang}-`));
+    const { code, out } = await runCli(['init'], { cwd: projet, env: { CONTEXTREE_LANG: lang, CONTEXTREE_STATE_DIR: stateDir } });
+    assert.equal(code, 0, out);
+    assert.match(await fs.readFile(path.join(projet, '.contextree', 'root.md'), 'utf8'), root);
+    const files = await fs.readdir(path.join(projet, '.contextree'));
+    assert.ok(files.includes(first), files.join(', '));
+    if (lang === 'en') {
+      const tree = await loadTree(path.join(projet, '.contextree'));
+      const text = allBranches(tree).map(b => `${b.title} ${b.loadWhen} ${b.content}`).join('\n') + tree.rootContent + out;
+      assert.ok(!FRENCH.test(text.replace(/contextree/g, '')), text.match(FRENCH)?.[0]);
+    }
+  }
+});
 
 test('hook : trois dialectes, une seule enveloppe qui change', async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-dial-state-'));

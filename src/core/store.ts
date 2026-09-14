@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { parseFrontmatter, serializeFrontmatter } from './frontmatter.js';
 import { isBranchType, type Branch, type BranchType, type ContextTree } from './types.js';
+import { coreText } from './messages.js';
 
 export const DIR_NAME = '.contextree';
 /** Le calque personnel : même format, dossier frère. Voir `overlay` plus bas. */
@@ -243,7 +244,7 @@ export async function moveBranch(treeDir: string, from: string, to: string): Pro
   const target = normalizeBranchPath(to);
   if (source === target) return branchFile(treeDir, target);
   if (target.startsWith(`${source}/`)) {
-    throw new Error(`Déplacement impossible : ${target} est sous ${source}.`);
+    throw new Error(coreText().moveUnderItself(target, source));
   }
 
   const srcFile = branchFile(treeDir, source);
@@ -253,9 +254,9 @@ export async function moveBranch(treeDir: string, from: string, to: string): Pro
 
   const hasFile = await exists(srcFile);
   const hasChildren = await isDir(srcDir);
-  if (!hasFile && !hasChildren) throw new Error(`Branche introuvable : ${source}`);
+  if (!hasFile && !hasChildren) throw new Error(coreText().branchNotFound(source));
   if ((await exists(dstFile)) || (await isDir(dstDir))) {
-    throw new Error(`Une branche occupe déjà ${target}.`);
+    throw new Error(coreText().targetTaken(target));
   }
 
   await fs.mkdir(path.dirname(dstFile), { recursive: true });
@@ -290,7 +291,7 @@ function normalizeBranchPath(branchPath: string): string {
     path.isAbsolute(trimmed) ||
     trimmed.includes('\\') ||
     segments.some(s => !s || s === '.' || s === '..');
-  if (refused) throw new Error(`Chemin de branche refusé : ${branchPath}`);
+  if (refused) throw new Error(coreText().pathRefused(branchPath));
   return segments.join('/');
 }
 
@@ -377,7 +378,7 @@ export function slugify(input: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 60);
-  return slug || 'branche';
+  return slug || coreText().defaultSlug;
 }
 
 /**
@@ -428,9 +429,10 @@ export async function ensureLocalIgnored(projectDir: string): Promise<'added' | 
     return 'present';
   }
 
+  const comment = coreText().gitignoreComment;
   const body = existing.trim()
-    ? `${existing.replace(/\n*$/, '')}\n\n# contextree : le calque personnel ne se partage pas\n${wanted}\n`
-    : `# contextree : le calque personnel ne se partage pas\n${wanted}\n`;
+    ? `${existing.replace(/\n*$/, '')}\n\n${comment}\n${wanted}\n`
+    : `${comment}\n${wanted}\n`;
   await fs.writeFile(file, body, 'utf8');
   return 'added';
 }
@@ -441,43 +443,44 @@ export async function initTree(
 ): Promise<{ dir: string; branches: number }> {
   const dir = path.join(projectDir, DIR_NAME);
   if (!opts.force && (await isDir(dir))) {
-    throw new Error(`${DIR_NAME}/ existe déjà.`);
+    throw new Error(coreText().treeExists(DIR_NAME));
   }
   const project = path.basename(projectDir);
   await ensureLocalIgnored(projectDir);
 
-  await writeRoot(
-    dir,
-    `# Contexte — ${project}\n\nCe bloc est injecté à chaque appel. Garde-le court : qui, quoi, dans quel repo.`,
-  );
+  // L'arbre de départ suit la langue de l'utilisateur (14 septembre 2026) : un
+  // anglophone qui lance `init` corrige des amorces qu'il sait lire. Même forme
+  // dans les deux langues — une racine, quatre branches.
+  const t = coreText();
+  await writeRoot(dir, t.starterRoot(project));
   const starters: Parameters<typeof writeBranch>[1][] = [
     {
-      path: 'identite',
+      path: t.starterIdentityPath,
       type: 'identity',
-      title: 'Identité',
-      loadWhen: "toujours pertinent — qui est l'assistant sur ce projet",
-      content: `Tu assistes sur le projet **${project}**.\n\nDécris ici l'expertise attendue et le style de travail.`,
+      title: t.starterIdentityTitle,
+      loadWhen: t.starterIdentityLoadWhen,
+      content: t.starterIdentityContent(project),
     },
     {
-      path: 'regles',
+      path: t.starterRulesPath,
       type: 'rule',
-      title: 'Règles du projet',
-      loadWhen: 'quand la demande touche au code, aux fichiers ou aux features',
-      content: '- Une contrainte dure par ligne.\n- Ce qui est interdit, ce qui est obligatoire.',
+      title: t.starterRulesTitle,
+      loadWhen: t.starterRulesLoadWhen,
+      content: t.starterRulesContent,
     },
     {
-      path: 'architecture',
+      path: t.starterArchPath,
       type: 'context',
-      title: 'Architecture',
-      loadWhen: "quand la demande porte sur la structure du projet ou l'endroit où vit un bout de code",
-      content: "Vue d'ensemble : les zones du repo et ce qu'elles portent.",
+      title: t.starterArchTitle,
+      loadWhen: t.starterArchLoadWhen,
+      content: t.starterArchContent,
     },
     {
-      path: 'architecture/commandes',
+      path: t.starterCommandsPath,
       type: 'reference',
-      title: 'Commandes',
-      loadWhen: 'quand il faut lancer, tester ou builder le projet',
-      content: '```bash\n# à compléter\n```',
+      title: t.starterCommandsTitle,
+      loadWhen: t.starterCommandsLoadWhen,
+      content: t.starterCommandsContent,
     },
   ];
   for (const branch of starters) await writeBranch(dir, branch);
