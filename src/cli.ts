@@ -6,6 +6,7 @@ import * as path from 'node:path';
 
 import { DIR_NAME, findTreeDir, findStrayHomeTree, rescueStrayTree, loadTree, slugify, writeBranch, deleteBranch, moveBranch, initTree, detectInstructionFiles } from './core/store.js';
 import { coreText } from './core/messages.js';
+import { lintTree, renderShapeWarnings } from './core/lint.js';
 import { allBranches, formatTree } from './core/tree.js';
 import { renderContext, renderTrace, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite } from './core/render.js';
 import { route, pickEngine, isCliEngine, engineBin, withoutRouting, routeInBackground } from './core/router.js';
@@ -208,6 +209,9 @@ async function cmdInstall(flags: Flags): Promise<number> {
     // Les agents sans surface à câbler existent aussi, et l'outil les sert :
     // le dire ici évite de chercher une ligne « non détecté » qui ne viendra pas.
     process.stdout.write(`\n${t.noSurfaceAgents}\n`);
+    const treeDir = await findTreeDir();
+    const warnings = treeDir ? renderShapeWarnings(lintTree(await loadTree(treeDir))) : '';
+    if (warnings) process.stdout.write(`\n${warnings}\n`);
     const stray = await findStrayHomeTree();
     if (stray.length) process.stdout.write(`\n${coreText().strayTree(shorten(path.join(os.homedir(), DIR_NAME)), stray.length)}\n`);
     process.stdout.write(`\n${wiredCommands()}`);
@@ -270,6 +274,8 @@ async function cmdList(): Promise<number> {
   const branches = allBranches(tree);
   const t = cliText();
   process.stdout.write(branches.length ? `${formatTree(tree)}\n\n${t.branchCount(branches.length)}\n` : `${t.emptyTree}\n`);
+  const warnings = renderShapeWarnings(lintTree(tree));
+  if (warnings) process.stdout.write(`\n${warnings}\n`);
   return 0;
 }
 

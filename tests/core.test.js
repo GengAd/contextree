@@ -2776,3 +2776,65 @@ test("bootstrap : plan d'abord, la méthode, puis des arbres types — qui passe
     process.env.CONTEXTREE_LANG = saved;
   }
 });
+
+
+test("mcp : les défauts de forme arrivent dans la réponse d'upsert_branch — un arbre plat oui, un arbre en familles non", async () => {
+  const plat = path.dirname(await scratch());
+  await writeRoot(path.join(plat, '.contextree'), 'racine');
+  for (const p of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) {
+    await writeBranch(path.join(plat, '.contextree'), { path: p, type: 'context', title: p, loadWhen: `quand ${p}`, content: 'x' });
+  }
+  const client = await mcpClient(plat);
+  const res = await client.callTool({
+    name: 'upsert_branch',
+    arguments: { title: 'h', path: 'h', type: 'context', load_when: 'quand h', content: 'x', why: 'essai' },
+  });
+  assert.match(textOf(res), /⚠ Forme de l'arbre/);
+  assert.match(textOf(res), /arbre plat : 8 branches/);
+
+  const rangé = path.dirname(await scratch());
+  const dir = path.join(rangé, '.contextree');
+  await writeRoot(dir, 'racine');
+  for (const p of ['identite', 'composants', 'commandes', 'publier', 'pieges', 'composants/date']) {
+    await writeBranch(dir, { path: p, type: 'context', title: p, loadWhen: `quand ${p}`, content: p.includes('/') ? 'un composant détaillé' : 'x' });
+  }
+  const other = await mcpClient(rangé);
+  const ok = await other.callTool({
+    name: 'upsert_branch',
+    arguments: { title: 'upload', parent: 'composants', type: 'context', load_when: 'quand on envoie un fichier', content: 'le composant upload', why: 'essai' },
+  });
+  assert.doesNotMatch(textOf(ok), /Forme de l'arbre/);
+  const moved = await other.callTool({ name: 'move_branch', arguments: { from: 'composants/upload', to: 'upload-composant' } });
+  assert.doesNotMatch(textOf(moved), /Forme/);
+});
+
+test("mcp : la réponse de write_root à la création donne le plan d'abord et la méthode, en français et en anglais", async () => {
+  const saved = process.env.CONTEXTREE_LANG;
+  try {
+    for (const [lang, guide, method] of [
+      ['fr', /L'arbre vient de naître.*avant toute branche/s, /## La méthode, dans cet ordre/],
+      ['en', /The tree was just created.*before any branch/s, /## The method, in this order/],
+    ]) {
+      process.env.CONTEXTREE_LANG = lang;
+      const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-guide-'));
+      const client = await mcpClient(projet);
+      const created = textOf(await client.callTool({ name: 'write_root', arguments: { content: '# x', why: 'r' } }));
+      assert.match(created, guide, lang);
+      assert.match(created, method, lang);
+      // Une racine réécrite sur un arbre existant ne redonne pas la leçon.
+      const again = textOf(await client.callTool({ name: 'write_root', arguments: { content: '# y', why: 'r' } }));
+      assert.doesNotMatch(again, method, lang);
+
+      const tools = (await client.listTools()).tools;
+      const upsert = tools.find(x => x.name === 'upsert_branch');
+      assert.match(upsert.description, lang === 'fr' ? /Un `\/` dans le chemin crée un enfant/ : /A `\/` in the path creates a child/);
+      assert.match(tools.find(x => x.name === 'write_root').description, /bootstrap_prompt/);
+    }
+  } finally {
+    process.env.CONTEXTREE_LANG = saved;
+  }
+});
+
+test("bootstrap : l'invitation fait de bootstrap_prompt le premier appel, avant write_root", () => {
+  assert.match(renderBootstrapInvite([]), /ton premier appel est l'outil `bootstrap_prompt`\*\* — avant `write_root`/);
+});

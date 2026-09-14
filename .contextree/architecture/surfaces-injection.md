@@ -111,3 +111,9 @@ Jamais `contextree` nu : le PATH d'un hook est plus pauvre que celui d'un shell 
 `install --status` et le bouton de l'extension **affichent cette commande** avant d'écrire : câbler sur `npx` ou sur un binaire local n'est pas le même geste, et on ne l'apprenait qu'en ouvrant le JSON après coup.
 
 **Détection d'un hook déjà posé** : on cherche `contextree` dans la commande. C'est vrai des deux formes — le chemin d'un binaire global contient `@gengad/contextree`, celui du dépôt contient `contextree`. Un dépôt cloné sous un autre nom y échappe encore ; c'est le cas du développeur, pas celui d'un utilisateur.
+
+**La forme de l'arbre arrive au moment d'écrire** (14 septembre 2026). Rien ne garantit qu'un agent ait appelé `bootstrap_prompt` avant d'écrire : Copilot a très bien pu construire son arbre plat directement avec `write_root` et `upsert_branch`. Donc :
+- **la réponse de `write_root` à la création** porte « l'arbre vient de naître » + « montre le plan maintenant, avant toute branche » + `TREE_METHOD` — pas quand on réécrit la racine d'un arbre existant ;
+- **les descriptions** de `upsert_branch` et `write_root` disent qu'un `/` crée un enfant, chargé avec son parent, et qu'une famille se range sous un parent ; celle de `write_root` renvoie à `bootstrap_prompt` sur un projet sans arbre ;
+- **l'invitation** fait de `bootstrap_prompt` « ton premier appel — avant `write_root`, avant toute branche » ;
+- **les défauts de forme** (`lintTree`, voir *Architecture*) sont ajoutés à la réponse d'`upsert_branch`, `delete_branch` et `move_branch`, sous « ⚠ Forme de l'arbre », et affichés par `contextree list` et `install --status`. Rien quand il n'y en a pas : un arbre sain ne fait pas de bruit.

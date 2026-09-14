@@ -93,13 +93,16 @@ un rattrapage exceptionnel : un prompt de départ ne contient presque jamais la 
   upsertDescription:
     "Écrit une branche sur le disque. Utilise-le pour capitaliser un fait durable sur le " +
     "projet. `load_when` est la phrase que lira le routeur : formule-la comme une condition " +
-    "(« quand on touche à X », « si la demande parle de Y »), pas comme un résumé.",
+    "(« quand on touche à X », « si la demande parle de Y »), pas comme un résumé. " +
+    "**Un `/` dans le chemin crée un enfant** (`composants/date`) : le parent est chargé avec " +
+    "chacun de ses enfants, il porte donc ce qui vaut pour tous, en court. Une famille — composants, " +
+    'écrans, endpoints, modules — se range sous un parent, un enfant par élément.',
   upsertTitleParam: 'Titre lisible de la branche.',
   upsertTypeParam:
     "identity = qui est l'IA · rule = contrainte dure · context = connaissance de domaine · reference = API, chemins, commandes · skill = savoir-faire activable (feuille).",
   upsertLoadWhenParam: 'Condition de chargement, une phrase.',
   upsertContentParam: 'Corps markdown de la branche.',
-  upsertPathParam: 'Chemin explicite. Par défaut, dérivé du titre.',
+  upsertPathParam: 'Chemin explicite ; un `/` crée un enfant (`composants/date`). Par défaut, dérivé du titre.',
   upsertParentParam: "Chemin de la branche parente, si c'est un enfant.",
   upsertWhyParam:
     "Pourquoi cette branche mérite d'exister, en une phrase. Elle apparaît dans la vue " +
@@ -115,7 +118,9 @@ un rattrapage exceptionnel : un prompt de départ ne contient presque jamais la 
     "C'est la première chose à poser sur un arbre neuf, et la seule que `upsert_branch` " +
     "ne sait pas écrire. **Crée le dossier `.contextree/` s'il n'existe pas encore** : " +
     "sur un projet sans arbre, c'est par ici qu'on commence, sans aucune commande à " +
-    'taper. Relis la racine avec `read_branch` sur `:root` avant de la remplacer.',
+    'taper. Relis la racine avec `read_branch` sur `:root` avant de la remplacer. ' +
+    "Sur un projet sans arbre, appelle d'abord `bootstrap_prompt` et montre le plan à l'utilisateur. " +
+    "Dans l'arbre, un `/` dans le chemin d'une branche crée un enfant, chargé avec son parent.",
   rootContentParam: 'Corps markdown de la racine. Quelques lignes, pas une page.',
   rootWhyParam:
     'Pourquoi la racine doit dire ça, en une phrase. Elle apparaît dans la vue à côté ' +
@@ -127,6 +132,10 @@ un rattrapage exceptionnel : un prompt de départ ne contient presque jamais la 
     (createdDir ? `Arbre créé : ${createdDir}/\n` : '') +
     "\nAnnonce-le maintenant à l'utilisateur : ce que tu viens d'écrire dans la racine, et pourquoi." +
     (createdDir ? " Dis-lui aussi que le dossier `.contextree/` vient d'être créé." : ''),
+  rootCreatedGuide:
+    "**L'arbre vient de naître : voici comment le construire.** Si tu n'as pas encore montré de plan " +
+    "à l'utilisateur, fais-le **maintenant, avant toute branche**, et attends son accord. Les arbres " +
+    'types sont dans `bootstrap_prompt`.',
 
   deleteTitle: 'Supprimer une branche',
   deleteDescription: 'Supprime une branche et toutes ses branches enfants. Irréversible.',
@@ -244,13 +253,16 @@ prompt almost never contains the whole task.`,
   upsertDescription:
     'Writes a branch to disk. Use it to capture a durable fact about the project. ' +
     '`load_when` is the sentence the router will read: phrase it as a condition ' +
-    '("when touching X", "if the request is about Y"), not as a summary.',
+    '("when touching X", "if the request is about Y"), not as a summary. ' +
+    '**A `/` in the path creates a child** (`components/date`): the parent is loaded with each of ' +
+    'its children, so it holds what applies to all of them, briefly. A family — components, screens, ' +
+    'endpoints, modules — goes under a parent, one child per item.',
   upsertTitleParam: 'Readable title of the branch.',
   upsertTypeParam:
     'identity = who the AI is · rule = hard constraint · context = domain knowledge · reference = APIs, paths, commands · skill = activatable know-how (leaf).',
   upsertLoadWhenParam: 'Load condition, one sentence.',
   upsertContentParam: 'Markdown body of the branch.',
-  upsertPathParam: 'Explicit path. Derived from the title by default.',
+  upsertPathParam: 'Explicit path; a `/` creates a child (`components/date`). Derived from the title by default.',
   upsertParentParam: 'Path of the parent branch, if this is a child.',
   upsertWhyParam:
     'Why this branch deserves to exist, in one sentence. It appears in the view next to ' +
@@ -266,7 +278,9 @@ prompt almost never contains the whole task.`,
     'It is the first thing to write on a new tree, and the only thing `upsert_branch` ' +
     'cannot write. **Creates the `.contextree/` folder if it does not exist yet**: on a ' +
     'project without a tree, this is where you start, with no command to type. Reread the ' +
-    'root with `read_branch` on `:root` before replacing it.',
+    'root with `read_branch` on `:root` before replacing it. ' +
+    'On a project without a tree, call `bootstrap_prompt` first and show the user the plan. ' +
+    "In the tree, a `/` in a branch's path creates a child, loaded with its parent.",
   rootContentParam: 'Markdown body of the root. A few lines, not a page.',
   rootWhyParam:
     'Why the root should say this, in one sentence. It appears in the view next to the ' +
@@ -278,6 +292,10 @@ prompt almost never contains the whole task.`,
     (createdDir ? `Tree created: ${createdDir}/\n` : '') +
     '\nTell the user now: what you just wrote into the root, and why.' +
     (createdDir ? ' Also tell them the `.contextree/` folder was just created.' : ''),
+  rootCreatedGuide:
+    '**The tree was just created: here is how to build it.** If you have not shown the user a plan ' +
+    'yet, do it **now, before any branch**, and wait for their approval. The example trees are in ' +
+    '`bootstrap_prompt`.',
 
   deleteTitle: 'Delete a branch',
   deleteDescription: 'Deletes a branch and all its child branches. Irreversible.',

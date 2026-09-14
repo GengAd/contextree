@@ -9,7 +9,9 @@ import { findTreeDir, findStrayHomeTree, isHomeDir, loadTree, slugify, writeBran
 import { coreText } from '../core/messages.js';
 import { syncInstructionFiles } from '../install.js';
 import { allBranches, formatTree } from '../core/tree.js';
-import { renderContext, renderTrace, renderBootstrapPrompt, renderBootstrapInvite, renderCatalogueOnly } from '../core/render.js';
+import { renderContext, renderTrace, renderBootstrapPrompt, renderBootstrapInvite, renderCatalogueOnly, TREE_METHOD } from '../core/render.js';
+import { lintTree, renderShapeWarnings } from '../core/lint.js';
+import { currentLang } from '../core/i18n.js';
 import { route, pickEngine, isCliEngine, withoutRouting, routeInBackground, ROUTE_THRESHOLD } from '../core/router.js';
 import type { Complete } from '../core/router.js';
 import { appendTurn, appendAiWrite } from '../core/journal.js';
@@ -151,6 +153,16 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
   };
 
   const text = (s: string) => ({ content: [{ type: 'text' as const, text: s }] });
+
+  /**
+   * Les défauts de forme de l'arbre, dans la réponse de chaque outil qui le
+   * change (14 septembre 2026) : c'est l'instant où l'agent peut encore les
+   * corriger, et le seul canal qu'il lit à coup sûr. Rien s'il n'y en a pas.
+   */
+  const shape = async (dir: string): Promise<string> => {
+    const warnings = renderShapeWarnings(lintTree(await loadTree(dir)));
+    return warnings ? `\n\n${warnings}` : '';
+  };
 
   /**
    * Le routage par le modèle **du client** — `sampling/createMessage`
@@ -429,7 +441,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       });
       const existed = tree.branches.has(branchPath);
       await appendAiWrite(dir, { at: Date.now(), op: 'upsert', path: branchPath, title, why });
-      return text(t.upsertDone(existed, branchPath, type, path.relative(process.cwd(), file)) + (await syncInstructions(dir)));
+      return text(t.upsertDone(existed, branchPath, type, path.relative(process.cwd(), file)) + (await shape(dir)) + (await syncInstructions(dir)));
     },
   );
 
@@ -476,7 +488,12 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         t.rootDone(
           path.relative(process.cwd(), path.join(dir, ROOT_FILE)),
           existing ? null : path.relative(process.cwd(), dir),
-        ) + (await syncInstructions(dir)),
+        ) +
+          // L'arbre naît : c'est le seul instant garanti où l'agent construit un
+          // arbre, qu'il ait appelé `bootstrap_prompt` ou non. Le plan d'abord
+          // et la méthode arrivent donc ici, dans la réponse.
+          (existing ? '' : `\n\n${t.rootCreatedGuide}\n\n${TREE_METHOD[currentLang()]}`) +
+          (await syncInstructions(dir)),
       );
     },
   );
@@ -505,7 +522,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         title: branch.title,
         why,
       });
-      return text(t.deleteDone(branchPath, kids) + (await syncInstructions(dir)));
+      return text(t.deleteDone(branchPath, kids) + (await shape(dir)) + (await syncInstructions(dir)));
     },
   );
 
@@ -538,7 +555,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         title: branch.title,
         ...(why ? { why } : {}),
       });
-      return text(`${from} → ${to}${kids ? t.moveChildren(kids) : ''}` + (await syncInstructions(dir)));
+      return text(`${from} → ${to}${kids ? t.moveChildren(kids) : ''}` + (await shape(dir)) + (await syncInstructions(dir)));
     },
   );
 

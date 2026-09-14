@@ -483,9 +483,9 @@ function bootstrapInviteFr(found: string[]): string {
       'de contexte et que tu peux en construire un à partir de ces fichiers et du dépôt, à ' +
       "la place du gros fichier de consignes. Une phrase, à la fin, sans y revenir : c'est " +
       'la seule fois de la session où on le lui propose.',
-    "S'il accepte, appelle l'outil `bootstrap_prompt` : il te donne la consigne complète, " +
-      "et `write_root` crée l'arbre — rien à taper dans un terminal. (Sans serveur MCP : " +
-      '`contextree bootstrap`.)',
+    "S'il accepte, **ton premier appel est l'outil `bootstrap_prompt`** — avant `write_root`, avant " +
+      "toute branche : il te donne le plan à lui montrer et la méthode. `write_root` crée ensuite " +
+      "l'arbre — rien à taper dans un terminal. (Sans serveur MCP : `contextree bootstrap`.)",
     "**Ne crée rien tant qu'il n'a pas dit oui**, et ne touche à aucun fichier source. " +
       "Un arbre écrit dans son dos est un arbre que personne ne relit.",
   ].join('\n\n');
@@ -566,9 +566,9 @@ function bootstrapInviteEn(found: string[]): string {
       'context tree and that you can build one from these files and the repo, in place of the ' +
       "big instructions file. One sentence, at the end, without coming back to it: it is the " +
       'only time in the session it is offered.',
-    'If they accept, call the `bootstrap_prompt` tool: it gives you the full instructions, ' +
-      'and `write_root` creates the tree — nothing to type in a terminal. (Without an MCP ' +
-      'server: `contextree bootstrap`.)',
+    'If they accept, **your first call is the `bootstrap_prompt` tool** — before `write_root`, ' +
+      'before any branch: it gives you the plan to show them and the method. `write_root` then ' +
+      'creates the tree — nothing to type in a terminal. (Without an MCP server: `contextree bootstrap`.)',
     "**Do not create anything until they have said yes**, and do not touch any source file. " +
       'A tree written behind their back is a tree nobody rereads.',
   ].join('\n\n');
