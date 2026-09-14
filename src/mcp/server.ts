@@ -7,6 +7,7 @@ import { z } from 'zod';
 
 import { findTreeDir, findStrayHomeTree, isHomeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch, detectInstructionFiles, ensureLocalIgnored, DIR_NAME, ROOT_FILE } from '../core/store.js';
 import { coreText } from '../core/messages.js';
+import { syncInstructionFiles } from '../install.js';
 import { allBranches, formatTree } from '../core/tree.js';
 import { renderContext, renderTrace, renderBootstrapPrompt, renderBootstrapInvite, renderCatalogueOnly } from '../core/render.js';
 import { route, pickEngine, isCliEngine, withoutRouting, routeInBackground, ROUTE_THRESHOLD } from '../core/router.js';
@@ -65,8 +66,40 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
     { name: 'contextree', version: '0.1.0' },
     // Le `cwd` seul ici : les roots du client ne se demandent qu'une fois
     // connecté, et le serveur n'existe pas encore.
-    { instructions: ((await findTreeDir(cwd)) ? t.instructions : renderBootstrapInvite(await detectInstructionFiles(cwd))) + strayNote },
+    // Sans arbre, les **deux** consignes : l'invitation, et ce qui vaut dès que
+    // l'arbre existe. Elles ne sont lues qu'une fois, et l'arbre peut naître en
+    // cours de session — un Copilot qui n'avait reçu que l'invitation savait
+    // construire l'arbre et ignorait qu'il fallait le lire (14 septembre 2026).
+    {
+      instructions:
+        ((await findTreeDir(cwd))
+          ? t.instructions
+          : `${renderBootstrapInvite(await detectInstructionFiles(cwd))}\n\n${t.instructionsOnceTree}\n\n${t.instructions}`) + strayNote,
+    },
   );
+
+  /**
+   * Le bloc de consignes suit l'arbre — voir `syncInstructionFiles`.
+   *
+   * Au premier `get_context` d'une session, puis après chaque écriture. Pour
+   * VS Code, `copilot-instructions.md` est créé s'il n'existe pas : que VS Code
+   * lance ce serveur dans ce projet tient lieu de câblage. Chaque fichier
+   * touché est **annoncé** dans la réponse de l'outil — on ne modifie pas un
+   * fichier du dépôt en silence. Un échec n'échoue pas l'outil : l'écriture
+   * dans l'arbre, elle, a eu lieu.
+   */
+  let instructionsSynced = false;
+  const syncInstructions = async (dir: string): Promise<string> => {
+    instructionsSynced = true;
+    try {
+      const vscodeClient = /^visual studio code/i.test(server.server.getClientVersion()?.name ?? '');
+      const touched = (await syncInstructionFiles(dir, { vscodeClient })).filter(r => r.action !== 'unchanged');
+      if (!touched.length) return '';
+      return `\n\n${t.instructionsSynced(touched.map(r => path.relative(path.dirname(dir), r.file)).join(', '))}`;
+    } catch {
+      return '';
+    }
+  };
 
   /**
    * Le dossier du projet, pour ce serveur.
@@ -242,6 +275,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       if (!found) return text(await invite());
 
       const { dir, tree } = await open();
+      const synced = instructionsSynced ? '' : await syncInstructions(dir);
 
       /**
        * Sous moteur CLI, on **ne route pas devant l'appel** — on diffère, comme
@@ -313,7 +347,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         const cause =
           reason === 'deferred' ? t.causeCold : reason === 'all' ? t.causeNoEngine : t.causeFallback(error);
         const trace = renderTrace(tree, new Set(), 'catalogue');
-        return text([renderCatalogueOnly(tree, cause), '', `<!-- ${trace} — ${cause} -->`].join('\n'));
+        return text([renderCatalogueOnly(tree, cause), '', `<!-- ${trace} — ${cause} -->`].join('\n') + synced);
       }
 
       const block = renderContext(tree, selected);
@@ -321,7 +355,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       return text(
         [block || t.emptyTree, '', `<!-- ${trace}${error ? ` — ${error}` : ''} -->`].join(
           '\n',
-        ),
+        ) + synced,
       );
     },
   );
@@ -395,7 +429,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       });
       const existed = tree.branches.has(branchPath);
       await appendAiWrite(dir, { at: Date.now(), op: 'upsert', path: branchPath, title, why });
-      return text(t.upsertDone(existed, branchPath, type, path.relative(process.cwd(), file)));
+      return text(t.upsertDone(existed, branchPath, type, path.relative(process.cwd(), file)) + (await syncInstructions(dir)));
     },
   );
 
@@ -442,7 +476,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         t.rootDone(
           path.relative(process.cwd(), path.join(dir, ROOT_FILE)),
           existing ? null : path.relative(process.cwd(), dir),
-        ),
+        ) + (await syncInstructions(dir)),
       );
     },
   );
@@ -471,7 +505,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         title: branch.title,
         why,
       });
-      return text(t.deleteDone(branchPath, kids));
+      return text(t.deleteDone(branchPath, kids) + (await syncInstructions(dir)));
     },
   );
 
@@ -504,7 +538,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         title: branch.title,
         ...(why ? { why } : {}),
       });
-      return text(`${from} → ${to}${kids ? t.moveChildren(kids) : ''}`);
+      return text(`${from} → ${to}${kids ? t.moveChildren(kids) : ''}` + (await syncInstructions(dir)));
     },
   );
 
@@ -540,7 +574,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       const { dir } = await open();
       const pack = await resolvePack(source);
       const written = await applyPack(dir, pack, { prefix, mergeRoot: true });
-      return text(t.importDone(written.length, prefix));
+      return text(t.importDone(written.length, prefix) + (await syncInstructions(dir)));
     },
   );
 

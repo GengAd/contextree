@@ -22,7 +22,7 @@ import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { route, pickEngine, isCliEngine, parseIndices, timeoutFor, findBinIn, cmdLine } from '../dist/core/router.js';
 import { evaluateRouting, parseEvalCases } from '../dist/core/eval.js';
 import { renderContext, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite, renderCatalogueOnly } from '../dist/core/render.js';
-import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand, AGENTS, NoCliError } from '../dist/install.js';
+import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand, AGENTS, NoCliError, syncInstructionFiles, instructionsState } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
 import { stateDir, appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites, turnLabelKey } from '../dist/core/journal.js';
 import { readSelection, writeSelection, claimBootstrapInvite } from '../dist/core/session.js';
@@ -2524,4 +2524,127 @@ test("home : le hook signale l'arbre égaré une fois par session, dans son enve
   assert.match(parsed.hookSpecificOutput.additionalContext, /contextree rescue --to/);
   const second = await runHook(payload, env, ['--agent', 'gemini']);
   assert.doesNotMatch(second.out, /par erreur/);
+});
+
+
+// ── le bloc de consignes suit l'arbre, et dit quand lire ─────────────────────
+
+test("consignes : le scénario d'Adrien — install vscode sans arbre, puis l'arbre écrit par le serveur stdio → le bloc suit", async () => {
+  const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-copilot-'));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-copilot-state-'));
+  const env = { ...process.env, CONTEXTREE_ROUTER: 'off', CONTEXTREE_STATE_DIR: stateDir };
+  const install = await runCli(['install', '--agent', 'vscode'], { cwd: projet, env });
+  assert.equal(install.code, 0, install.out);
+  await assert.rejects(fs.stat(path.join(projet, '.github', 'copilot-instructions.md')));
+
+  const client = new Client({ name: 'test', version: '0' });
+  await client.connect(new StdioClientTransport({
+    command: process.execPath, args: [path.resolve('dist/cli.js'), 'mcp'], cwd: projet, env, stderr: 'ignore',
+  }));
+  try {
+    const root = await client.callTool({ name: 'write_root', arguments: { content: '# Pega', why: 'racine' } });
+    assert.match(textOf(root), /Fichier\(s\) de consignes mis à jour — bloc contextree : .*copilot-instructions\.md/);
+    const up = await client.callTool({
+      name: 'upsert_branch',
+      arguments: { title: 'Composants Pega', type: 'context', load_when: 'quand on touche aux composants', content: 'x', why: 'domaine' },
+    });
+    assert.equal(up.isError, undefined, textOf(up));
+  } finally {
+    await client.close();
+  }
+  for (const f of [path.join('.github', 'copilot-instructions.md'), 'AGENTS.md']) {
+    const text = await fs.readFile(path.join(projet, f), 'utf8');
+    assert.match(text, /contextree:start/, f);
+    assert.match(text, /\*\*Composants Pega\*\* \(context\)/, f);
+  }
+  const status = await runCli(['install', '--status'], { cwd: projet, env });
+  assert.doesNotMatch(status.out, /bloc contextree (absent|périmé)/);
+});
+
+test("consignes : sans agent câblé, une écriture MCP ne crée aucun fichier de consignes ; un client VS Code, si", async () => {
+  const nu = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-nu-'));
+  const client = await mcpClient(nu);
+  const res = await client.callTool({ name: 'write_root', arguments: { content: '# x', why: 'racine' } });
+  assert.doesNotMatch(textOf(res), /consignes/);
+  for (const f of [path.join('.github', 'copilot-instructions.md'), 'AGENTS.md', 'GEMINI.md']) {
+    await assert.rejects(fs.stat(path.join(nu, f)), f);
+  }
+
+  // VS Code lance le serveur : ça tient lieu de câblage, pour Copilot seulement.
+  const vs = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-vs-'));
+  const server = await createServer(vs);
+  const vscode = new Client({ name: 'Visual Studio Code', version: '1.105.0' });
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverSide), vscode.connect(clientSide)]);
+  const vsRes = await vscode.callTool({ name: 'write_root', arguments: { content: '# y', why: 'racine' } });
+  assert.match(textOf(vsRes), /copilot-instructions\.md/);
+  assert.match(await fs.readFile(path.join(vs, '.github', 'copilot-instructions.md'), 'utf8'), /# y/);
+  await assert.rejects(fs.stat(path.join(vs, 'AGENTS.md')));
+});
+
+test("consignes : un fichier qui porte déjà le bloc suit l'arbre, le reste du fichier est intact ; le calque perso n'y entre pas", async () => {
+  const dir = await scratch();
+  const projet = path.dirname(dir);
+  await writeRoot(dir, 'racine');
+  await fs.writeFile(path.join(projet, 'AGENTS.md'), '# À moi\n\n<!-- contextree:start -->\nvieux\n<!-- contextree:end -->\n');
+  await writeBranch(dir, { path: 'neuve', type: 'rule', title: 'Neuve', loadWhen: 'quand neuf', content: 'n' });
+  await writeBranch(localDirFor(dir), { path: 'perso', type: 'rule', title: 'Perso', loadWhen: 'quand perso', content: 'p' });
+  const block = renderAgentsBlock(await loadTree(dir, { withLocal: false }));
+  assert.equal(await instructionsState(path.join(projet, 'AGENTS.md'), block), 'stale');
+
+  const report = await syncInstructionFiles(dir);
+  assert.deepEqual(report.map(r => [path.basename(r.file), r.action]), [['AGENTS.md', 'updated']]);
+  const text = await fs.readFile(path.join(projet, 'AGENTS.md'), 'utf8');
+  assert.match(text, /^# À moi/);
+  assert.match(text, /\*\*Neuve\*\*/);
+  assert.doesNotMatch(text, /Perso|vieux/);
+  assert.equal(await instructionsState(path.join(projet, 'AGENTS.md'), block), 'fresh');
+  assert.equal(await instructionsState(path.join(projet, 'GEMINI.md'), block), 'absent');
+});
+
+test("consignes : le bouton de l'extension câble VS Code + Copilot avec son bloc, sans qu'on le lui passe", async () => {
+  const dir = await scratch();
+  const projet = path.dirname(dir);
+  await writeRoot(dir, 'racine du projet');
+  const report = await installAgent('vscode', projet);
+  const files = report.map(r => path.relative(projet, r.file));
+  assert.ok(files.includes(path.join('.github', 'copilot-instructions.md')), files.join(', '));
+  assert.match(await fs.readFile(path.join(projet, '.github', 'copilot-instructions.md'), 'utf8'), /racine du projet/);
+});
+
+test("consignes : le bloc et la description de get_context commencent par le moment, en français et en anglais", async () => {
+  const dir = await scratch();
+  await writeRoot(dir, 'racine');
+  const tree = await loadTree(dir);
+  const saved = process.env.CONTEXTREE_LANG;
+  try {
+    for (const [lang, moment] of [['fr', /^\*\*Avant de répondre à une demande sur ce projet, et avant d'ouvrir ou de modifier un fichier/], ['en', /^\*\*Before answering a request about this project, and before opening or editing a file/]]) {
+      process.env.CONTEXTREE_LANG = lang;
+      const lines = renderAgentsBlock(tree).split('\n\n');
+      assert.match(lines[1], moment, lang);
+      assert.match(SERVER_MESSAGES[lang].getContextDescription, moment, lang);
+    }
+  } finally {
+    process.env.CONTEXTREE_LANG = saved;
+  }
+});
+
+test("consignes : sans arbre, les instructions MCP portent l'invitation ET la consigne de lecture", async () => {
+  const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-instr-'));
+  const client = await mcpClient(projet);
+  const instructions = client.getInstructions() ?? '';
+  assert.match(instructions, /Dès que l'arbre existe/);
+  assert.match(instructions, /appelle `get_context`/);
+});
+
+test("consignes : install --status signale un bloc absent ou périmé", async () => {
+  const dir = await scratch();
+  const projet = path.dirname(dir);
+  await writeRoot(dir, 'racine');
+  const env = { CONTEXTREE_STATE_DIR: await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-st-')) };
+  await fs.writeFile(path.join(projet, 'AGENTS.md'), '<!-- contextree:start -->\nvieux\n<!-- contextree:end -->\n');
+  await fs.mkdir(path.join(projet, '.vscode'));
+  const { out } = await runCli(['install', '--status'], { cwd: projet, env });
+  assert.match(out, /AGENTS\.md — bloc contextree périmé/);
+  assert.match(out, /copilot-instructions\.md — bloc contextree absent/);
 });

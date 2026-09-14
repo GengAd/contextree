@@ -261,14 +261,29 @@ export function activate(context: vscode.ExtensionContext): void {
     watched?.disposable.dispose();
     if (!pattern) return void (watched = undefined);
 
+    // Le bloc des fichiers de consignes suit l'arbre, quelle que soit la main
+    // qui l'a changé — la vue, l'éditeur de texte, l'IA (`syncInstructionFiles`).
+    // Regroupé : un déplacement touche dix fichiers, le bloc ne s'écrit qu'une fois.
+    let syncTimer: ReturnType<typeof setTimeout> | undefined;
+    const onTreeChange = (): void => {
+      reloadViews();
+      if (!dir) return;
+      clearTimeout(syncTimer);
+      syncTimer = setTimeout(() => {
+        void loadCore()
+          .then(core => core.syncInstructionFiles(dir))
+          .catch(() => {});
+      }, 500);
+    };
     const w = vscode.workspace.createFileSystemWatcher(pattern);
     watched = {
       dir,
       disposable: vscode.Disposable.from(
         w,
-        w.onDidCreate(reloadViews),
-        w.onDidChange(reloadViews),
-        w.onDidDelete(reloadViews),
+        w.onDidCreate(onTreeChange),
+        w.onDidChange(onTreeChange),
+        w.onDidDelete(onTreeChange),
+        { dispose: () => clearTimeout(syncTimer) },
       ),
     };
   };

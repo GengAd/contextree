@@ -202,28 +202,32 @@ const AGENTS_BLOCK: Record<Lang, { header: string; pull: string }> = {
   fr: {
     header: '## Contexte du projet (contextree)',
     pull:
-      "Le reste du contexte vit dans `.contextree/`, en petites branches typées. " +
-      "**N'ouvre pas tout** : appelle l'outil MCP `get_context` avec la demande de " +
-      "l'utilisateur, tu récupères uniquement les branches pertinentes. Sans MCP : " +
+      "**Avant de répondre à une demande sur ce projet, et avant d'ouvrir ou de modifier un fichier, " +
+      "appelle l'outil MCP `get_context`** avec la demande de l'utilisateur. Recommence quand la tâche se précise. " +
+      "Le contexte vit dans `.contextree/`, en petites branches typées : n'ouvre pas tout, " +
+      '`get_context` rend uniquement les branches pertinentes. Sans MCP : ' +
       '`npx -y @gengad/contextree route "<la demande>"`.',
   },
   en: {
     header: '## Project context (contextree)',
     pull:
-      'The rest of the context lives in `.contextree/`, as small typed branches. ' +
-      "**Don't open everything**: call the MCP tool `get_context` with the user's request, " +
-      'and you get only the relevant branches. Without MCP: ' +
+      '**Before answering a request about this project, and before opening or editing a file, ' +
+      "call the MCP tool `get_context`** with the user's request. Do it again when the task becomes clearer. " +
+      "The context lives in `.contextree/`, as small typed branches: don't open everything, " +
+      '`get_context` returns only the relevant branches. Without MCP: ' +
       '`npx -y @gengad/contextree route "<the request>"`.',
   },
 };
 
 export function renderAgentsBlock(tree: ContextTree): string {
   const lang = currentLang();
-  const parts: string[] = [AGENTS_BLOCK[lang].header];
+  // La consigne **en tête**, avec son moment, avant la racine : lue en fin de
+  // bloc, après le catalogue, elle arrivait une fois la réponse commencée — et
+  // « appelle `get_context` » sans « avant de répondre » est une consigne qu'on
+  // remet à plus tard (14 septembre 2026, Copilot qui ne lit jamais l'arbre).
+  const parts: string[] = [AGENTS_BLOCK[lang].header, AGENTS_BLOCK[lang].pull];
   const root = tree.rootContent.trim();
   if (root) parts.push(root);
-
-  parts.push(AGENTS_BLOCK[lang].pull);
 
   const branches = allBranches(tree);
   if (branches.length) parts.push(`### Branches\n${catalogue(branches)}`);

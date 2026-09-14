@@ -47,15 +47,10 @@ export async function wireAgent(core: Core, projectDir: string): Promise<boolean
   );
   if (!pick) return false;
 
-  // Codex n'a pas de hook : il reçoit un bloc dans `AGENTS.md`. Sans arbre, on
-  // câble quand même le serveur MCP — créer l'arbre peut venir après.
-  let block: string | undefined;
-  if (pick.status.id === 'codex') {
-    const dir = await core.findTreeDir(projectDir);
-    if (dir) block = core.renderAgentsBlock(await core.loadTree(dir));
-  }
-
-  const report = await core.installAgent(pick.status.id, projectDir, block);
+  // Le bloc de consignes, `installAgent` le calcule pour tout agent qui en a
+  // un — VS Code + Copilot compris. Sans arbre, on câble quand même le serveur
+  // MCP : le bloc suivra l'arbre dès qu'il naîtra (`syncInstructionFiles`).
+  const report = await core.installAgent(pick.status.id, projectDir);
   const touched = report.filter(r => r.action !== 'unchanged');
 
   if (!touched.length) {

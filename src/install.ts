@@ -2,6 +2,8 @@ import { existsSync, promises as fs, realpathSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { findBin } from './core/router.js';
+import { findTreeDir, loadTree } from './core/store.js';
+import { renderAgentsBlock } from './core/render.js';
 import { currentLang } from './core/i18n.js';
 import { cliText } from './messages.js';
 
@@ -666,7 +668,15 @@ function hasHook(list: unknown[] | undefined): boolean {
   );
 }
 
-/** Câble un agent nommé. Rend ce qui a été écrit — jamais rien en silence. */
+/**
+ * Câble un agent nommé. Rend ce qui a été écrit — jamais rien en silence.
+ *
+ * Sans bloc passé, il le calcule lui-même depuis l'arbre du projet, **pour tout
+ * agent qui a un fichier de consignes** (14 septembre 2026). Le bouton de
+ * l'extension ne le calculait que pour `codex` : câbler VS Code + Copilot
+ * depuis la vue n'écrivait jamais `copilot-instructions.md`, et Copilot n'avait
+ * aucune consigne qui lui parle de contextree.
+ */
 export async function installAgent(
   id: AgentId,
   projectDir: string,
@@ -675,8 +685,84 @@ export async function installAgent(
   const spec = AGENTS.find(a => a.id === id);
   if (!spec) throw new Error(cliText().unknownAgentId(id));
   const report: InstallReport = [];
-  await spec.install(projectDir, report, agentsBlock);
+  const block = agentsBlock ?? (wantsInstructions(spec) ? await instructionsBlock(projectDir) : undefined);
+  await spec.install(projectDir, report, block);
   return report;
+}
+
+/** L'agent a-t-il un fichier de consignes ? La réponse vit dans le registre. */
+export function wantsInstructions(spec: AgentSpec): boolean {
+  return spec.files('').some(f => f.endsWith('.md'));
+}
+
+/**
+ * Le bloc de consignes de ce projet, ou `undefined` sans arbre.
+ *
+ * **Sans le calque personnel** : ces fichiers se commitent, et
+ * `.contextree.local/` ne se partage pas.
+ */
+export async function instructionsBlock(projectDir: string): Promise<string | undefined> {
+  const dir = await findTreeDir(projectDir);
+  return dir ? renderAgentsBlock(await loadTree(dir, { withLocal: false })) : undefined;
+}
+
+/** Le chemin de `copilot-instructions.md`, que le serveur écrit pour VS Code. */
+export function copilotInstructionsFile(projectDir: string): string {
+  return path.join(projectDir, '.github', 'copilot-instructions.md');
+}
+
+/**
+ * **Le bloc suit l'arbre** (14 septembre 2026).
+ *
+ * Il n'était écrit qu'à `install`, et seulement si l'arbre existait déjà. Le
+ * scénario d'Adrien — câbler VS Code, **puis** faire construire l'arbre par
+ * Copilot — ne l'écrivait donc jamais, et rien ne le réécrivait quand l'arbre
+ * naissait ou changeait : Copilot savait écrire l'arbre et ignorait qu'il
+ * fallait le lire.
+ *
+ * Appelée après toute écriture dans l'arbre, par les trois surfaces (serveur
+ * MCP, CLI, extension). Elle n'écrit que dans :
+ * - un fichier de consignes qui **porte déjà** le bloc ;
+ * - ceux d'un agent **câblé dans ce projet** — sa configuration est dans le
+ *   projet et contextree y est inscrit (`.vscode/mcp.json` → Copilot et
+ *   `AGENTS.md`). Codex, câblé dans le home, ne compte pas : il n'appartient à
+ *   aucun projet ;
+ * - `copilot-instructions.md` quand le client MCP est VS Code (`vscodeClient`) :
+ *   que VS Code lance notre serveur ici tient lieu de câblage.
+ *
+ * Jamais ailleurs : un fichier que personne n'a câblé ne se crée pas.
+ */
+export async function syncInstructionFiles(
+  treeDir: string,
+  opts: { vscodeClient?: boolean } = {},
+): Promise<InstallReport> {
+  const projectDir = path.dirname(treeDir);
+  const block = renderAgentsBlock(await loadTree(treeDir, { withLocal: false }));
+  const wanted = new Set<string>(opts.vscodeClient ? [copilotInstructionsFile(projectDir)] : []);
+  const docs = new Set<string>();
+  for (const spec of AGENTS) {
+    const files = spec.files(projectDir);
+    const md = files.filter(f => f.endsWith('.md'));
+    const configs = files.filter(f => !f.endsWith('.md'));
+    md.forEach(f => docs.add(f));
+    if (!md.length || !configs.length) continue;
+    if (!configs.every(f => !path.relative(projectDir, f).startsWith('..'))) continue;
+    if ((await Promise.all(configs.map(wiredIn))).every(Boolean)) md.forEach(f => wanted.add(f));
+  }
+  const report: InstallReport = [];
+  for (const file of docs) {
+    if (wanted.has(file) || (await readText(file)).includes(MARK_START)) {
+      await syncAgentsFile(projectDir, block, report, path.relative(projectDir, file));
+    }
+  }
+  return report;
+}
+
+/** Ce que porte un fichier de consignes : pas de bloc, un bloc périmé, ou le bon. */
+export async function instructionsState(file: string, block: string): Promise<'absent' | 'stale' | 'fresh'> {
+  const text = await readText(file);
+  if (!text.includes(MARK_START)) return 'absent';
+  return text.includes(`${MARK_START}\n${block.trim()}\n${MARK_END}`) ? 'fresh' : 'stale';
 }
 
 async function anyExists(paths: string[]): Promise<boolean> {

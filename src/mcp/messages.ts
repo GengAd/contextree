@@ -37,6 +37,9 @@ un rattrapage exceptionnel : un prompt de départ ne contient presque jamais la 
   noTree: (dirName: string, base: string) =>
     `Aucun dossier ${dirName} trouvé depuis ${base}. Pour créer l'arbre d'ici : ` +
     '`write_root`, qui pose le dossier et la racine. Sinon : `contextree init`.',
+  instructionsOnceTree:
+    "Dès que l'arbre existe — même s'il naît pendant cette session, par `write_root` —, ceci s'applique :",
+  instructionsSynced: (files: string) => `Fichier(s) de consignes mis à jour — bloc contextree : ${files}.`,
   samplingRefused: (msg: string) => `sampling refusé ou en échec — plus demandé de la session : ${msg}`,
   samplingNotText: (kind: string) => `réponse ${kind}, texte attendu`,
   startup: (cwd: string, tree: string | null) =>
@@ -56,6 +59,8 @@ un rattrapage exceptionnel : un prompt de départ ne contient presque jamais la 
 
   getContextTitle: 'Charger le contexte pertinent',
   getContextDescription:
+    "**Avant de répondre à une demande sur ce projet, et avant d'ouvrir ou de modifier un fichier, " +
+    'appelle cet outil** avec la demande. ' +
     "Renvoie les branches de l'arbre de contexte pertinentes pour une demande donnée, " +
     "assemblées en un bloc prêt à lire. Les branches parentes sont incluses d'office. " +
     "À appeler dès que tu sais sur quoi porte la tâche : au début avec la demande telle " +
@@ -184,6 +189,9 @@ prompt almost never contains the whole task.`,
   noTree: (dirName, base) =>
     `No ${dirName} folder found from ${base}. To create the tree from here: ` +
     '`write_root`, which creates the folder and the root. Otherwise: `contextree init`.',
+  instructionsOnceTree:
+    'As soon as the tree exists — even if it is created during this session, through `write_root` —, this applies:',
+  instructionsSynced: files => `Instruction file(s) updated — contextree block: ${files}.`,
   samplingRefused: msg => `sampling refused or failed — not requested again this session: ${msg}`,
   samplingNotText: kind => `${kind} answer, text expected`,
   startup: (cwd, tree) =>
@@ -203,6 +211,8 @@ prompt almost never contains the whole task.`,
 
   getContextTitle: 'Load the relevant context',
   getContextDescription:
+    '**Before answering a request about this project, and before opening or editing a file, ' +
+    'call this tool** with the request. ' +
     'Returns the branches of the context tree relevant to a given request, assembled into a ' +
     'ready-to-read block. Parent branches are always included. Call it as soon as you know ' +
     'what the task is about: at the start with the request as is, then again every time it ' +

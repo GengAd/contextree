@@ -24,7 +24,7 @@ import {
 } from './core/remote.js';
 import { link, pull, push, readTracking } from './core/sync.js';
 import { isBranchType, type BranchType } from './core/types.js';
-import { AGENTS, agentStatus, installAgent, selfCommand, type InstallReport } from './install.js';
+import { AGENTS, agentStatus, installAgent, instructionsBlock, instructionsState, selfCommand, syncInstructionFiles, wantsInstructions, type InstallReport } from './install.js';
 import { resolvePack, runStdio } from './mcp/server.js';
 import { cliText } from './messages.js';
 
@@ -112,6 +112,7 @@ async function cmdInit(force: boolean): Promise<number> {
   try {
     const { dir, branches } = await initTree(process.cwd(), { force });
     process.stdout.write(`${cliText().initDone(path.relative(process.cwd(), dir), branches)}\n`);
+    await syncAfterWrite(dir);
     return 0;
   } catch (err) {
     process.stderr.write(
@@ -119,6 +120,15 @@ async function cmdInit(force: boolean): Promise<number> {
     );
     return 1;
   }
+}
+
+/**
+ * Après une écriture dans l'arbre, le bloc des fichiers de consignes suit —
+ * voir `syncInstructionFiles`. Chaque fichier touché est dit.
+ */
+async function syncAfterWrite(dir: string): Promise<void> {
+  const touched = (await syncInstructionFiles(dir)).filter(r => r.action !== 'unchanged');
+  for (const r of touched) process.stdout.write(`${cliText().instructionsSynced(shorten(r.file))}\n`);
 }
 
 /**
@@ -181,10 +191,19 @@ async function cmdInstall(flags: Flags): Promise<number> {
   const statuses = await agentStatus(process.cwd());
 
   if (flags.status) {
+    // Un bloc absent ou périmé se dit fichier par fichier : « câblé » sur un
+    // `copilot-instructions.md` dont le catalogue date d'avant l'arbre, c'est
+    // un Copilot qui ne lit rien.
+    const block = await instructionsBlock(process.cwd());
     for (const a of statuses) {
       const state = a.wired ? t.stateWired : a.detected ? t.stateToWire : t.stateNotDetected;
       process.stdout.write(`${state.padEnd(13)} ${a.label}\n`);
-      for (const f of a.files) process.stdout.write(`              ${shorten(f)}\n`);
+      for (const f of a.files) {
+        // Un agent absent de la machine n'a pas de bloc à réclamer.
+        const doc = block && (a.detected || a.wired) && f.endsWith('.md') ? await instructionsState(f, block) : 'fresh';
+        const note = doc === 'absent' ? t.blockAbsent : doc === 'stale' ? t.blockStale : '';
+        process.stdout.write(`              ${shorten(f)}${note ? ` — ${note}` : ''}\n`);
+      }
     }
     // Les agents sans surface à câbler existent aussi, et l'outil les sert :
     // le dire ici évite de chercher une ligne « non détecté » qui ne viendra pas.
@@ -211,11 +230,8 @@ async function cmdInstall(flags: Flags): Promise<number> {
   // Ils sont quatre à en vouloir un depuis le 11 septembre 2026 — la liste se
   // lit dans le registre plutôt que d'être recopiée ici, sinon un agent ajouté
   // demain recevrait un `AGENTS.md` vide sans que personne ne le remarque.
-  let block: string | undefined;
-  if (targets.some(a => AGENTS.find(x => x.id === a.id)?.files('').some(f => f.endsWith('.md')))) {
-    const dir = await findTreeDir();
-    if (dir) block = renderAgentsBlock(await loadTree(dir));
-  }
+  const wantBlock = targets.some(a => wantsInstructions(AGENTS.find(x => x.id === a.id)!));
+  const block = wantBlock ? await instructionsBlock(process.cwd()) : undefined;
 
   const report: InstallReport = [];
   for (const a of targets) report.push(...(await installAgent(a.id, process.cwd(), block)));
@@ -227,7 +243,7 @@ async function cmdInstall(flags: Flags): Promise<number> {
 
   // Sans arbre, le fichier de consignes ne peut pas être écrit : le dire ici,
   // sinon `--status` répondra « à câbler » sans qu'on comprenne ce qui manque.
-  if (!block && targets.some(a => AGENTS.find(x => x.id === a.id)?.files('').some(f => f.endsWith('.md')))) {
+  if (!block && wantBlock) {
     process.stdout.write(`\n${t.noInstructionsYet}\n`);
   }
 
@@ -280,6 +296,7 @@ async function cmdAdd(flags: Flags): Promise<number> {
   const branchPath = parent ? `${parent}/${slug}` : slug;
   const file = await writeBranch(dir, { path: branchPath, type: type as BranchType, title, loadWhen, content });
   process.stdout.write(`${branchPath}\n${path.relative(process.cwd(), file)}\n`);
+  await syncAfterWrite(dir);
   return 0;
 }
 
@@ -295,6 +312,7 @@ async function cmdRemove(branchPath: string | undefined): Promise<number> {
   }
   await deleteBranch(dir, branchPath);
   process.stdout.write(`${cliText().removed(branchPath)}\n`);
+  await syncAfterWrite(dir);
   return 0;
 }
 
@@ -322,6 +340,7 @@ async function cmdMove(from: string | undefined, to: string | undefined): Promis
     process.stdout.write(
       `${from} → ${to}${kids ? cliText().children(kids) : ''}\n${path.relative(process.cwd(), file)}\n`,
     );
+    await syncAfterWrite(dir);
     return 0;
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
@@ -495,6 +514,7 @@ async function cmdImport(flags: Flags): Promise<number> {
   const pack = await resolvePack(source);
   const written = await applyPack(dir, pack, { prefix: str(flags.prefix), mergeRoot: true });
   process.stdout.write(`${cliText().imported(written.length, path.relative(process.cwd(), dir))}\n`);
+  await syncAfterWrite(dir);
   return 0;
 }
 
