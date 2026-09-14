@@ -54,7 +54,11 @@ export async function wireAgent(core: Core, projectDir: string): Promise<boolean
     return false;
   }
 
-  const written = touched.map(r => `${shorten(r.file)} (${r.action === 'created' ? 'créé' : 'mis à jour'})`);
+  const written = touched.map(
+    r =>
+      `${shorten(r.file)} (${r.action === 'created' ? 'créé' : r.action === 'repaired' ? 'réparé' : 'mis à jour'}` +
+      `${r.note ? ` — ${r.note}` : ''})`,
+  );
   const choice = await vscode.window.showInformationMessage(
     `${pick.label} câblé — ${written.join(', ')}. Relance l’agent pour qu’il le voie.`,
     'Ouvrir',

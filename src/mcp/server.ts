@@ -12,6 +12,7 @@ import type { Complete } from '../core/router.js';
 import { appendTurn, appendAiWrite } from '../core/journal.js';
 import { readSelection, writeSelection } from '../core/session.js';
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { decodePack, encodePack, extractPack, applyPack } from '../core/pack.js';
 import { BRANCH_TYPES } from '../core/types.js';
 import type { ContextTree } from '../core/types.js';
@@ -65,7 +66,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
    *  la réponse de `get_context`. Le dossier est relu à chaque appel : celui
    *  qui crée son arbre en cours de session n'a pas à relancer le serveur pour
    *  que les outils le voient. */
-  const invite = async (): Promise<string> => renderBootstrapInvite(await detectInstructionFiles(cwd));
+  const invite = async (): Promise<string> => renderBootstrapInvite(await detectInstructionFiles(await projectDir()));
 
   /** Les `instructions` sont lues **une fois**, à la connexion — l'agent relance
    *  le serveur à chaque session, donc l'invitation arrive une fois par session
@@ -73,20 +74,57 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
    *  encore parler à une IA qui n'a ni hook ni terminal. */
   const server = new McpServer(
     { name: 'contextree', version: '0.1.0' },
-    { instructions: (await findTreeDir(cwd)) ? INSTRUCTIONS : await invite() },
+    // Le `cwd` seul ici : les roots du client ne se demandent qu'une fois
+    // connecté, et le serveur n'existe pas encore.
+    { instructions: (await findTreeDir(cwd)) ? INSTRUCTIONS : renderBootstrapInvite(await detectInstructionFiles(cwd)) },
   );
+
+  /**
+   * Le dossier du projet, pour ce serveur.
+   *
+   * D'abord le `cwd` du process — c'est ce que tous les agents font. Mais
+   * VS Code peut lancer le serveur ailleurs que dans le workspace (l'expansion
+   * de `${workspaceFolder}` dans `cwd` a eu des ratés selon les versions), et
+   * un serveur qui ne trouve pas `.contextree/` répond « pas d'arbre » : Copilot
+   * n'aurait **aucune** branche, sans que rien ne le signale (14 septembre 2026).
+   *
+   * Filet : si le `cwd` n'a pas d'arbre et que le client annonce la capacité
+   * `roots`, on lui demande ses dossiers — c'est exactement ce qu'elle dit, où
+   * l'utilisateur travaille. Le premier root qui a un arbre gagne ; sinon le
+   * premier root tout court, pour que `write_root` crée l'arbre dans le
+   * workspace et pas dans le `cwd` hasardeux. Demandé une fois par session.
+   */
+  let fromRoots: Promise<string | null> | undefined;
+  const projectDir = async (): Promise<string> => {
+    if (await findTreeDir(cwd)) return cwd;
+    fromRoots ??= treeFromRoots();
+    return (await fromRoots) ?? cwd;
+  };
+  const treeFromRoots = async (): Promise<string | null> => {
+    if (!server.server.getClientCapabilities()?.roots) return null;
+    try {
+      const { roots } = await server.server.listRoots(undefined, { timeout: 5000 });
+      const dirs = roots.filter(r => r.uri.startsWith('file:')).map(r => fileURLToPath(r.uri));
+      for (const d of dirs) if (await findTreeDir(d)) return d;
+      return dirs[0] ?? null;
+    } catch {
+      // Un client qui annonce `roots` sans savoir y répondre : on reste sur le `cwd`.
+      return null;
+    }
+  };
 
   /** L'arbre est relu à chaque appel : les fichiers sont la source de vérité et
    *  l'utilisateur peut les éditer pendant que le serveur tourne. */
   const open = async (): Promise<{ dir: string; tree: ContextTree }> => {
-    const dir = await findTreeDir(cwd);
+    const base = await projectDir();
+    const dir = await findTreeDir(base);
     // Le message nomme `write_root` avant le terminal : c'est le seul outil qui
     // sait créer l'arbre, et un agent à qui on répond « lance une commande »
     // s'arrête pour la demander (constaté le 10 septembre 2026, scénario
     // « depuis zéro »).
     if (!dir) {
       throw new Error(
-        `Aucun dossier ${DIR_NAME} trouvé depuis ${cwd}. Pour créer l'arbre d'ici : ` +
+        `Aucun dossier ${DIR_NAME} trouvé depuis ${base}. Pour créer l'arbre d'ici : ` +
           '`write_root`, qui pose le dossier et la racine. Sinon : `contextree init`.',
       );
     }
@@ -161,7 +199,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         '6 à 12 branches, un `load_when` par branche, aucun fichier source touché.',
     },
     async () => {
-      const found = await detectInstructionFiles(cwd);
+      const found = await detectInstructionFiles(await projectDir());
       return {
         messages: [
           { role: 'user' as const, content: { type: 'text' as const, text: renderBootstrapPrompt(found) } },
@@ -203,7 +241,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         "Suis ensuite ce qu'elle dit : `write_root` en premier, puis `upsert_branch`.",
       annotations: { readOnlyHint: true },
     },
-    async () => text(renderBootstrapPrompt(await detectInstructionFiles(cwd))),
+    async () => text(renderBootstrapPrompt(await detectInstructionFiles(await projectDir()))),
   );
 
   server.registerTool(
@@ -226,7 +264,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       // outil qui échoue, le modèle l'abandonne et n'y revient pas ; un outil
       // qui répond « voilà ce qu'il y a à faire », il le suit. `list_branches`
       // et `read_branch` gardent l'erreur — on ne liste pas ce qui n'existe pas.
-      const found = await findTreeDir(cwd);
+      const found = await findTreeDir(await projectDir());
       if (!found) return text(await invite());
 
       const { dir, tree } = await open();
@@ -451,10 +489,11 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       // serveur — mais **sans le tronc de quatre branches de départ** : l'IA
       // écrit les siennes, et deux entrées pour le même sujet font charger la
       // mauvaise.
-      const existing = await findTreeDir(cwd);
-      const dir = existing ?? path.join(cwd, DIR_NAME);
+      const base = await projectDir();
+      const existing = await findTreeDir(base);
+      const dir = existing ?? path.join(base, DIR_NAME);
       // L'arbre naît ici aussi, donc le garde-fou du calque personnel aussi.
-      if (!existing) await ensureLocalIgnored(cwd);
+      if (!existing) await ensureLocalIgnored(base);
       await writeRoot(dir, content);
       // Tracée comme une branche, sous le chemin que les vues emploient déjà
       // pour la racine : la pastille « écrite par l'IA » s'allume au même
@@ -596,7 +635,14 @@ function decodePackFromJson(raw: string) {
   return decodePack(encodePack(parsed));
 }
 
-export async function runStdio(cwd?: string): Promise<void> {
+export async function runStdio(cwd: string = process.cwd()): Promise<void> {
   const server = await createServer(cwd);
   await server.connect(new StdioServerTransport());
+  // Une ligne sur stderr au démarrage : VS Code l'affiche dans la sortie du
+  // serveur MCP, et c'est là qu'on lit, sans rien installer, dans quel dossier
+  // il a été lancé et s'il y a trouvé un arbre.
+  const tree = await findTreeDir(cwd);
+  process.stderr.write(
+    `contextree mcp — lancé dans ${cwd} — ${tree ? `arbre ${tree}` : "pas d'arbre ici (les roots du client seront demandés)"}\n`,
+  );
 }

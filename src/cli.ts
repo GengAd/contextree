@@ -223,7 +223,9 @@ async function cmdInstall(flags: Flags): Promise<number> {
   const report: InstallReport = [];
   for (const a of targets) report.push(...(await installAgent(a.id, process.cwd(), block)));
 
-  for (const r of report) process.stdout.write(`${r.action.padEnd(9)} ${shorten(r.file)}\n`);
+  for (const r of report) {
+    process.stdout.write(`${r.action.padEnd(9)} ${shorten(r.file)}${r.note ? ` — ${r.note}` : ''}\n`);
+  }
 
   // Sans arbre, le fichier de consignes ne peut pas être écrit : le dire ici,
   // sinon `--status` répondra « à câbler » sans qu'on comprenne ce qui manque.

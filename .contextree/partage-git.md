@@ -26,6 +26,8 @@ Les deux marchent, vérifié le 11 septembre 2026 : `.git` est un **dossier** da
 
 La ligne s'ajoute toute seule (`ensureLocalIgnored`), sur les deux chemins de création — `init` et `write_root`. Elle n'écrase jamais un `.gitignore` existant, et ne fait rien hors d'un dépôt git.
 
+**Les fichiers de câblage des agents ne se partagent pas non plus — pour l'instant** (14 septembre 2026). `.vscode/mcp.json`, `.mcp.json`, `.cursor/mcp.json` portent la commande de *cette* machine (`/Users/<toi>/…/node …/cli.js`) tant que le paquet n'est pas publié et pinné : chez un collègue qui pull, elle n'existe pas. `install` le dit à côté de chaque fichier écrit (« contient des chemins de cette machine — ne le commite pas »). Si un tel fichier a déjà été commité, rien n'est cassé pour longtemps : `install` reconnaît une entrée contextree dont la commande **n'existe pas ici**, la dit « à câbler », et la réécrit (`repaired`) sans toucher aux autres serveurs du fichier. Dès la publication (`npx -y @gengad/contextree@<version> mcp`), la forme devient portable et ces fichiers pourront se commiter.
+
 Déroulé à deux : Béa surcharge `deploiement` dans son calque, ajoute une branche perso, et son `git status` reste **vide**. Adrien continue de voir la version du groupe. Les vues marquent la branche surchargée `· local`.
 
 ## Le rituel

@@ -4,9 +4,10 @@ import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { CreateMessageRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { CreateMessageRequestSchema, ListRootsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 import { createServer } from '../dist/mcp/server.js';
@@ -460,6 +461,63 @@ test("install : l'état d'un agent se lit sans rien écrire, et le câblage est 
 
   const again = await installAgent('cursor', projectDir, '## bloc');
   assert.ok(again.every(r => r.action === 'unchanged'));
+});
+
+test("install : VS Code lance le serveur dans le workspace, et une config d'une autre machine se répare", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-vscode-'));
+  const file = path.join(projectDir, '.vscode', 'mcp.json');
+  const read = async () => JSON.parse(await fs.readFile(file, 'utf8'));
+  const mcpWired = async () => {
+    const r = await agentStatus(projectDir);
+    // Le câblage VS Code exige aussi les consignes : on ne regarde que le serveur.
+    return r.find(a => a.id === 'vscode');
+  };
+
+  const neuf = await installAgent('vscode', projectDir);
+  assert.equal((await read()).servers.contextree.cwd, '${workspaceFolder}');
+  // Écrit en chemins absolus (pas depuis npx) : le fichier le dit.
+  assert.match(neuf[0].note ?? '', /ne le commite pas/);
+
+  // Le fichier d'un collègue, commité depuis sa machine : la commande n'existe pas ici.
+  await fs.writeFile(file, JSON.stringify({
+    servers: {
+      contextree: { type: 'stdio', command: '/Users/quelquun/node', args: ['/Users/quelquun/contextree/dist/cli.js', 'mcp'] },
+      autre: { type: 'stdio', command: 'autre-serveur' },
+    },
+  }), 'utf8');
+  await syncAgentsFile(projectDir, '## bloc', []);
+  await syncAgentsFile(projectDir, '## bloc', [], path.join('.github', 'copilot-instructions.md'));
+  assert.equal((await mcpWired()).wired, false, "une commande absente n'est pas un câblage");
+
+  const repare = await installAgent('vscode', projectDir, '## bloc');
+  assert.equal(repare.find(r => r.file === file).action, 'repaired');
+  const apres = await read();
+  assert.equal(apres.servers.contextree.command, selfCommand('mcp').command);
+  assert.equal(apres.servers.contextree.cwd, '${workspaceFolder}');
+  // Ce qui n'est pas à nous ne bouge pas.
+  assert.deepEqual(apres.servers.autre, { type: 'stdio', command: 'autre-serveur' });
+  assert.equal((await mcpWired()).wired, true);
+
+  // Une entrée d'avant le `cwd`, mais lançable : on ajoute le champ, rien d'autre.
+  const { command, args } = selfCommand('mcp');
+  await fs.writeFile(file, JSON.stringify({ servers: { contextree: { type: 'stdio', command, args } } }), 'utf8');
+  const complete = await installAgent('vscode', projectDir, '## bloc');
+  assert.equal(complete.find(r => r.file === file).action, 'updated');
+  assert.equal((await read()).servers.contextree.cwd, '${workspaceFolder}');
+});
+
+test("install : une entrée .mcp.json venue d'une autre machine est réécrite, pas déclarée câblée", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-mcpjson-'));
+  const file = path.join(projectDir, '.cursor', 'mcp.json');
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, JSON.stringify({
+    mcpServers: { contextree: { command: path.join(projectDir, 'absent', 'node'), args: ['mcp'] } },
+  }), 'utf8');
+  const report = await installAgent('cursor', projectDir);
+  assert.equal(report[0].action, 'repaired');
+  assert.equal(JSON.parse(await fs.readFile(file, 'utf8')).mcpServers.contextree.command, selfCommand('mcp').command);
+  // Réparé une fois : la suivante ne touche plus à rien.
+  assert.equal((await installAgent('cursor', projectDir))[0].action, 'unchanged');
 });
 
 test('install : Claude Code est câblé quand le hook ET le serveur MCP y sont', async () => {
@@ -1297,6 +1355,31 @@ test("mcp : CONTEXTREE_MCP_FALLBACK=full rend l'ancien repli, l'arbre entier", a
     const client = await mcpClient(projet);
     const txt = textOf(await client.callTool({ name: 'get_context', arguments: { query: 'b' } }));
     for (const p of ['a', 'b', 'c', 'd', 'e']) assert.match(txt, new RegExp(`contenu ${p}`));
+  } finally {
+    delete process.env.CONTEXTREE_MCP_FALLBACK;
+    restore();
+  }
+});
+
+test("mcp : lancé hors du projet, le serveur trouve l'arbre par les roots du client", async () => {
+  const { projet, restore } = await samplingSetup({ CONTEXTREE_ROUTER: 'off', CONTEXTREE_MCP_FALLBACK: 'full' });
+  try {
+    const ailleurs = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-ailleurs-'));
+    const server = await createServer(ailleurs);
+    const client = new Client({ name: 'test', version: '0' }, { capabilities: { roots: {} } });
+    let demandes = 0;
+    client.setRequestHandler(ListRootsRequestSchema, async () => {
+      demandes++;
+      return { roots: [{ uri: pathToFileURL(projet).href, name: 'projet' }] };
+    });
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
+
+    const txt = textOf(await client.callTool({ name: 'get_context', arguments: { query: 'b' } }));
+    assert.match(txt, /contenu b/);
+    await client.callTool({ name: 'list_branches', arguments: {} });
+    // Demandé une fois par session, pas à chaque outil.
+    assert.equal(demandes, 1);
   } finally {
     delete process.env.CONTEXTREE_MCP_FALLBACK;
     restore();

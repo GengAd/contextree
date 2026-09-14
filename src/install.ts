@@ -1,4 +1,4 @@
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
@@ -21,7 +21,14 @@ import * as path from 'node:path';
  * jamais, et on ne touche pas à une entrée existante qui ne vient pas de nous.
  */
 
-export type InstallReport = { file: string; action: 'created' | 'updated' | 'unchanged' }[];
+/** `repaired` : une entrée contextree était là, mais sa commande n'existe pas sur
+ *  cette machine — on l'a réécrite. `note` : ce que l'utilisateur doit savoir du
+ *  fichier écrit, dit à côté de la ligne. */
+export type InstallReport = {
+  file: string;
+  action: 'created' | 'updated' | 'repaired' | 'unchanged';
+  note?: string;
+}[];
 
 /** Les agents qu'on sait câbler. */
 export type AgentId =
@@ -75,7 +82,7 @@ const MARK_START = '<!-- contextree:start -->';
 const MARK_END = '<!-- contextree:end -->';
 
 export function installMcp(projectDir: string, report: InstallReport): Promise<void> {
-  return installMcpJson(path.join(projectDir, '.mcp.json'), report);
+  return installMcpJson(path.join(projectDir, '.mcp.json'), report, true);
 }
 
 /**
@@ -85,24 +92,60 @@ export function installMcp(projectDir: string, report: InstallReport): Promise<v
  * seul l'emplacement change — d'où une seule fonction et une table de chemins,
  * plutôt qu'un adaptateur par agent qui divergerait au premier correctif.
  */
-export async function installMcpJson(file: string, report: InstallReport): Promise<void> {
+export async function installMcpJson(file: string, report: InstallReport, inProject = false): Promise<void> {
   const existed = (await readJson(file)) !== null;
   const config = (await readJson(file)) ?? {};
   const servers = ((config as any).mcpServers ??= {});
-  if (servers.contextree) {
+  const broken = servers.contextree && !runnableHere(servers.contextree);
+  if (servers.contextree && !broken) {
     report.push({ file, action: 'unchanged' });
     return;
   }
   const { command, args } = selfCommand('mcp');
   servers.contextree = { command, args };
   await writeJson(file, config);
-  report.push({ file, action: existed ? 'updated' : 'created' });
+  report.push({ file, action: broken ? 'repaired' : existed ? 'updated' : 'created', ...(inProject ? machineNote() : {}) });
 }
 
-/** Le serveur est-il déjà déclaré dans ce fichier ? */
+/** Le serveur est-il déjà déclaré dans ce fichier — et lançable ici ? */
 async function mcpJsonWired(file: string): Promise<boolean> {
   const config = (await readJson(file)) as { mcpServers?: Record<string, unknown> } | null;
-  return Boolean(config?.mcpServers?.['contextree']);
+  return runnableHere(config?.mcpServers?.['contextree']);
+}
+
+/**
+ * Une entrée contextree peut-elle démarrer **sur cette machine** ?
+ *
+ * Tant que le paquet n'est pas publié, `selfCommand` inscrit des chemins
+ * absolus — `/Users/<quelqu'un>/…/node`. Un `.vscode/mcp.json` se commite
+ * volontiers : chez le collègue qui pull, le serveur ne démarre pas, et
+ * `install` répondait « déjà câblé » parce que la clé existait (14 septembre
+ * 2026). Une entrée qui ne peut pas démarrer n'est pas un câblage.
+ *
+ * On ne vérifie que ce qui se vérifie sans rien lancer : un chemin **absolu**
+ * (la commande, ou un script en argument) qui n'existe pas. `npx` ou `node` nus
+ * passent — le PATH n'est pas le nôtre à juger.
+ */
+function runnableHere(entry: unknown): boolean {
+  if (!entry || typeof entry !== 'object') return false;
+  const { command, args } = entry as { command?: unknown; args?: unknown };
+  const paths = [command, ...(Array.isArray(args) ? args : [])].filter(
+    (a): a is string => typeof a === 'string' && path.isAbsolute(a) && !a.includes('${'),
+  );
+  return paths.every(p => existsSync(p));
+}
+
+/**
+ * L'avertissement qui va avec un fichier **du projet** écrit en chemins absolus.
+ *
+ * Tant qu'il n'y a pas de forme portable (le paquet publié et pinné, voir
+ * `selfCommand`), la commande inscrite ne vaut que sur cette machine. Un
+ * fichier du home ne se commite pas ; un `.vscode/mcp.json` ou un `.mcp.json`,
+ * si — et c'est là qu'il faut le dire.
+ */
+function machineNote(): { note?: string } {
+  if (selfCommand('mcp').command === 'npx') return {};
+  return { note: 'contient des chemins de cette machine — ne le commite pas' };
 }
 
 /**
@@ -122,15 +165,37 @@ export async function installVscodeMcp(projectDir: string, report: InstallReport
   const existed = (await readJson(file)) !== null;
   const config = (await readJson(file)) ?? {};
   const servers = ((config as any).servers ??= {});
-  if (servers.contextree) {
-    report.push({ file, action: 'unchanged' });
+  const current = servers.contextree;
+  const broken = current && !runnableHere(current);
+  if (current && !broken) {
+    if (current.cwd) {
+      report.push({ file, action: 'unchanged' });
+      return;
+    }
+    // Une entrée d'avant le `cwd` : on ajoute le seul champ qui manque, sans
+    // toucher à une commande qui marche.
+    current.cwd = VSCODE_CWD;
+    await writeJson(file, config);
+    report.push({ file, action: 'updated' });
     return;
   }
   const { command, args } = selfCommand('mcp');
-  servers.contextree = { type: 'stdio', command, args };
+  servers.contextree = { type: 'stdio', command, args, cwd: VSCODE_CWD };
   await writeJson(file, config);
-  report.push({ file, action: existed ? 'updated' : 'created' });
+  report.push({ file, action: broken ? 'repaired' : existed ? 'updated' : 'created', ...machineNote() });
 }
+
+/**
+ * Le dossier où VS Code lance le serveur.
+ *
+ * Le serveur cherche `.contextree/` depuis son `cwd`. Lancé ailleurs que dans
+ * le projet, il répondrait « pas d'arbre » et Copilot n'aurait **aucune**
+ * branche. `${workspaceFolder}` est la variable de `mcp.json` pour ça ; son
+ * expansion dans `cwd` a eu des ratés selon les versions (issues VS Code
+ * #251263, #290325) — d'où le filet côté serveur, qui demande ses *roots* au
+ * client quand son `cwd` n'a pas d'arbre (voir `createServer`).
+ */
+const VSCODE_CWD = '${workspaceFolder}';
 
 /**
  * Gemini CLI : `.gemini/settings.json` porte **les deux** surfaces à la fois —
@@ -153,7 +218,9 @@ export async function installGemini(projectDir: string, report: InstallReport): 
 
   let changed = false;
   const servers = ((config as any).mcpServers ??= {});
-  if (!servers.contextree) {
+  // Même réparation que les autres fichiers MCP : une entrée venue d'une autre
+  // machine n'est pas un câblage.
+  if (!runnableHere(servers.contextree)) {
     const { command, args } = selfCommand('mcp');
     servers.contextree = { command, args };
     changed = true;
@@ -383,7 +450,7 @@ export const AGENTS: AgentSpec[] = [
     files: p => [path.join(p, '.cursor', 'mcp.json'), path.join(p, 'AGENTS.md')],
     marks: p => [path.join(p, '.cursor'), path.join(home(), '.cursor')],
     install: async (p, report, block) => {
-      await installMcpJson(path.join(p, '.cursor', 'mcp.json'), report);
+      await installMcpJson(path.join(p, '.cursor', 'mcp.json'), report, true);
       if (block) await syncAgentsFile(p, block, report);
     },
   },
@@ -488,7 +555,7 @@ async function wiredIn(file: string): Promise<boolean> {
   // VS Code : clé `servers`, pas `mcpServers`.
   if (dir === '.vscode' && name === 'mcp.json') {
     const config = (await readJson(file)) as { servers?: Record<string, unknown> } | null;
-    return Boolean(config?.servers?.['contextree']);
+    return runnableHere(config?.servers?.['contextree']);
   }
 
   // Gemini : les **deux** surfaces dans le même fichier. L'une sans l'autre
@@ -498,7 +565,7 @@ async function wiredIn(file: string): Promise<boolean> {
       mcpServers?: Record<string, unknown>;
       hooks?: { BeforeAgent?: unknown[] };
     } | null;
-    return Boolean(config?.mcpServers?.['contextree']) && hasHook(config?.hooks?.BeforeAgent);
+    return runnableHere(config?.mcpServers?.['contextree']) && hasHook(config?.hooks?.BeforeAgent);
   }
 
   if (dir === '.claude' && name === 'settings.json') {
