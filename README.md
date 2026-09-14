@@ -1,89 +1,93 @@
 # contextree
 
-Un **arbre de contexte** pour travailler avec une IA : de petites branches typées — identité, règles, contexte, références, savoir-faire — dont seules les pertinentes sont injectées à chaque appel.
+**English** · [Français](README.fr.md)
 
-Comme un `CLAUDE.md`, mais **routé** : à chaque prompt, un appel IA léger lit la condition de chargement de chaque branche (`load_when` : « charge-moi quand… ») et ne retient que ce qui sert. Et **partageable** : la source de vérité est du markdown dans `.contextree/`, que git suffit à mettre en commun.
+A **context tree** for working with an AI: small typed branches — identity, rules, context, references, skills — of which only the relevant ones are injected on each call.
 
-## Démarrer
+Like a `CLAUDE.md`, but **routed**: on every prompt, a lightweight AI call reads each branch's load condition (`load_when`: "load me when…") and keeps only what helps. And **shareable**: the source of truth is markdown in `.contextree/`, and git is enough to share it.
 
-Le paquet n'est pas encore publié sur npm. Depuis le dépôt :
+## Getting started
+
+The package is not published on npm yet. From the repository:
 
 ```bash
 npm install
 npm run build
-npm i -g .          # ou npm link
+npm i -g .          # or npm link
 ```
 
-Puis, dans le projet à équiper :
+Then, in the project to equip:
 
 ```bash
-contextree init      # crée .contextree/ avec un arbre de départ
-# édite les branches, surtout leur load_when
-contextree install   # câble les agents détectés
+contextree init      # creates .contextree/ with a starter tree
+# edit the branches, especially their load_when
+contextree install   # wires the detected agents
 ```
 
-Relance ton agent. **Aucune clé API n'est nécessaire** : si un CLI d'agent (`claude`, `codex`, `gemini`) est installé, c'est ton abonnement qui route. Une clé (`ANTHROPIC_API_KEY`, ou `OPENAI_API_KEY` avec au besoin `OPENAI_BASE_URL`) est utilisée si elle est là — c'est juste plus rapide.
+Restart your agent. **No API key is needed**: if an agent CLI (`claude`, `codex`, `gemini`) is installed, your subscription does the routing. A key (`ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` with `OPENAI_BASE_URL` if needed) is used when present — it is just faster.
 
-`contextree install` inscrit **la commande qui tourne** : chemins absolus vers le binaire local tant que le paquet n'est pas publié, forme `npx` ensuite. `contextree install --status` l'affiche sans rien écrire.
+**Language**: the tool speaks English or French — CLI, extension, and what the AI reads. It follows the system language (VS Code's for the extension); `--lang fr|en` or `CONTEXTREE_LANG` set it. The content of your branches is never translated.
 
-## Commandes
+`contextree install` writes **the command that is running**: absolute paths to the local binary while the package is unpublished, the `npx` form afterwards. `contextree install --status` shows it without writing anything.
+
+## Commands
 
 ```bash
-contextree list                      # l'arbre
-contextree route "<prompt>"          # ce que le routeur chargerait, et pourquoi
-contextree render                    # tout l'arbre, sans routage
+contextree list                      # the tree
+contextree route "<prompt>"          # what the router would load, and why
+contextree render                    # the whole tree, no routing
 contextree add --title "…" --type rule --load-when "…"
-contextree rm <chemin>
-contextree export --token            # un jeton à coller dans un chat
-contextree import <jeton|fichier> [--prefix equipe]
-contextree install --status          # câblé / à câbler / non détecté
+contextree rm <path>
+contextree export --token            # a token to paste into a chat
+contextree import <token|file> [--prefix team]
+contextree install --status          # wired / to wire / not detected
 ```
 
-Ajoute `--copy` à `render` ou `route` pour coller le bloc dans un chat qui n'a ni hook ni MCP.
+Add `--copy` to `render` or `route` to paste the block into a chat that has neither a hook nor MCP.
 
-## L'extension
+## The extension
 
 ```bash
-npm run package:ext    # produit extension/contextree-vscode-0.1.0.vsix
+npm run package:ext    # produces extension/contextree-vscode-0.1.0.vsix
 code   --install-extension extension/contextree-vscode-0.1.0.vsix
 cursor --install-extension extension/contextree-vscode-0.1.0.vsix
 ```
 
-Elle montre l'arbre dans la barre latérale, surligne les branches réellement lues au dernier tour, et ouvre une toile 2D où l'on édite une branche et où l'on essaie un prompt sans lancer de conversation.
+It shows the tree in the sidebar, highlights the branches actually read on the last turn, and opens a 2D canvas where you edit a branch and try a prompt without starting a conversation.
 
-## Partager un arbre avec son équipe (git)
+## Sharing a tree with your team (git)
 
-Une équipe qui a déjà un dépôt commun n'a besoin de rien d'autre : versionne
-`.contextree/` avec le projet, ou monte-le en submodule si plusieurs dépôts
-partagent le même contexte.
-
-```bash
-git submodule add <url-de-l-arbre> .contextree   # au choix : ou simplement le dossier du repo
-```
-
-Pull, push, conflits, historique et revue sont ceux de git. `.contextree.local/`
-— ton calque personnel — est **gitignoré dès la création de l'arbre** : ce que tu
-y surcharges ne part jamais au groupe.
-
-Deux choses à savoir avant le premier merge : un conflit non résolu dans le corps
-d'une branche **part au modèle** tel quel, et un conflit dans le frontmatter
-**ne se voit pas** — le `load_when` affiché est alors l'un des deux, au hasard.
-Après un merge qui touche `.contextree/`, relis les `load_when` concernés.
-
-Le détail (`contextree list`, puis la branche « Partager un arbre par git »).
-
-## La documentation de ce projet est son arbre
-
-Il n'y a pas d'autre `.md` à la racine : tout vit dans `.contextree/`, une branche par sujet, chargée quand elle sert.
+A team that already has a shared repository needs nothing else: version
+`.contextree/` with the project, or mount it as a submodule if several
+repositories share the same context.
 
 ```bash
-contextree list                        # les sujets et leurs conditions
-contextree route "<une question>"      # ce qu'une IA en recevrait
-contextree render                      # tout, d'un coup
+git submodule add <tree-url> .contextree   # either this, or simply the folder in the repo
 ```
 
-C'est aussi le seul test honnête de l'outil : si une réponse ne s'y trouve pas, c'est un `load_when` à corriger, pas un fichier à recréer.
+Pull, push, conflicts, history and review are git's. `.contextree.local/`
+— your personal layer — is **gitignored as soon as the tree is created**: what
+you override there never goes to the group.
 
-## Origine
+Two things to know before the first merge: an unresolved conflict in a branch's
+body **goes to the model** as is, and a conflict in the frontmatter **does not
+show** — the displayed `load_when` is then one of the two, at random.
+After a merge that touches `.contextree/`, reread the `load_when` involved.
 
-Extrait de [Lacis](../ai-tree) (repo `ai-tree`), dont l'arbre de contexte était la vraie valeur mais restait enterré sous une extension VS Code complète. Ici on ne garde que le cœur.
+The details: `contextree list`, then the "Partager un arbre par git" branch.
+
+## This project's documentation is its tree
+
+There is no `.md` at the root other than this README, in its two languages: everything lives in `.contextree/`, one branch per topic, loaded when it helps. The tree of this repository is written in French.
+
+```bash
+contextree list                        # the topics and their conditions
+contextree route "<a question>"        # what an AI would receive
+contextree render                      # everything, at once
+```
+
+It is also the only honest test of the tool: if an answer is not in there, it is a `load_when` to fix, not a file to recreate.
+
+## Origin
+
+Extracted from [Lacis](../ai-tree) (the `ai-tree` repo), whose context tree was the real value but stayed buried under a full VS Code extension. Here, only the core is kept.
