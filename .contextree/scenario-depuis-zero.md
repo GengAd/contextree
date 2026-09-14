@@ -26,3 +26,14 @@ Le test qui compte : **quelqu'un part d'un projet qui n'a jamais entendu parler 
 ## Comment le mesurer sans y assister
 
 `claude -p "…"` puis `claude -p -c "oui"` déroulent les étapes 3 et 4 sans session interactive. Ce qui s'est passé se lit ensuite sans deviner : `contextree list` pour les branches et leurs `load_when`, `git status` dans le clone pour vérifier qu'aucune source n'a bougé, et le journal (`~/.contextree/journal/`) pour ce que chaque prompt a réellement chargé.
+
+## Rejoué en anglais — 14 septembre 2026
+
+Sur une copie de `lacis-site` (Astro, README en anglais écrit par quelqu'un, sans `.git` ni `node_modules`), Claude Code en `claude -p` (`sonnet`), `install --agent claude-code --lang en`. Étapes 3, 4 et 6 :
+
+- **3** — « hi, what are we doing? » : l'IA répond à la question, puis **propose l'arbre en une phrase, à la fin** — la traduction n'a pas fait taire l'invitation.
+- **4** — « yes » : racine + **5 branches**, en anglais, écrites sans terminal, `load_when` tous en condition (« when touching the deploy workflow, hosting config, or build output »), renvoi à la toile. **Aucun fichier source touché** (sommes de contrôle identiques). Un cran sous les 6 à 12 demandées : la consigne fixe une fourchette, le modèle a regroupé.
+- **6** — « how does the deploy to Hostinger work? » : routé sur **1 branche sur 5**, la bonne, en 6 s.
+
+Pas rejoués : l'étape 5 (la toile) et l'étape 7 (une vraie tâche qui fait écrire une branche).
+

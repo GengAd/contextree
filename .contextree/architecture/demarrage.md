@@ -4,6 +4,8 @@ title: Démarrage à froid
 load_when: quand on touche à la création de l'arbre (init), à la vue sur un projet vierge, au tronc de branches de départ, ou quand on se demande pourquoi le routeur ne trie rien sur un petit arbre
 ---
 
+**Le tronc de départ existe en deux langues** (14 septembre 2026), choisi par la langue résolue : en français l'arbre d'avant, à l'identique (`identite`, `regles`, `architecture`, `architecture/commandes`) ; en anglais le même plan (`identity`, `rules`, `architecture`, `architecture/commands`), à une différence près — la branche d'identité y a une vraie condition (« when writing, reviewing or designing anything on this project ») plutôt que « toujours pertinent », que la consigne `bootstrap` interdit. Les textes vivent dans `core/messages.ts`.
+
 **Le tronc de départ vit dans le cœur** (`initTree`, dans `store.ts`), pas dans la CLI : la vue le crée aussi, et deux copies auraient divergé au premier ajustement de `load_when` — le champ dont dépend tout le routage.
 
 Quatre branches, pas quarante : un arbre entier deviné d'un coup n'est relu par personne. Ce sont des amorces à corriger, et leur `load_when` est écrit comme une condition (« quand… »), parce que c'est la forme qu'on veut voir imitée.
