@@ -19,6 +19,7 @@ import { CLI_MESSAGES } from '../dist/messages.js';
 import { SERVER_MESSAGES } from '../dist/mcp/messages.js';
 import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, findStrayHomeTree, rescueStrayTree, isHomeDir, localDirFor, fileForBranch, compareBranchPaths, initTree, detectInstructionFiles, ensureLocalIgnored } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
+import { lintTree, renderShapeWarnings } from '../dist/core/lint.js';
 import { route, pickEngine, isCliEngine, parseIndices, timeoutFor, findBinIn, cmdLine } from '../dist/core/router.js';
 import { evaluateRouting, parseEvalCases } from '../dist/core/eval.js';
 import { renderContext, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite, renderCatalogueOnly } from '../dist/core/render.js';
@@ -2647,4 +2648,95 @@ test("consignes : install --status signale un bloc absent ou périmé", async ()
   const { out } = await runCli(['install', '--status'], { cwd: projet, env });
   assert.match(out, /AGENTS\.md — bloc contextree périmé/);
   assert.match(out, /copilot-instructions\.md — bloc contextree absent/);
+});
+
+
+// ── la forme de l'arbre ──────────────────────────────────────────────────────
+
+/** Un arbre en mémoire, écrit sur le disque puis relu : la forme se juge sur
+ *  ce que `loadTree` rend, enfants et hubs compris. */
+async function treeOf(root, branches) {
+  const dir = await scratch();
+  if (root) await writeRoot(dir, root);
+  else await fs.mkdir(dir, { recursive: true });
+  for (const b of branches) {
+    await writeBranch(dir, { type: 'context', content: 'x', ...b, loadWhen: b.loadWhen ?? `quand on parle de ${b.path}` });
+  }
+  return loadTree(dir);
+}
+const codes = tree => lintTree(tree).map(w => w.code).sort();
+
+test("forme : un arbre plat de 8 branches est signalé ; le même en familles ne l'est pas", async () => {
+  const plat = await treeOf('racine', ['identite', 'regles', 'date', 'upload', 'tableau', 'build', 'publier', 'pieges'].map(path => ({ path, title: path })));
+  assert.deepEqual(codes(plat), ['flat']);
+  assert.match(renderShapeWarnings(lintTree(plat)), /arbre plat : 8 branches/);
+
+  const rangé = await treeOf('racine', [
+    { path: 'identite', title: 'identite' },
+    { path: 'composants', title: 'composants', type: 'rule', content: 'c' },
+    { path: 'composants/date', title: 'date', content: 'le composant date, en long' },
+    { path: 'composants/upload', title: 'upload', content: 'le composant upload, en long' },
+    { path: 'commandes', title: 'commandes', type: 'reference' },
+    { path: 'publier', title: 'publier', type: 'skill' },
+    { path: 'pieges', title: 'pieges', type: 'skill' },
+  ]);
+  assert.deepEqual(lintTree(rangé), []);
+  assert.equal(renderShapeWarnings([]), '');
+});
+
+test("forme : des sœurs au même motif sans parent, par chemin ou par titre", async () => {
+  const tree = await treeOf('racine', [
+    { path: 'composant-date', title: 'Date' },
+    { path: 'composant-upload', title: 'Upload' },
+    { path: 'ecran-accueil', title: 'Écran accueil' },
+    { path: 'ecrans-profil', title: 'Écran profil' },
+  ]);
+  const family = lintTree(tree).filter(w => w.code === 'family');
+  assert.deepEqual(family.map(w => w.paths), [['composant-date', 'composant-upload'], ['ecran-accueil', 'ecrans-profil']]);
+});
+
+test("forme : load_when vide, en « toujours », ou recopié du titre", async () => {
+  const tree = await treeOf('racine', [
+    { path: 'a', title: 'Identité', loadWhen: 'toujours pertinent — qui est l\'assistant' },
+    { path: 'b', title: 'Build', loadWhen: 'Build' },
+    { path: 'c', title: 'Tests', loadWhen: 'Always relevant' },
+    { path: 'd', title: 'Déploiement', loadWhen: 'quand on déploie' },
+  ]);
+  const lw = lintTree(tree).filter(w => w.code === 'load-when');
+  assert.deepEqual(lw.map(w => w.paths[0]), ['a', 'b', 'c']);
+});
+
+test("forme : bornes — trop peu de branches, trop de sœurs sur un niveau, pas de racine", async () => {
+  assert.deepEqual(codes(await treeOf('', [{ path: 'a', title: 'a' }])), ['no-root', 'too-few']);
+  const large = await treeOf('racine', [
+    { path: 'famille', title: 'famille' },
+    ...Array.from({ length: 16 }, (_, i) => ({ path: `famille/e${i}`, title: `e${i}` })),
+  ]);
+  const crowded = lintTree(large).filter(w => w.code === 'crowded');
+  assert.equal(crowded.length, 1);
+  assert.match(crowded[0].message, /16 branches au même niveau sous `famille`/);
+});
+
+test("forme : un parent plus long que tous ses enfants réunis", async () => {
+  const tree = await treeOf('racine', [
+    { path: 'composants', title: 'composants', content: 'une très longue convention commune '.repeat(10) },
+    { path: 'composants/date', title: 'date', content: 'court' },
+    { path: 'composants/upload', title: 'upload', content: 'court' },
+    { path: 'build', title: 'build' },
+  ]);
+  assert.deepEqual(lintTree(tree).map(w => [w.code, w.paths]), [['heavy-parent', ['composants']]]);
+});
+
+test("forme : les avertissements parlent la langue de l'utilisateur", async () => {
+  const plat = await treeOf('', ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map(path => ({ path, title: path })));
+  const saved = process.env.CONTEXTREE_LANG;
+  try {
+    process.env.CONTEXTREE_LANG = 'en';
+    const text = renderShapeWarnings(lintTree(plat));
+    assert.match(text, /^⚠ Tree shape/);
+    assert.match(text, /flat tree: 7 branches/);
+    assert.ok(!FRENCH.test(text.replace(/`[^`]*`/g, '')), text.match(FRENCH)?.[0]);
+  } finally {
+    process.env.CONTEXTREE_LANG = saved;
+  }
 });

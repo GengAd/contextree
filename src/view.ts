@@ -18,4 +18,5 @@ export * from './core/tree.js';
 export * from './core/journal.js';
 export * from './core/router.js';
 export * from './core/render.js';
+export * from './core/lint.js';
 export * from './install.js';
