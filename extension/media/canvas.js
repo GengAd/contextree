@@ -721,6 +721,7 @@
     all: 'tout chargé',
     fallback: 'repli',
     deferred: 'différé — routage en tâche de fond',
+    catalogue: 'catalogue seul — pas de routage disponible',
     // Le routage de fond a rendu son verdict : ces branches partiront au tour
     // suivant. Un `routed` comme un autre pour la couleur des cartes, mais on
     // ne laisse pas croire qu'il s'agit du tour qui vient de passer.
@@ -764,16 +765,21 @@
     if (o.ms) bits.push(`${o.ms} ms`);
     trace.textContent = bits.join(' · ');
     // Un repli n'est pas un routage : il doit se voir sans être lu.
-    trace.className = o.reason === 'fallback' ? 'warn' : '';
+    // Un catalogue seul est un tour dégradé comme un repli : aucune branche n'est
+    // partie, l'agent trie lui-même.
+    const warn = o.reason === 'fallback' || o.reason === 'catalogue';
+    trace.className = warn ? 'warn' : '';
     excerpt.textContent =
       o.reason === 'fallback'
         ? `repli sur la sélection précédente${o.error ? ` — ${o.error}` : ''}`
+        : o.reason === 'catalogue'
+          ? `aucune branche injectée — l'agent a reçu la racine et le catalogue${o.error ? ` — ${o.error}` : ''}`
         : o.reason === 'deferred'
           ? `sélection du tour précédent — le routage de « ${(o.prompt || '').slice(0, 60)} » tourne derrière`
           : key === 'routed-bg'
             ? `choisi pour « ${(o.prompt || '').slice(0, 60)} » — injecté au prochain prompt`
             : o.prompt || '';
-    excerpt.className = o.reason === 'fallback' ? 'warn' : '';
+    excerpt.className = warn ? 'warn' : '';
   }
 
   document.getElementById('go').addEventListener('click', askProbe);

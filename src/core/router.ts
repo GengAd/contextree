@@ -63,12 +63,17 @@ export function timeoutFor(kind: 'api' | 'cli', waiter: RouteWaiter): number {
 /** En dessous de ce seuil, un aller-retour de routage coûte plus (latence +
  *  tokens) que d'injecter tout l'arbre. Le routeur ne se rentabilise qu'à
  *  partir du moment où la sélection économise vraiment des tokens. */
-const ROUTE_THRESHOLD = 3;
+export const ROUTE_THRESHOLD = 3;
 
 /** `deferred` : rien n'a été routé pour *ce* prompt — le routage tourne en
  *  tâche de fond et servira au tour suivant. Un état à part, parce que ce n'est
- *  ni un routage ni une panne. */
-export type RouteReason = 'routed' | 'all' | 'fallback' | 'deferred';
+ *  ni un routage ni une panne.
+ *
+ *  `catalogue` : aucune sélection routée n'était disponible, et le serveur MCP a
+ *  rendu la racine et le catalogue au lieu de l'arbre entier — l'agent trie
+ *  lui-même. Le routeur ne le rend jamais : c'est une décision de surface, mais
+ *  le journal doit pouvoir la distinguer d'un `fallback`. */
+export type RouteReason = 'routed' | 'all' | 'fallback' | 'deferred' | 'catalogue';
 /** `engine` : le moteur qui a été essayé, quand il y en a eu un — c'est ce que
  *  le journal retient pour dire *qui* a trié, pas seulement le résultat. */
 export type RouteResult = { selected: Set<string>; reason: RouteReason; error?: string; engine?: RouterEngine };

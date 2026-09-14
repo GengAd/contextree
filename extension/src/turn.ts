@@ -19,6 +19,9 @@ export const LABELS: Record<string, string> = {
   all: 'tout chargé',
   fallback: 'repli',
   deferred: 'différé',
+  // Rien de routable : l'agent MCP a reçu la racine et le catalogue, et trie
+  // lui-même. Aucune branche injectée — ce n'est pas un « tout chargé ».
+  catalogue: 'catalogue seul',
   // Un tour venu du routage de fond : ces branches n'ont pas servi à ce
   // prompt-là, elles partiront au suivant. Le dire, sinon on lit « routé » et
   // on croit que le tour affiché est celui qui vient de passer.

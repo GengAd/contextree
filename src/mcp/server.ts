@@ -6,8 +6,8 @@ import { z } from 'zod';
 
 import { findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch, detectInstructionFiles, ensureLocalIgnored, DIR_NAME, ROOT_FILE } from '../core/store.js';
 import { allBranches, formatTree } from '../core/tree.js';
-import { renderContext, renderTrace, renderBootstrapPrompt, renderBootstrapInvite } from '../core/render.js';
-import { route, pickEngine, isCliEngine, withoutRouting, routeInBackground } from '../core/router.js';
+import { renderContext, renderTrace, renderBootstrapPrompt, renderBootstrapInvite, renderCatalogueOnly } from '../core/render.js';
+import { route, pickEngine, isCliEngine, withoutRouting, routeInBackground, ROUTE_THRESHOLD } from '../core/router.js';
 import type { Complete } from '../core/router.js';
 import { appendTurn, appendAiWrite } from '../core/journal.js';
 import { readSelection, writeSelection } from '../core/session.js';
@@ -260,21 +260,54 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         ? { selected: withoutRouting(tree, previous), reason: 'deferred' as const, error: undefined, engine: undefined }
         : await route(tree, query, { waiter: 'tool', previousSelection: previous, ...(sample ? { sampler: sample } : {}) });
 
+      /**
+       * **Jamais l'arbre entier à un agent** (14 septembre 2026). Quand ce qui
+       * sortirait est l'arbre complet faute de routage — démarrage à froid en
+       * différé, aucun moteur, repli sans sélection antérieure —, on rend la
+       * racine et le catalogue, et l'agent trie lui-même avec `read_branch`.
+       * Voir `renderCatalogueOnly` pour le pourquoi.
+       *
+       * Une sélection héritée partielle reste servie telle quelle : elle vient
+       * d'un vrai routage. Un petit arbre (≤ seuil) aussi : le tout y coûte
+       * moins qu'un aller-retour. `CONTEXTREE_MCP_FALLBACK=full` rend l'ancien
+       * comportement, pour l'éval et la démo.
+       */
+      const unrouted = reason === 'deferred' || reason === 'fallback' || (reason === 'all' && Boolean(error));
+      const catalogueOnly =
+        unrouted &&
+        tree.branches.size > ROUTE_THRESHOLD &&
+        selected.size >= tree.branches.size &&
+        process.env['CONTEXTREE_MCP_FALLBACK'] !== 'full';
+
       // En différé, c'est le process de fond qui écrira la sélection : l'écraser
-      // ici effacerait le routage avant qu'il n'arrive.
+      // ici effacerait le routage avant qu'il n'arrive. Un catalogue n'écrit rien
+      // non plus : l'arbre entier en cache de session reviendrait au tour suivant
+      // comme une « sélection héritée ».
       if (deferred) routeInBackground(dir, sessionId, query, at);
-      else await writeSelection(dir, sessionId, selected, { at, routed: reason === 'routed' });
+      else if (!catalogueOnly) await writeSelection(dir, sessionId, selected, { at, routed: reason === 'routed' });
       // Le chat de Cursor et les autres clients MCP passent par ici : sans cette
       // ligne, le journal ne verrait que les tours de Claude Code.
       await appendTurn(dir, {
         at,
         prompt: query,
-        selected: [...selected],
-        reason,
+        selected: catalogueOnly ? [] : [...selected],
+        reason: catalogueOnly ? 'catalogue' : reason,
         source: 'mcp',
         ...(error ? { error } : {}),
         ...(engine ? { engine } : {}),
       });
+
+      if (catalogueOnly) {
+        const cause =
+          reason === 'deferred'
+            ? 'à froid — le routage de cette demande tourne en tâche de fond et servira au prochain appel'
+            : reason === 'all'
+              ? 'aucun moteur de routage sur ce poste — ni clé API, ni sampling du client, ni CLI'
+              : `repli — ${error ?? 'raison inconnue'}`;
+        const trace = renderTrace(tree, new Set(), 'catalogue');
+        return text([renderCatalogueOnly(tree, cause), '', `<!-- ${trace} — ${cause} -->`].join('\n'));
+      }
+
       const block = renderContext(tree, selected);
       const trace = renderTrace(tree, selected, reason);
       return text(

@@ -48,7 +48,7 @@ La carte dit toujours sa branche. Si elle n'existe pas encore : `git checkout ma
 ## Definition of done
 
 - `npm test` vert (build + tous les tests) ;
-- les invariants tiennent : le hook ne bloque jamais un prompt, le routage ne rend jamais un ensemble vide, `.contextree/` reste lisible à la main, `order` reste stable ;
+- les invariants tiennent : le hook ne bloque jamais un prompt, le routeur ne rend jamais un ensemble vide et un agent n'est jamais laissé sans racine ni moyen d'atteindre une branche, `.contextree/` reste lisible à la main, `order` reste stable ;
 - les branches de l'arbre touchées sont à jour, sans doc en double ailleurs ;
 - le commit existe, la carte est dans *Fait* avec son commentaire.
 

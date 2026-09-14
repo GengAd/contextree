@@ -92,10 +92,55 @@ function section(b: { title: string; content: string }): string {
  * donne sans son contenu. Un seul rendu, deux appelants (`renderContext` et
  * `renderAgentsBlock`) : deux copies divergeraient au premier correctif.
  */
-function catalogue(branches: { title: string; type: string; loadWhen: string }[]): string {
+function catalogue(
+  branches: { path: string; title: string; type: string; loadWhen: string }[],
+  withPaths = false,
+): string {
   return branches
-    .map(b => `- **${b.title}** (${b.type}) — charger quand : ${b.loadWhen}`)
+    .map(b => `- **${b.title}** (${b.type})${withPaths ? ` \`${b.path}\`` : ''} — charger quand : ${b.loadWhen}`)
     .join('\n');
+}
+
+/**
+ * Le bloc quand **rien n'a pu être routé** : la racine, le catalogue avec les
+ * chemins, et la consigne de trier soi-même (14 septembre 2026).
+ *
+ * Pour un agent qui n'a que le serveur MCP — Copilot, Cursor, Codex —
+ * `get_context` *est* contextree. Lui rendre l'arbre entier à chaque démarrage
+ * à froid ou à chaque repli, c'était lui faire payer exactement ce que l'outil
+ * existe pour éviter. Or l'agent est un modèle : il sait lire une condition de
+ * chargement aussi bien que le routeur. On lui donne les mêmes lignes que lit
+ * le routeur, plus le chemin pour `read_branch`, et il devient son propre
+ * routeur pour ce tour.
+ *
+ * La consigne a un **moment** — « avant de répondre » — parce qu'une consigne
+ * sans moment est une consigne qu'on remet à plus tard (mesuré deux fois, voir
+ * `CAPITALIZE`). Une branche par appel : `read_branch` garde un seul chemin, les
+ * agents savent appeler plusieurs outils d'un coup, et un second schéma pour
+ * la même lecture serait une surface de plus à tenir.
+ *
+ * Le hook de Claude Code n'y passe pas : il garde l'arbre entier en repli.
+ * Changer ce qui arrive devant chaque prompt est une autre décision.
+ */
+export function renderCatalogueOnly(tree: ContextTree, cause: string): string {
+  const parts: string[] = [];
+  const root = tree.rootContent.trim();
+  if (root) parts.push(root);
+
+  const branches = allBranches(tree);
+  if (branches.length) {
+    parts.push(
+      `## Catalogue — aucune branche chargée\n\n` +
+        `Ce tour n'a pas pu être routé (${cause}). **Avant de répondre**, lis avec l'outil ` +
+        '`read_branch` les branches dont la condition de chargement correspond à la tâche — ' +
+        'par leur chemin exact, entre accents graves ci-dessous, un appel par branche. Pour ce ' +
+        "tour, c'est toi qui tries ; si aucune ne correspond, dis-le et continue.\n\n" +
+        catalogue(branches, true),
+    );
+  }
+
+  if (!parts.length) return '';
+  return `<contextree>\n${parts.join('\n\n')}\n\n${CAPITALIZE}\n</contextree>`;
 }
 
 /**
@@ -248,6 +293,7 @@ const TRACE_LABELS: Record<RouteReason, string> = {
   all: 'tout chargé',
   fallback: 'fallback',
   deferred: 'différé — routage en tâche de fond',
+  catalogue: 'catalogue seul — pas de routage disponible',
 };
 
 /** Ligne de transparence : ce qui a été chargé, et pourquoi. Jamais de boîte noire. */

@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CreateMessageRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 import { createServer } from '../dist/mcp/server.js';
 
@@ -15,7 +16,7 @@ import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, fi
 import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { route, pickEngine, isCliEngine, parseIndices, timeoutFor } from '../dist/core/router.js';
 import { evaluateRouting, parseEvalCases } from '../dist/core/eval.js';
-import { renderContext, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite } from '../dist/core/render.js';
+import { renderContext, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite, renderCatalogueOnly } from '../dist/core/render.js';
 import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand, AGENTS } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
 import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites, turnLabelKey } from '../dist/core/journal.js';
@@ -1198,11 +1199,12 @@ test("mcp : un client qui refuse le sampling — repli lisible, et une seule dem
     });
 
     const premier = textOf(await client.callTool({ name: 'get_context', arguments: { query: 'b' } }));
-    // Jamais vide : le repli rend un contexte, et il dit pourquoi.
-    assert.match(premier, /contenu/);
+    // Jamais vide : le repli rend la racine et le catalogue, et il dit pourquoi.
+    assert.match(premier, /racine/);
+    assert.match(premier, /`b`/);
     assert.match(premier, /sampling refusé/);
     const [tour] = (await readJournal(dir)).slice(-1);
-    assert.equal(tour.reason, 'fallback');
+    assert.equal(tour.reason, 'catalogue');
     assert.equal(tour.engine, 'sampling');
     assert.match(tour.error, /refusé/);
 
@@ -1212,6 +1214,91 @@ test("mcp : un client qui refuse le sampling — repli lisible, et une seule dem
     const [second] = (await readJournal(dir)).slice(-1);
     assert.notEqual(second.engine, 'sampling');
   } finally {
+    restore();
+  }
+});
+
+test("render : le catalogue seul donne la racine, les chemins et la consigne — aucun corps de branche", async () => {
+  const { dir, restore } = await samplingSetup();
+  restore();
+  const tree = await loadTree(dir);
+  const bloc = renderCatalogueOnly(tree, 'aucun moteur');
+  assert.match(bloc, /racine/);
+  // Le chemin exact, pour `read_branch`, et la condition que lirait le routeur.
+  assert.match(bloc, /\*\*B\*\* \(context\) `b` — charger quand : quand b/);
+  // Une consigne avec un moment, qui nomme l'outil.
+  assert.match(bloc, /Avant de répondre/);
+  assert.match(bloc, /read_branch/);
+  assert.match(bloc, /aucun moteur/);
+  assert.ok(!/contenu [a-e]/.test(bloc));
+});
+
+test("mcp : sans moteur, get_context sur le vrai serveur stdio rend le catalogue — jamais l'arbre entier", async () => {
+  const { dir, projet, restore } = await samplingSetup();
+  restore();
+  const env = { ...process.env, CONTEXTREE_ROUTER: 'off' };
+  delete env.CONTEXTREE_MCP_FALLBACK;
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [path.resolve('dist/cli.js'), 'mcp'],
+    cwd: projet,
+    env,
+    stderr: 'ignore',
+  });
+  const client = new Client({ name: 'test', version: '0' });
+  await client.connect(transport);
+  try {
+    const txt = textOf(await client.callTool({ name: 'get_context', arguments: { query: 'toucher à b' } }));
+    assert.ok(!/contenu [a-e]/.test(txt), 'aucun corps de branche');
+    assert.match(txt, /racine/);
+    assert.match(txt, /`b`/);
+    assert.match(txt, /catalogue seul/);
+    assert.match(txt, /aucun moteur/);
+
+    // Et l'agent peut suivre la consigne : le chemin du catalogue se lit tel quel.
+    const lu = textOf(await client.callTool({ name: 'read_branch', arguments: { path: 'b' } }));
+    assert.match(lu, /contenu b/);
+
+    const [tour] = (await readJournal(dir)).slice(-1);
+    assert.equal(tour.reason, 'catalogue');
+    assert.deepEqual(tour.selected, []);
+    assert.equal(turnLabelKey(tour), 'catalogue');
+  } finally {
+    await client.close();
+  }
+});
+
+test("mcp : à froid sous moteur CLI, le catalogue au premier appel — la sélection routée ensuite", async () => {
+  const { dir, projet, restore } = await samplingSetup({ CONTEXTREE_ROUTER: 'claude' });
+  const savedBin = process.env.CONTEXTREE_CLAUDE_BIN;
+  process.env.CONTEXTREE_CLAUDE_BIN = path.join(projet, 'pas-de-claude');
+  try {
+    const client = await mcpClient(projet);
+    const premier = textOf(await client.callTool({ name: 'get_context', arguments: { query: 'b' } }));
+    assert.ok(!/contenu [a-e]/.test(premier));
+    assert.match(premier, /à froid/);
+
+    // Le routage de fond a rendu son verdict entre-temps.
+    await writeSelection(dir, 'fond', ['b'], { routed: true });
+    const second = textOf(await client.callTool({ name: 'get_context', arguments: { query: 'b' } }));
+    assert.match(second, /contenu b/);
+    assert.ok(!/contenu a/.test(second));
+  } finally {
+    restore();
+    if (savedBin === undefined) delete process.env.CONTEXTREE_CLAUDE_BIN;
+    else process.env.CONTEXTREE_CLAUDE_BIN = savedBin;
+  }
+});
+
+test("mcp : CONTEXTREE_MCP_FALLBACK=full rend l'ancien repli, l'arbre entier", async () => {
+  const { projet, restore } = await samplingSetup({ CONTEXTREE_ROUTER: 'off' });
+  process.env.CONTEXTREE_MCP_FALLBACK = 'full';
+  try {
+    const client = await mcpClient(projet);
+    const txt = textOf(await client.callTool({ name: 'get_context', arguments: { query: 'b' } }));
+    for (const p of ['a', 'b', 'c', 'd', 'e']) assert.match(txt, new RegExp(`contenu ${p}`));
+  } finally {
+    delete process.env.CONTEXTREE_MCP_FALLBACK;
     restore();
   }
 });
