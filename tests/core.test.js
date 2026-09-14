@@ -2740,3 +2740,39 @@ test("forme : les avertissements parlent la langue de l'utilisateur", async () =
     process.env.CONTEXTREE_LANG = saved;
   }
 });
+
+
+test("bootstrap : plan d'abord, la méthode, puis des arbres types — qui passent eux-mêmes le contrôle de forme", async () => {
+  const saved = process.env.CONTEXTREE_LANG;
+  try {
+    for (const [lang, plan, wait, family] of [
+      ['fr', /## Deux temps : un plan, puis l'écriture/, /Arrête-toi là et attends son accord/, /un enfant par élément, même s'il n'y en a qu'un/],
+      ['en', /## Two steps: a plan, then the writing/, /Stop there and wait for their approval/, /one child per item, even if there is only one/],
+    ]) {
+      process.env.CONTEXTREE_LANG = lang;
+      const prompt = renderBootstrapPrompt(['README.md']);
+      assert.match(prompt, plan, lang);
+      assert.match(prompt, wait, lang);
+      assert.match(prompt, family, lang);
+      // Le plan vient avant l'écriture, dans le texte aussi.
+      assert.ok(prompt.search(plan) < prompt.indexOf('`write_root`'), lang);
+      if (lang === 'en') assert.ok(!FRENCH.test(prompt.replace(/`[^`]*`/g, '')), prompt.match(FRENCH)?.[0]);
+
+      // Chaque arbre type, écrit tel quel, ne doit rien déclencher : un exemple
+      // qui échoue au contrôle apprendrait la mauvaise forme.
+      const blocks = [...prompt.matchAll(/```\n([\s\S]*?)```/g)].map(m => m[1]);
+      assert.equal(blocks.length, 3, lang);
+      for (const block of blocks) {
+        const branches = block.trim().split('\n').map(line => {
+          const [, p, type, loadWhen] = line.match(/^(\S+)\s+(\S+)\s+(.+)$/);
+          return { path: p, type, title: p.split('/').pop(), loadWhen, content: p.includes('/') ? 'un enfant détaillé' : 'x' };
+        });
+        assert.ok(branches.some(b => b.path.includes('/')), 'chaque exemple montre une famille');
+        const tree = await treeOf('racine', branches);
+        assert.deepEqual(lintTree(tree), [], block);
+      }
+    }
+  } finally {
+    process.env.CONTEXTREE_LANG = saved;
+  }
+});

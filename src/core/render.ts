@@ -266,7 +266,9 @@ function bootstrapPromptFr(found: string[]): string {
   return [
     '# Construire l\'arbre de contexte de ce projet',
     sources,
-    'Écris ensuite les branches avec les outils MCP `write_root` et `upsert_branch`. ' +
+    TREE_METHOD.fr,
+    TREE_EXAMPLES.fr,
+    "**Une fois le plan accepté**, écris les branches avec les outils MCP `write_root` et `upsert_branch`. " +
       "Commence **toujours** par `write_root` : c'est le seul contenu toujours injecté, " +
       'et il tient en quelques lignes — qui, quoi, dans quel dépôt.',
     // Ajouté le 14 septembre 2026 avec l'anglais : l'outil parle deux langues,
@@ -279,7 +281,8 @@ function bootstrapPromptFr(found: string[]): string {
       'pas. Ne laisse jamais une amorce vide à côté de la vraie branche : deux entrées pour ' +
       'le même sujet, et le routeur charge la mauvaise.',
     '## Ce qui fait un bon arbre',
-    '- **6 à 12 branches, pas 40.** Un arbre que personne ne relit ne vaut rien, et ' +
+    '- **6 à 12 branches de premier niveau, pas 40.** Une famille compte pour une, ses enfants ' +
+      "s'y ajoutent. Un arbre que personne ne relit ne vaut rien, et " +
       "c'est en relisant qu'on corrige les conditions de chargement. Regroupe plutôt " +
       'que de multiplier.\n' +
       '- **Une section de doc ≈ une branche**, en première approximation seulement : ' +
@@ -313,6 +316,132 @@ function bootstrapPromptFr(found: string[]): string {
       "Ne termine pas sur « c'est fait » : l'arbre n'est utile qu'une fois relu.",
   ].join('\n\n');
 }
+
+/**
+ * **Plan d'abord, puis la méthode** (14 septembre 2026).
+ *
+ * Observé chez Adrien : un arbre construit par Copilot tout à plat, et un
+ * composant unique écrit comme une règle. Dans la même conversation, Claude
+ * Code avait proposé la bonne forme — et ce qui l'avait produite n'était pas
+ * une règle mais une **méthode** : partir des demandes futures, regrouper en
+ * familles, mettre le commun dans le parent, **montrer le plan avant
+ * d'écrire**. Des règles abstraites se suivent mal ; des étapes et des
+ * exemples se suivent bien, surtout pour les petits modèles.
+ *
+ * Deux temps parce que le plan est le moment où la forme se corrige à moindre
+ * coût : on corrige un chemin, pas un contenu.
+ *
+ * Une seule copie : la consigne `bootstrap` la contient, et la réponse de
+ * `write_root` la redonne au moment où l'arbre naît — le seul instant garanti
+ * où l'agent construit un arbre, qu'il ait lu la consigne ou non.
+ */
+export const TREE_METHOD: Record<Lang, string> = {
+  fr: [
+    "## Deux temps : un plan, puis l'écriture",
+    "**N'écris rien tout de suite.** Montre d'abord à l'utilisateur un **plan** : l'arborescence " +
+      '(les chemins — un `/` crée un enfant), le type et le `load_when` de chaque branche, et une ' +
+      'phrase sur ce que portera chaque parent. **Arrête-toi là et attends son accord** ou ses ' +
+      "corrections ; écris seulement ensuite. C'est le moment où la forme se corrige à moindre coût : " +
+      'on corrige un chemin, pas un contenu.',
+    '## La méthode, dans cet ordre',
+    '1. **Liste 8 à 15 demandes** que l\'utilisateur fera à son IA sur ce projet — « ajoute une ' +
+      'propriété au composant X », « pourquoi la publication échoue », « écris le test de Y ».\n' +
+      '2. **Repère les familles** — composants, écrans, endpoints, services, modules, jobs : une branche ' +
+      'parente, et **un enfant par élément, même s\'il n\'y en a qu\'un**. Le deuxième viendra.\n' +
+      "3. **Le parent porte ce qui vaut pour tous ses enfants**, en court : il est chargé avec chacun d'eux.\n" +
+      '4. **Une `rule` vaut pour tout le projet ou toute une famille**, jamais pour un seul élément — ' +
+      "celui-ci est du `context`.\n" +
+      "5. **Chaque `load_when` reprend les demandes de l'étape 1** qu'elle doit servir.\n" +
+      "6. **Vérifie** que chaque demande de l'étape 1 charge au moins une branche, et qu'aucune n'en " +
+      "charge la moitié de l'arbre.",
+  ].join('\n\n'),
+  en: [
+    '## Two steps: a plan, then the writing',
+    "**Don't write anything yet.** First show the user a **plan**: the tree structure (the paths — " +
+      'a `/` creates a child), the type and `load_when` of each branch, and one sentence on what each ' +
+      'parent will hold. **Stop there and wait for their approval** or corrections; only write after ' +
+      "that. It is when the shape is cheapest to fix: you fix a path, not a content.",
+    '## The method, in this order',
+    '1. **List 8 to 15 requests** the user will make to their AI on this project — "add a property ' +
+      'to component X", "why does publishing fail", "write the test for Y".\n' +
+      '2. **Spot the families** — components, screens, endpoints, services, modules, jobs: one parent ' +
+      "branch, and **one child per item, even if there is only one**. The second will come.\n" +
+      '3. **The parent holds what applies to all its children**, briefly: it is loaded with each of them.\n' +
+      '4. **A `rule` applies to the whole project or a whole family**, never to a single item — ' +
+      'that one is `context`.\n' +
+      '5. **Each `load_when` reuses the requests from step 1** that it must serve.\n' +
+      '6. **Check** that each request from step 1 loads at least one branch, and that none loads half the tree.',
+  ].join('\n\n'),
+};
+
+/**
+ * Des arbres types, pas une règle de plus : l'IA prend le plus proche et
+ * l'adapte. Génériques exprès — aucun nom de plateforme ou de client ici.
+ */
+const TREE_EXAMPLES: Record<Lang, string> = {
+  fr: [
+    '## Des arbres types',
+    'Prends le plus proche de ce projet et adapte-le : les noms sont des exemples, la forme est ce qui compte.',
+    '**Bibliothèque de composants**\n```\n' +
+      'identite           identity   quand on écrit, relit ou conçoit un composant de cette bibliothèque\n' +
+      'composants         rule       quand on crée, modifie ou relit un composant — les conventions communes\n' +
+      'composants/date    context    quand la demande parle du sélecteur de date, de ses propriétés ou de ses événements\n' +
+      "composants/upload  context    quand la demande parle de l'envoi de fichiers ou du composant upload\n" +
+      "plateforme         context    quand on touche à l'intégration avec la plateforme hôte ou à la configuration d'un composant\n" +
+      'commandes          reference  quand il faut builder, tester, lancer la démo ou publier\n' +
+      'nouveau-composant  skill      quand on crée un nouveau composant\n' +
+      'publier            skill      quand on publie une version, ou que la publication échoue\n```',
+    '**API web**\n```\n' +
+      'identite                identity   quand on écrit, relit ou conçoit du code de cette API\n' +
+      'regles                  rule       quand on touche au code, aux dépendances ou aux migrations\n' +
+      'endpoints               context    quand on ajoute ou modifie un endpoint — routes, erreurs, pagination\n' +
+      'endpoints/commandes     context    quand la demande parle des commandes, de leur statut ou de leur paiement\n' +
+      "endpoints/utilisateurs  context    quand la demande parle des comptes, de l'inscription ou des profils\n" +
+      "auth                    context    quand la demande parle d'authentification, de session ou de jeton\n" +
+      'base-de-donnees         reference  quand on écrit une requête ou une migration, ou qu\'on touche au schéma\n' +
+      "commandes               reference  quand il faut lancer, tester ou déployer l'API\n```",
+    '**Monorepo**\n```\n' +
+      'identite     identity   quand on écrit, relit ou conçoit quelque chose dans ce dépôt\n' +
+      'regles       rule       quand on touche au code, aux dépendances partagées ou à la CI\n' +
+      "paquets      context    quand on ajoute un paquet ou qu'on touche aux dépendances entre paquets\n" +
+      "paquets/web  context    quand la demande porte sur l'application web, ses pages ou son build\n" +
+      'paquets/api  context    quand la demande porte sur le serveur, ses routes ou ses workers\n' +
+      'paquets/ui   context    quand la demande porte sur les composants partagés ou le design system\n' +
+      'commandes    reference  quand il faut builder, tester ou lancer un paquet, ou tout le dépôt\n' +
+      "release      skill      quand on prépare une version ou qu'on publie des paquets\n```",
+  ].join('\n\n'),
+  en: [
+    '## Example trees',
+    'Take the one closest to this project and adapt it: the names are examples, the shape is what matters.',
+    '**Component library**\n```\n' +
+      'identity             identity   when writing, reviewing or designing a component of this library\n' +
+      'components           rule       when creating, changing or reviewing a component — the shared conventions\n' +
+      'components/date      context    when the request is about the date picker, its properties or its events\n' +
+      'components/upload    context    when the request is about file upload or the upload component\n' +
+      "platform             context    when working on the integration with the host platform or a component's configuration\n" +
+      'commands             reference  when building, testing, running the demo or publishing\n' +
+      'new-component        skill      when creating a new component\n' +
+      'publish              skill      when publishing a release, or when publishing fails\n```',
+    '**Web API**\n```\n' +
+      'identity           identity   when writing, reviewing or designing code for this API\n' +
+      'rules              rule       when touching code, dependencies or migrations\n' +
+      'endpoints          context    when adding or changing an endpoint — routes, errors, pagination\n' +
+      'endpoints/orders   context    when the request is about orders, their status or their payment\n' +
+      'endpoints/users    context    when the request is about accounts, sign-up or profiles\n' +
+      'auth               context    when the request is about authentication, sessions or tokens\n' +
+      'database           reference  when writing a query or a migration, or touching the schema\n' +
+      'commands           reference  when running, testing or deploying the API\n```',
+    '**Monorepo**\n```\n' +
+      'identity       identity   when writing, reviewing or designing anything in this repo\n' +
+      'rules          rule       when touching code, shared dependencies or CI\n' +
+      'packages       context    when adding a package or touching dependencies between packages\n' +
+      'packages/web   context    when the request is about the web app, its pages or its build\n' +
+      'packages/api   context    when the request is about the server, its routes or its workers\n' +
+      'packages/ui    context    when the request is about shared components or the design system\n' +
+      'commands       reference  when building, testing or running a package, or the whole repo\n' +
+      'release        skill      when preparing a release or publishing packages\n```',
+  ].join('\n\n'),
+};
 
 /**
  * L'invitation, pour un projet qui n'a **pas** encore d'arbre.
@@ -377,7 +506,9 @@ function bootstrapPromptEn(found: string[]): string {
   return [
     "# Build this project's context tree",
     sources,
-    'Then write the branches with the MCP tools `write_root` and `upsert_branch`. ' +
+    TREE_METHOD.en,
+    TREE_EXAMPLES.en,
+    '**Once the plan is accepted**, write the branches with the MCP tools `write_root` and `upsert_branch`. ' +
       '**Always** start with `write_root`: it is the only content that is always injected, ' +
       'and it fits in a few lines — who, what, which repo.',
     "Write the tree **in the user's language** — the one they speak to you in —, titles and " +
@@ -387,7 +518,8 @@ function bootstrapPromptEn(found: string[]): string {
       '`upsert_branch` — or delete the ones that are not useful. Never leave an empty stub ' +
       'next to the real branch: two entries for the same topic, and the router loads the wrong one.',
     '## What makes a good tree',
-    '- **6 to 12 branches, not 40.** A tree nobody rereads is worthless, and rereading is ' +
+    '- **6 to 12 top-level branches, not 40.** A family counts as one, its children come on top. ' +
+      'A tree nobody rereads is worthless, and rereading is ' +
       'how load conditions get corrected. Group rather than multiply.\n' +
       '- **One doc section ≈ one branch**, as a first approximation only: meaning decides, ' +
       'not how the original file was split. Two sections about the same thing make one ' +
