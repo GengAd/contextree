@@ -9,7 +9,7 @@ Tous les agents n'ont pas de hook. Trois surfaces, par ordre de qualité — c'e
 | Surface | Où | Qualité |
 |---|---|---|
 | Hook par prompt | `.claude/settings.json`, `.gemini/settings.json` | **une avance gratuite** — mais routée sur le prompt seul |
-| Serveur MCP | `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `~/.codex/config.toml`, … | portable, mais l'agent doit vouloir appeler `get_context` — différé comme le hook sous moteur CLI (voir *Mécanique du routage*) |
+| Serveur MCP | `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `~/.codex/config.toml`, … | portable, mais l'agent doit vouloir appeler `get_context` — différé comme le hook sous moteur CLI ; routé en synchrone par le modèle **du client** quand il propose le sampling (VS Code + Copilot) — voir *Mécanique du routage* |
 | Fichier de consignes | `AGENTS.md`, `GEMINI.md`, `.github/copilot-instructions.md` | dernier recours, pour qui n'a ni l'un ni l'autre |
 
 **Le registre `AGENTS`** (dans `src/install.ts`) tient **sept** agents depuis le 11 septembre 2026 — un agent = le serveur MCP, plus **la meilleure surface d'injection qu'il sait offrir** :

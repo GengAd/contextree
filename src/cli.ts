@@ -783,8 +783,8 @@ async function cmdHook(agent: string): Promise<number> {
     const deferred =
       isCliEngine(pickEngine()) && process.env['CONTEXTREE_ROUTER_BLOCKING'] !== '1';
 
-    const { selected, reason, error } = deferred
-      ? { selected: withoutRouting(tree, previous), reason: 'deferred' as const, error: undefined }
+    const { selected, reason, error, engine } = deferred
+      ? { selected: withoutRouting(tree, previous), reason: 'deferred' as const, error: undefined, engine: undefined }
       : await route(tree, prompt, { previousSelection: previous });
 
     // En différé, c'est le process de fond qui écrira la sélection : l'écraser
@@ -799,6 +799,7 @@ async function cmdHook(agent: string): Promise<number> {
       reason,
       source: 'hook',
       ...(error ? { error } : {}),
+      ...(engine ? { engine } : {}),
     });
 
     const block = renderContext(tree, selected);
@@ -833,7 +834,7 @@ async function cmdRouteBackground(flags: Flags): Promise<number> {
     const tree = await loadTree(dir);
     const previous = await readSelection(dir, sessionId);
     const prompt = Buffer.from(encoded, 'base64').toString('utf8');
-    const { selected, reason } = await route(tree, prompt, { previousSelection: previous, waiter: 'batch' });
+    const { selected, reason, engine } = await route(tree, prompt, { previousSelection: previous, waiter: 'batch' });
     if (reason !== 'routed') return 0;
     const at = Number(str(flags.at)) || Date.now();
     await writeSelection(dir, sessionId, selected, { at, routed: true });
@@ -843,6 +844,7 @@ async function cmdRouteBackground(flags: Flags): Promise<number> {
       selected: [...selected],
       reason,
       source: 'bg',
+      ...(engine ? { engine } : {}),
     });
   } catch {
     // Même contrat que le hook : silencieux, code 0.
@@ -859,6 +861,9 @@ function describeEngine(): string {
       return 'clé API Anthropic';
     case 'openai':
       return `endpoint compatible OpenAI — ${process.env['OPENAI_BASE_URL'] ?? 'api.openai.com'}`;
+    case 'sampling':
+      // Seulement forcé : hors du serveur MCP, il n'y a pas de client à qui le demander.
+      return 'sampling MCP — le modèle du client, disponible seulement dans le serveur MCP : `route` et `route --eval` ne peuvent pas s\'en servir, ils tomberont dans le repli'
     case 'none':
       return 'aucun moteur — arbre entier injecté (installe un CLI `claude`/`codex`/`gemini`, ou pose ANTHROPIC_API_KEY / OPENAI_API_KEY)';
     default:

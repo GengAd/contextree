@@ -2,7 +2,7 @@ import { promises as fs, realpathSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import type { RouteReason } from './router.js';
+import type { RouteReason, RouterEngine } from './router.js';
 
 /**
  * Ce que l'arbre a vécu : les tours de routage, et les écritures de l'IA.
@@ -76,6 +76,9 @@ export type RoutingTurn = {
   source: TurnSource;
   /** Le message d'erreur du routeur, quand il y en a eu un. */
   error?: string;
+  /** Le moteur essayé, quand le tour a vraiment demandé à un modèle. Absent
+   *  d'un `deferred` ou d'un court-circuit : personne n'a été appelé. */
+  engine?: RouterEngine;
 };
 
 /**

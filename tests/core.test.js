@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { CreateMessageRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import { createServer } from '../dist/mcp/server.js';
 
@@ -239,9 +240,19 @@ test('routeur : le moteur forcé est respecté, anciens noms compris', () => {
     only({});
     assert.equal(pickEngine('z'), 'anthropic');
 
+    // Le sampling d'un client MCP passe après une clé, et avant tout CLI : il
+    // n'est candidat que si l'appelant a un client qui le propose.
+    only({});
+    assert.equal(pickEngine(undefined, { sampling: true }), 'sampling');
+    assert.notEqual(pickEngine(), 'sampling');
+    only({ OPENAI_API_KEY: 'x' });
+    assert.equal(pickEngine(undefined, { sampling: true }), 'openai');
+    only({ CONTEXTREE_ROUTER: 'sampling' });
+    assert.equal(pickEngine(), 'sampling');
+
     // Seuls les moteurs CLI sont lents : c'est ce qui décide du différé.
     assert.ok(isCliEngine('claude') && isCliEngine('codex') && isCliEngine('gemini'));
-    assert.ok(!isCliEngine('anthropic') && !isCliEngine('openai') && !isCliEngine('none'));
+    assert.ok(!isCliEngine('anthropic') && !isCliEngine('openai') && !isCliEngine('sampling') && !isCliEngine('none'));
   } finally {
     for (const k of ['CONTEXTREE_ROUTER', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY']) {
       if (saved[k] === undefined) delete process.env[k];
@@ -994,9 +1005,10 @@ test("hook : sans arbre, l'invitation sort une fois par session — et jamais un
 /** Un vrai client MCP branché sur le serveur, en mémoire. On passe par le
  *  protocole et pas par les internes du SDK : c'est ce que voit l'agent, et
  *  c'est ce qui doit rester vrai d'une version du SDK à l'autre. */
-async function mcpClient(cwd) {
+async function mcpClient(cwd, { sampling } = {}) {
   const server = await createServer(cwd);
-  const client = new Client({ name: 'test', version: '0' });
+  const client = new Client({ name: 'test', version: '0' }, sampling ? { capabilities: { sampling: {} } } : {});
+  if (sampling) client.setRequestHandler(CreateMessageRequestSchema, sampling);
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
   return client;
@@ -1083,6 +1095,118 @@ test("mcp : sous moteur CLI, get_context diffère au lieu de faire attendre le c
   } finally {
     if (saved === undefined) delete process.env.CONTEXTREE_ROUTER;
     else process.env.CONTEXTREE_ROUTER = saved;
+  }
+});
+
+/** Un arbre de cinq branches — au-dessus du seuil où le routeur court-circuite —
+ *  et un environnement sans clé ni routage forcé, restauré après coup. */
+async function samplingSetup(env = {}) {
+  const dir = await scratch();
+  await writeRoot(dir, 'racine');
+  for (const p of ['a', 'b', 'c', 'd', 'e']) {
+    await writeBranch(dir, {
+      path: p, type: 'context', title: p.toUpperCase(),
+      loadWhen: `quand ${p}`, content: `contenu ${p}`,
+    });
+  }
+  const keys = ['CONTEXTREE_ROUTER', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY',
+    'CONTEXTREE_ROUTER_BLOCKING', 'CONTEXTREE_ROUTER_TIMEOUT_MS'];
+  const saved = Object.fromEntries(keys.map(k => [k, process.env[k]]));
+  for (const k of keys) delete process.env[k];
+  Object.assign(process.env, env);
+  const restore = () => {
+    for (const k of keys) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  };
+  return { dir, projet: path.dirname(dir), restore };
+}
+
+const reply = text => ({ model: 'test', role: 'assistant', content: { type: 'text', text } });
+
+test("mcp : un client qui propose le sampling trie l'arbre avec son propre modèle — sans clé ni CLI", async () => {
+  const { dir, projet, restore } = await samplingSetup();
+  try {
+    const demandes = [];
+    const client = await mcpClient(projet, {
+      sampling: async req => {
+        demandes.push(req.params);
+        return reply('[1,3]');
+      },
+    });
+    const res = await client.callTool({ name: 'get_context', arguments: { query: 'toucher à b et d' } });
+    const txt = textOf(res);
+
+    // Les branches choisies par le modèle du client, et elles seules.
+    assert.match(txt, /contenu b/);
+    assert.match(txt, /contenu d/);
+    assert.ok(!/contenu a/.test(txt) && !/contenu c/.test(txt));
+    // Synchrone, pas différé : le client répond comme une API.
+    assert.match(txt, /routé/);
+
+    // La demande est celle d'un routeur : le prompt de routage, peu de tokens,
+    // un modèle rapide demandé.
+    assert.equal(demandes.length, 1);
+    assert.match(demandes[0].systemPrompt, /routeur de contexte/);
+    assert.ok(demandes[0].maxTokens <= 512);
+    assert.ok(demandes[0].modelPreferences.speedPriority >= 0.8);
+
+    const [tour] = (await readJournal(dir)).slice(-1);
+    assert.equal(tour.reason, 'routed');
+    assert.equal(tour.engine, 'sampling');
+    assert.equal(tour.source, 'mcp');
+  } finally {
+    restore();
+  }
+});
+
+test("mcp : sans capacité sampling, rien ne change — le serveur ne le demande jamais", async () => {
+  // Bloquant et budget minuscule : sur une machine qui a un CLI, on ne lance ni
+  // routage de fond ni attente de 45 s — seul compte ce qui n'est pas demandé.
+  const { dir, projet, restore } = await samplingSetup({
+    CONTEXTREE_ROUTER_BLOCKING: '1', CONTEXTREE_ROUTER_TIMEOUT_MS: '1',
+  });
+  try {
+    const client = await mcpClient(projet);
+    await client.callTool({ name: 'get_context', arguments: { query: 'toucher à b' } });
+    const [tour] = (await readJournal(dir)).slice(-1);
+    assert.notEqual(tour.engine, 'sampling');
+    assert.notEqual(tour.reason, 'routed');
+  } finally {
+    restore();
+  }
+});
+
+test("mcp : un client qui refuse le sampling — repli lisible, et une seule demande par session", async () => {
+  const { dir, projet, restore } = await samplingSetup({
+    CONTEXTREE_ROUTER_BLOCKING: '1', CONTEXTREE_ROUTER_TIMEOUT_MS: '200',
+  });
+  try {
+    let demandes = 0;
+    const client = await mcpClient(projet, {
+      sampling: async () => {
+        demandes++;
+        throw new Error("l'utilisateur a refusé");
+      },
+    });
+
+    const premier = textOf(await client.callTool({ name: 'get_context', arguments: { query: 'b' } }));
+    // Jamais vide : le repli rend un contexte, et il dit pourquoi.
+    assert.match(premier, /contenu/);
+    assert.match(premier, /sampling refusé/);
+    const [tour] = (await readJournal(dir)).slice(-1);
+    assert.equal(tour.reason, 'fallback');
+    assert.equal(tour.engine, 'sampling');
+    assert.match(tour.error, /refusé/);
+
+    // Deuxième appel de la même session : on ne rouvre pas l'invite.
+    await client.callTool({ name: 'get_context', arguments: { query: 'd' } });
+    assert.equal(demandes, 1);
+    const [second] = (await readJournal(dir)).slice(-1);
+    assert.notEqual(second.engine, 'sampling');
+  } finally {
+    restore();
   }
 });
 

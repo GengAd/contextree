@@ -8,12 +8,17 @@ Un appel IA léger reçoit le catalogue (index, type, titre, `load_when`) et le 
 
 Le contrat tient en une phrase : **le routeur ne demande qu'un tableau d'entiers**. Rien ici n'est propre à Claude, et c'est ce qui permet d'ouvrir le moteur à n'importe quelle IA.
 
-**Les moteurs, dans cet ordre** (`pickEngine`) — une clé explicite d'abord, sinon un CLI d'agent déjà authentifié :
+**Les moteurs, dans cet ordre** (`pickEngine`) — une clé explicite d'abord, puis le modèle du client MCP, sinon un CLI d'agent déjà authentifié :
 
 - `anthropic` — une clé est là (`ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`, ou passée en argument). Budget 2,5 s, sortie structurée par JSON Schema.
 - `openai` — sinon `OPENAI_API_KEY` : un simple `fetch` sur `${OPENAI_BASE_URL}/chat/completions`, **pas un SDK** (ce serait la 4e dépendance). Le même dialecte couvre OpenAI, Groq, OpenRouter, Ollama, LM Studio. Corps minimal — modèle et messages : `temperature`, `max_tokens`, `response_format` sont refusés par une partie de ces endpoints, c'est le timeout qui borne.
+- `sampling` — sinon, **dans le serveur MCP seulement**, quand le client annonce la capacité `sampling` : le routeur demande le tri au modèle **du client** par `sampling/createMessage` (14 septembre 2026). C'est ce qui fait router **Copilot dans VS Code sur un poste sans clé ni CLI** — la cible entreprise, sous Windows — qui tombait sur `none`, donc sur l'arbre entier. Le routeur reçoit une fonction `Complete` fabriquée par le serveur et ne sait rien de MCP (`core/` n'en dépend pas). Même prompt (`PLAIN_SYSTEM`), même parseur, `maxTokens: 256`, `includeContext: 'none'`, `modelPreferences` qui demande le rapide et bon marché (`speedPriority: 1`, indices `haiku`/`mini`/`flash` — le client reste libre). **Avant les CLI** parce qu'il répond comme une API et ne lance aucun process : **synchrone**, jamais différé. Budget d'un CLI (45 s sous `tool`), pas d'une API : au premier appel VS Code ouvre une invite de consentement, et c'est un humain qui clique.
+  **Un refus coupe le sampling pour la session** — consentement décliné, aucun modèle autorisé, délai dépassé : repli normal, raison dans la trace et le journal (`engine: 'sampling'`, `error`), et le serveur ne redemande plus jusqu'à sa relance. Redemander à chaque appel rouvrirait la même invite à chaque tâche. Une réponse **illisible** n'est pas un refus et ne coupe rien. Hors du serveur — `route`, `route --eval`, le hook —, il n'y a pas de client : `CONTEXTREE_ROUTER=sampling` y tombe dans le repli, et `route` le dit.
+  Côté VS Code (doc de l'API, 14 septembre 2026, pas encore vu en vrai) : consentement au premier appel, modèles autorisés par serveur via *MCP: List Servers → Configure Model Access*, stockés dans `chat.mcp.serverSampling` (`allowedModels`, `allowedDuringChat`) ; un bug connu (microsoft/vscode#267354) casse le sampling quand aucun modèle n'est choisi.
 - `claude`, `codex`, `gemini` — 5 à 60 s mesurées — sinon le premier binaire trouvé sur la machine : **c'est l'abonnement de l'utilisateur, aucune clé requise**. Même mécanique (`CliSpec`) : prompt par stdin, process réduit au strict nécessaire, environnement débarrassé des `CLAUDE*` hérités (`CLAUDE_EFFORT` faisait réfléchir le routeur) sauf `CLAUDE_CONFIG_DIR`. `claude -p` sans outils, sans MCP, sans `--setting-sources` (donc sans hook) ; `codex exec -` en `--sandbox read-only --skip-git-repo-check` ; `gemini` sans TTY lit stdin.
 - `none` — rien de tout ça : arbre entier injecté, et `error` le dit.
+
+**Le journal dit qui a trié** : chaque tour qui a vraiment appelé un modèle porte `engine` (hook, MCP et fond). Absent d'un `deferred` ou d'un court-circuit — personne n'a été appelé.
 
 **Le hook n'attend jamais un moteur CLI** (5 à 60 s mesurées) : le tour part avec la sélection du tour précédent (`reason: 'deferred'`), et `contextree route-bg` — détaché, sans stdio — route ce prompt derrière pour le tour suivant. Hook à ~150 ms. `CONTEXTREE_ROUTER_BLOCKING=1` rend l'attente.
 
@@ -61,7 +66,7 @@ Mesuré, dix appels d'affilée sur le vrai serveur stdio, arbre de 8 branches : 
 
 `routeInBackground` vit dans `router.ts` et non dans la CLI depuis qu'il a **deux appelants** — le hook et le serveur. Deux copies auraient divergé au premier correctif.
 
-`CONTEXTREE_ROUTER` (`auto`|`anthropic`|`openai`|`claude`|`codex`|`gemini`|`off` ; `sdk` et `cli` restent compris), `CONTEXTREE_ROUTER_MODEL`, `CONTEXTREE_ROUTER_TIMEOUT_MS`, `OPENAI_BASE_URL`, `CONTEXTREE_CLAUDE_BIN`.
+`CONTEXTREE_ROUTER` (`auto`|`anthropic`|`openai`|`sampling`|`claude`|`codex`|`gemini`|`off` ; `sdk` et `cli` restent compris), `CONTEXTREE_ROUTER_MODEL`, `CONTEXTREE_ROUTER_TIMEOUT_MS`, `OPENAI_BASE_URL`, `CONTEXTREE_CLAUDE_BIN`.
 
 ## Mesurer, au lieu de retoucher à l'aveugle
 

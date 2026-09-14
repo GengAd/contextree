@@ -8,6 +8,7 @@ import { findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, m
 import { allBranches, formatTree } from '../core/tree.js';
 import { renderContext, renderTrace, renderBootstrapPrompt, renderBootstrapInvite } from '../core/render.js';
 import { route, pickEngine, isCliEngine, withoutRouting, routeInBackground } from '../core/router.js';
+import type { Complete } from '../core/router.js';
 import { appendTurn, appendAiWrite } from '../core/journal.js';
 import { readSelection, writeSelection } from '../core/session.js';
 import { randomUUID } from 'node:crypto';
@@ -93,6 +94,55 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
   };
 
   const text = (s: string) => ({ content: [{ type: 'text' as const, text: s }] });
+
+  /**
+   * Le routage par le modèle **du client** — `sampling/createMessage`
+   * (14 septembre 2026).
+   *
+   * C'est ce qui fait router Copilot sur un poste qui n'a ni clé API ni CLI
+   * d'agent : sans lui, `get_context` y rendait l'arbre entier à chaque appel.
+   * Le serveur fabrique la complétion et la passe au routeur, qui ne sait rien
+   * de MCP.
+   *
+   * **Une seule tentative par session quand le client refuse** : consentement
+   * décliné, aucun modèle autorisé, délai dépassé. Redemander à chaque appel
+   * reviendrait à rouvrir la même invite de consentement à chaque tâche, ou à
+   * repayer 45 s d'attente pour le même refus. Le process est la session :
+   * relancer le serveur, c'est redemander. Une réponse **illisible** n'est pas
+   * un refus — le client a répondu, le modèle s'est trompé — et ne coupe rien.
+   */
+  let samplingRefused: string | undefined;
+  const sampler = (): Complete | undefined => {
+    if (samplingRefused || !server.server.getClientCapabilities()?.sampling) return undefined;
+    return async (system, message, timeout) => {
+      try {
+        const res = await server.server.createMessage(
+          {
+            systemPrompt: system,
+            messages: [{ role: 'user', content: { type: 'text', text: message } }],
+            // Un tableau d'entiers : quelques tokens suffisent, et un plafond
+            // bas dit au client qu'on ne lui demande pas une rédaction.
+            maxTokens: 256,
+            includeContext: 'none',
+            // Trier un catalogue ne demande pas de réflexion : on demande le
+            // modèle rapide et bon marché, et le client reste libre d'ignorer.
+            modelPreferences: {
+              speedPriority: 1,
+              costPriority: 0.8,
+              intelligencePriority: 0.2,
+              hints: [{ name: 'haiku' }, { name: 'mini' }, { name: 'flash' }],
+            },
+          },
+          { timeout },
+        );
+        if (res.content.type !== 'text') throw new Error(`réponse ${res.content.type}, texte attendu`);
+        return res.content.text;
+      } catch (err) {
+        samplingRefused = err instanceof Error ? err.message : String(err);
+        throw new Error(`sampling refusé ou en échec — plus demandé de la session : ${samplingRefused}`);
+      }
+    };
+  };
 
   /**
    * Le premier geste sur un projet qui a déjà des consignes ailleurs.
@@ -196,16 +246,19 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
        * attente inutile — et `renderTrace` l'annonce comme « différé ».
        *
        * Sous clé API, rien de tout ça : 2500 ms, pas de file d'attente, on route
-       * en synchrone et l'agent a sa réponse juste du premier coup.
+       * en synchrone et l'agent a sa réponse juste du premier coup. Pareil sous
+       * `sampling` : le client répond comme une API, sans process à lancer.
        */
+      const sample = sampler();
       const deferred =
-        isCliEngine(pickEngine()) && process.env['CONTEXTREE_ROUTER_BLOCKING'] !== '1';
+        isCliEngine(pickEngine(undefined, { sampling: Boolean(sample) })) &&
+        process.env['CONTEXTREE_ROUTER_BLOCKING'] !== '1';
       const at = Date.now();
       const previous = await readSelection(dir, sessionId);
 
-      const { selected, reason, error } = deferred
-        ? { selected: withoutRouting(tree, previous), reason: 'deferred' as const, error: undefined }
-        : await route(tree, query, { waiter: 'tool', previousSelection: previous });
+      const { selected, reason, error, engine } = deferred
+        ? { selected: withoutRouting(tree, previous), reason: 'deferred' as const, error: undefined, engine: undefined }
+        : await route(tree, query, { waiter: 'tool', previousSelection: previous, ...(sample ? { sampler: sample } : {}) });
 
       // En différé, c'est le process de fond qui écrira la sélection : l'écraser
       // ici effacerait le routage avant qu'il n'arrive.
@@ -220,6 +273,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         reason,
         source: 'mcp',
         ...(error ? { error } : {}),
+        ...(engine ? { engine } : {}),
       });
       const block = renderContext(tree, selected);
       const trace = renderTrace(tree, selected, reason);

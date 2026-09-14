@@ -68,7 +68,19 @@ const ROUTE_THRESHOLD = 3;
  *  tâche de fond et servira au tour suivant. Un état à part, parce que ce n'est
  *  ni un routage ni une panne. */
 export type RouteReason = 'routed' | 'all' | 'fallback' | 'deferred';
-export type RouteResult = { selected: Set<string>; reason: RouteReason; error?: string };
+/** `engine` : le moteur qui a été essayé, quand il y en a eu un — c'est ce que
+ *  le journal retient pour dire *qui* a trié, pas seulement le résultat. */
+export type RouteResult = { selected: Set<string>; reason: RouteReason; error?: string; engine?: RouterEngine };
+
+/**
+ * Une complétion demandée à quelqu'un d'autre : le client MCP, par
+ * `sampling/createMessage` (14 septembre 2026).
+ *
+ * Le routeur ne sait pas d'où elle vient, et c'est voulu — `core/` ne dépend
+ * pas de MCP. Le serveur la fabrique quand son client annonce la capacité, et
+ * la passe à `route` ; sans elle, le moteur `sampling` n'existe pas.
+ */
+export type Complete = (system: string, message: string, timeoutMs: number) => Promise<string>;
 
 /**
  * Qui fait tourner le routeur.
@@ -81,8 +93,13 @@ export type RouteResult = { selected: Set<string>; reason: RouteReason; error?: 
  *
  * Le routeur ne demande qu'un tableau d'entiers : n'importe quel modèle
  * correct sait le rendre, donc rien ici n'est propre à Claude.
+ *
+ * `sampling` est à part : c'est le modèle **du client MCP** (Copilot dans
+ * VS Code), qui n'existe que dans le process du serveur et seulement quand le
+ * client annonce la capacité. Un poste « VS Code + Copilot » sans clé ni CLI
+ * tombait sur `none`, donc sur l'arbre entier — c'est ce moteur qui l'en sort.
  */
-export type RouterEngine = 'anthropic' | 'openai' | 'claude' | 'codex' | 'gemini' | 'none';
+export type RouterEngine = 'anthropic' | 'openai' | 'sampling' | 'claude' | 'codex' | 'gemini' | 'none';
 
 /** Les moteurs qui passent par un binaire local : lents (démarrage de process
  *  + file d'attente d'un abonnement), donc jamais devant un prompt. */
@@ -202,7 +219,7 @@ const CLIS: CliSpec[] = [
 export async function route(
   tree: ContextTree,
   prompt: string,
-  opts: { previousSelection?: string[]; apiKey?: string; waiter?: RouteWaiter } = {},
+  opts: { previousSelection?: string[]; apiKey?: string; waiter?: RouteWaiter; sampler?: Complete } = {},
 ): Promise<RouteResult> {
   const branches = allBranches(tree);
   if (branches.length === 0) return { selected: new Set(), reason: 'all' };
@@ -212,13 +229,13 @@ export async function route(
 
   const fallback = withoutRouting(tree, opts.previousSelection);
 
-  const engine = pickEngine(opts.apiKey);
+  const engine = pickEngine(opts.apiKey, { sampling: Boolean(opts.sampler) });
   if (engine === 'none') {
     return {
       selected: new Set(branches.map(b => b.path)),
       reason: 'all',
       error:
-        'aucun moteur de routage (ni clé API, ni CLI `claude`/`codex`/`gemini`) — arbre entier injecté',
+        'aucun moteur de routage (ni clé API, ni client MCP qui propose le sampling, ni CLI `claude`/`codex`/`gemini`) — arbre entier injecté',
     };
   }
 
@@ -230,36 +247,47 @@ export async function route(
   )}`;
 
   try {
-    const indices = await ask(engine, message, opts.waiter ?? 'prompt', opts.apiKey);
+    const indices = await ask(engine, message, opts.waiter ?? 'prompt', opts.apiKey, opts.sampler);
     if (!indices) {
-      return { selected: fallback, reason: 'fallback', error: 'routeur : réponse illisible' };
+      return { selected: fallback, reason: 'fallback', error: 'routeur : réponse illisible', engine };
     }
 
     const picked = indices
       .filter(n => Number.isInteger(n) && n >= 0 && n < branches.length)
       .map(n => branches[n]!.path);
 
-    return { selected: withAncestors(tree, picked), reason: 'routed' };
+    return { selected: withAncestors(tree, picked), reason: 'routed', engine };
   } catch (err) {
     return {
       selected: fallback,
       reason: 'fallback',
       error: `routeur : ${err instanceof Error ? err.message : String(err)}`,
+      engine,
     };
   }
 }
 
 /** L'aiguillage vers le moteur retenu — le seul endroit qui sait qu'il y en a
  *  plusieurs. Tous rendent la même chose : un tableau d'indices, ou rien. */
-function ask(
+async function ask(
   engine: RouterEngine,
   message: string,
   waiter: RouteWaiter,
   apiKey?: string,
+  sampler?: Complete,
 ): Promise<number[] | null> {
   const spec = CLIS.find(c => c.engine === engine);
   if (spec) return askCli(spec, message, timeoutFor('cli', waiter));
   if (engine === 'openai') return askOpenAI(message, timeoutFor('api', waiter));
+  if (engine === 'sampling') {
+    // Forcé par `CONTEXTREE_ROUTER=sampling` hors d'un serveur MCP — `route`,
+    // `route --eval`, le hook : il n'y a pas de client à qui demander.
+    if (!sampler) throw new Error('sampling : aucun client MCP ne le propose ici (seul le serveur MCP peut le demander)');
+    // Le budget d'un CLI et non d'une API : au premier appel, VS Code demande
+    // son consentement à l'utilisateur, et c'est un humain qui clique. Le
+    // plafond de 45 s d'un outil reste sous les 60 s du client.
+    return parseIndices(await sampler(PLAIN_SYSTEM, message, timeoutFor('cli', waiter)));
+  }
   return askAnthropic(message, timeoutFor('api', waiter), apiKey);
 }
 
@@ -325,21 +353,31 @@ const LEGACY: Record<string, RouterEngine> = { sdk: 'anthropic', cli: 'claude' }
  * déjà un, installé et authentifié par abonnement, et leur demander une clé API
  * en plus n'a aucun sens.
  *
- * `CONTEXTREE_ROUTER=auto|anthropic|openai|claude|codex|gemini|off` force la
- * main (`sdk` et `cli` restent compris). Forcé, un moteur n'est pas vérifié :
- * s'il manque, l'appel échoue et le fallback fait son travail — mieux vaut ça
- * qu'un repli silencieux sur un moteur que l'utilisateur n'a pas demandé.
+ * `CONTEXTREE_ROUTER=auto|anthropic|openai|sampling|claude|codex|gemini|off`
+ * force la main (`sdk` et `cli` restent compris). Forcé, un moteur n'est pas
+ * vérifié : s'il manque, l'appel échoue et le fallback fait son travail — mieux
+ * vaut ça qu'un repli silencieux sur un moteur que l'utilisateur n'a pas demandé.
+ *
+ * **`sampling` passe avant les CLI** (14 septembre 2026) : il répond comme une
+ * API — quelques secondes, pas de file d'abonnement — et ne lance aucun
+ * process. Il se route donc en synchrone, sans le détour du différé, et
+ * l'agent a sa sélection dès son premier appel. Il reste derrière une clé
+ * explicite : celle-là, l'utilisateur l'a posée exprès. `sampling` n'est
+ * candidat que si l'appelant a un client qui le propose (`opts.sampling`).
  */
-export function pickEngine(apiKey?: string): RouterEngine {
+export function pickEngine(apiKey?: string, opts: { sampling?: boolean } = {}): RouterEngine {
   const forced = process.env['CONTEXTREE_ROUTER'];
   if (forced === 'off') return 'none';
   if (forced && forced !== 'auto') {
     const engine = LEGACY[forced] ?? (forced as RouterEngine);
-    if (engine === 'anthropic' || engine === 'openai' || isCliEngine(engine)) return engine;
+    if (engine === 'anthropic' || engine === 'openai' || engine === 'sampling' || isCliEngine(engine)) {
+      return engine;
+    }
   }
   const key = apiKey || process.env['ANTHROPIC_API_KEY'] || process.env['ANTHROPIC_AUTH_TOKEN'];
   if (key && hasSdk()) return 'anthropic';
   if (process.env['OPENAI_API_KEY']) return 'openai';
+  if (opts.sampling) return 'sampling';
   for (const spec of CLIS) if (findBin(spec.bin)) return spec.engine;
   return 'none';
 }
