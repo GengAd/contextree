@@ -25,12 +25,14 @@ import { ROOT_ELEMENT, type Core } from './treeProvider.js';
  * « garantie en repli » pour les deux premiers, « purement routée » pour les
  * autres. C'était la première chose que lisait qui créait une branche.
  */
-const TYPES: { type: BranchType; label: string; detail: string }[] = [
-  { type: 'identity', label: 'identity', detail: "Qui est l'assistant sur ce projet. Injectée sous « Rules », avant le contexte." },
-  { type: 'rule', label: 'rule', detail: 'Une contrainte à respecter. Injectée sous « Rules », avant le contexte.' },
-  { type: 'context', label: 'context', detail: 'Du contexte de domaine. Injectée sous « Context ».' },
-  { type: 'reference', label: 'reference', detail: 'Une référence à consulter. Injectée sous « Context ».' },
-  { type: 'skill', label: 'skill', detail: 'Un savoir-faire, une procédure. Injectée sous « Context ».' },
+// Une fonction et non une constante : `vscode.l10n.t` se lit au moment où la
+// liste s'affiche, dans la langue de l'éditeur.
+const TYPES = (): { type: BranchType; label: string; detail: string }[] => [
+  { type: 'identity', label: 'identity', detail: vscode.l10n.t("Who the assistant is on this project. Injected under “Rules”, before the context.") },
+  { type: 'rule', label: 'rule', detail: vscode.l10n.t("A constraint to respect. Injected under “Rules”, before the context.") },
+  { type: 'context', label: 'context', detail: vscode.l10n.t("Domain context. Injected under “Context”.") },
+  { type: 'reference', label: 'reference', detail: vscode.l10n.t("A reference to consult. Injected under “Context”.") },
+  { type: 'skill', label: 'skill', detail: vscode.l10n.t("A skill, a procedure. Injected under “Context”.") },
 ];
 
 /** Crée une branche, à la racine ou sous `parentPath`. */
@@ -40,9 +42,9 @@ export async function createBranch(
   parentPath: string | null,
 ): Promise<string | null> {
   const title = await vscode.window.showInputBox({
-    title: parentPath ? `Nouvelle branche sous « ${label(tree, parentPath)} »` : 'Nouvelle branche',
-    prompt: 'Titre de la branche',
-    validateInput: v => (v.trim() ? null : 'Un titre est nécessaire.'),
+    title: parentPath ? vscode.l10n.t('New branch under “{0}”', label(tree, parentPath)) : vscode.l10n.t('New branch'),
+    prompt: vscode.l10n.t('Branch title'),
+    validateInput: v => (v.trim() ? null : vscode.l10n.t('A title is required.')),
   });
   if (!title) return null;
 
@@ -52,17 +54,17 @@ export async function createBranch(
   // Le `load_when` est le seul champ que le modèle ne peut pas deviner : c'est
   // lui qui décide du routage, donc on le demande à la création, pas plus tard.
   const loadWhen = await vscode.window.showInputBox({
-    title: `« ${title.trim()} » — charge-moi quand…`,
-    prompt: 'La condition de chargement, en clair. C\'est elle que lit le routeur.',
-    placeHolder: 'quand la demande touche au format des fichiers',
-    validateInput: v => (v.trim() ? null : 'Sans condition de chargement, la branche ne sera jamais routée.'),
+    title: vscode.l10n.t('“{0}” — load me when…', title.trim()),
+    prompt: vscode.l10n.t('The load condition, in plain words. It is what the router reads.'),
+    placeHolder: vscode.l10n.t('when the request touches the file format'),
+    validateInput: v => (v.trim() ? null : vscode.l10n.t('Without a load condition, the branch will never be routed.')),
   });
   if (!loadWhen) return null;
 
   const slug = core.slugify(title);
   const branchPath = parentPath ? `${parentPath}/${slug}` : slug;
   if (tree.branches.has(branchPath)) {
-    vscode.window.showErrorMessage(`Une branche occupe déjà ${branchPath}.`);
+    vscode.window.showErrorMessage(vscode.l10n.t('A branch already exists at {0}.', branchPath));
     return null;
   }
   await core.writeBranch(tree.dir, {
@@ -84,9 +86,9 @@ export async function createBranch(
  */
 export async function renameBranch(core: Core, tree: ContextTree, branch: Branch): Promise<string | null> {
   const title = await vscode.window.showInputBox({
-    title: `Renommer « ${branch.title} »`,
+    title: vscode.l10n.t('Rename “{0}”', branch.title),
     value: branch.title,
-    validateInput: v => (v.trim() ? null : 'Un titre est nécessaire.'),
+    validateInput: v => (v.trim() ? null : vscode.l10n.t('A title is required.')),
   });
   if (!title || title.trim() === branch.title) return null;
 
@@ -125,7 +127,7 @@ export async function changeType(core: Core, tree: ContextTree, branch: Branch):
 /** Déplace une branche sous un autre parent. Ses enfants suivent. */
 export async function moveBranch(core: Core, tree: ContextTree, branch: Branch): Promise<string | null> {
   const items: (vscode.QuickPickItem & { value: string | null })[] = [
-    { label: '$(symbol-namespace) Racine', description: 'branche de premier niveau', value: null },
+    { label: vscode.l10n.t('$(symbol-namespace) Root'), description: vscode.l10n.t('top-level branch'), value: null },
     // Ni la branche elle-même ni son sous-arbre : elle y perdrait tout.
     ...tree.order
       .filter(p => p !== branch.path && !p.startsWith(`${branch.path}/`))
@@ -134,12 +136,12 @@ export async function moveBranch(core: Core, tree: ContextTree, branch: Branch):
   ].filter(i => i.value !== branch.parentPath);
 
   if (!items.length) {
-    vscode.window.showInformationMessage('Aucun autre parent possible.');
+    vscode.window.showInformationMessage(vscode.l10n.t('No other parent available.'));
     return null;
   }
   const picked = await vscode.window.showQuickPick(items, {
-    title: `Déplacer « ${branch.title} »`,
-    placeHolder: 'Nouveau parent',
+    title: vscode.l10n.t('Move “{0}”', branch.title),
+    placeHolder: vscode.l10n.t('New parent'),
   });
   if (!picked) return null;
 
@@ -157,17 +159,18 @@ export async function moveBranch(core: Core, tree: ContextTree, branch: Branch):
 /** Supprime une branche, ses enfants avec elle. Toujours confirmé. */
 export async function deleteBranch(core: Core, tree: ContextTree, branch: Branch): Promise<string | null> {
   const kids = descendants(tree, branch.path);
+  const confirm = vscode.l10n.t('Delete');
   const answer = await vscode.window.showWarningMessage(
-    `Supprimer « ${branch.title} » ?`,
+    vscode.l10n.t('Delete “{0}”?', branch.title),
     {
       modal: true,
       detail: kids
-        ? `${kids} branche(s) enfant(s) partent avec elle. Le fichier reste dans l'historique git s'il y était.`
-        : "Le fichier reste dans l'historique git s'il y était.",
+        ? vscode.l10n.t('{0} child branch(es) go with it. The file stays in git history if it was there.', kids)
+        : vscode.l10n.t('The file stays in git history if it was there.'),
     },
-    'Supprimer',
+    confirm,
   );
-  if (answer !== 'Supprimer') return null;
+  if (answer !== confirm) return null;
   await core.deleteBranch(tree.dir, branch.path);
   return branch.path;
 }
@@ -210,14 +213,14 @@ export async function saveBranch(
 
   const branch = tree.branches.get(branchPath);
   if (!branch) {
-    vscode.window.showErrorMessage(`Branche inconnue : ${branchPath}`);
+    vscode.window.showErrorMessage(vscode.l10n.t('Unknown branch: {0}', branchPath));
     return false;
   }
 
   const loadWhen = oneLine(patch.loadWhen);
   if (!loadWhen) {
     vscode.window.showErrorMessage(
-      `« ${branch.title} » : sans « charger quand », la branche ne serait plus jamais routée.`,
+      vscode.l10n.t('“{0}”: without “load when”, the branch would never be routed again.', branch.title),
     );
     return false;
   }
@@ -246,18 +249,21 @@ async function tabAgrees(file: string): Promise<boolean> {
   const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === file);
   if (!doc?.isDirty) return true;
 
+  const show = vscode.l10n.t('Show the tab');
+  const force = vscode.l10n.t('Write anyway');
   const answer = await vscode.window.showWarningMessage(
-    `${path.basename(file)} est ouvert avec des modifications non enregistrées.`,
+    vscode.l10n.t('{0} is open with unsaved changes.', path.basename(file)),
     {
       modal: true,
-      detail:
-        "Écrire depuis la toile passerait par-dessus le fichier. L'onglet garderait sa version et signalerait un conflit à son propre enregistrement.",
+      detail: vscode.l10n.t(
+        'Writing from the canvas would overwrite the file. The tab would keep its version and report a conflict when it is saved.',
+      ),
     },
-    "Voir l'onglet",
-    'Écrire quand même',
+    show,
+    force,
   );
-  if (answer === 'Écrire quand même') return true;
-  if (answer === "Voir l'onglet") await vscode.window.showTextDocument(doc);
+  if (answer === force) return true;
+  if (answer === show) await vscode.window.showTextDocument(doc);
   return false;
 }
 
@@ -269,12 +275,15 @@ function oneLine(value: string): string {
 
 async function pickType(current?: BranchType): Promise<BranchType | undefined> {
   const picked = await vscode.window.showQuickPick(
-    TYPES.map(t => ({
+    TYPES().map(t => ({
       label: t.type === current ? `$(check) ${t.label}` : t.label,
       detail: t.detail,
       value: t.type,
     })),
-    { title: 'Type de branche', placeHolder: current ? `Actuellement : ${current}` : 'identity, rule, context, reference, skill' },
+    {
+      title: vscode.l10n.t('Branch type'),
+      placeHolder: current ? vscode.l10n.t('Currently: {0}', current) : 'identity, rule, context, reference, skill',
+    },
   );
   return picked?.value;
 }

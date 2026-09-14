@@ -44,8 +44,8 @@ export async function freshWrites(
 /** « il y a 2 min », pour une pastille qui doit se lire d'un coup d'œil. */
 export function ago(at: number): string {
   const seconds = Math.max(0, Math.round((Date.now() - at) / 1000));
-  if (seconds < 60) return "à l'instant";
-  return `il y a ${Math.round(seconds / 60)} min`;
+  if (seconds < 60) return vscode.l10n.t('just now');
+  return vscode.l10n.t('{0} min ago', Math.round(seconds / 60));
 }
 
 export type Core = typeof import('@gengad/contextree/view', { with: { 'resolution-mode': 'import' } });
@@ -69,7 +69,12 @@ export function loadCore(): Promise<Core> {
   // est ESM et le dit (un `package.json` de deux lignes est copié à côté) ;
   // `module: node16` préserve l'`import()`, seule façon de charger de l'ESM
   // depuis ce fichier compilé en CommonJS.
-  corePromise ??= import(CORE_ENTRY) as Promise<Core>;
+  corePromise ??= (import(CORE_ENTRY) as Promise<Core>).then(core => {
+    // Ce que rend le cœur — consigne copiée, erreurs, commande écrite — suit la
+    // langue de l'éditeur, comme le reste de l'extension.
+    core.setLang(vscode.env.language.toLowerCase().startsWith('fr') ? 'fr' : 'en');
+    return core;
+  });
   return corePromise;
 }
 
@@ -154,15 +159,15 @@ export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
     const { fileForBranch, ROOT_FILE } = await loadCore();
 
     if (element === ROOT_ELEMENT) {
-      const item = new vscode.TreeItem('Racine', vscode.TreeItemCollapsibleState.None);
+      const item = new vscode.TreeItem(vscode.l10n.t('Root'), vscode.TreeItemCollapsibleState.None);
       // La racine s'écrit depuis la conversation (`write_root`) comme une
       // branche : la trace doit s'y voir pareil, sinon la seule écriture que
       // l'IA fait sur un arbre neuf serait la seule qu'on ne verrait pas.
       const write = this.writes.get(ROOT_ELEMENT);
-      item.description = write ? `toujours injectée · IA ${ago(write.at)}` : 'toujours injectée';
+      item.description = write ? vscode.l10n.t('always injected · AI {0}', ago(write.at)) : vscode.l10n.t('always injected');
       item.tooltip = tooltip(
-        'Racine',
-        'toujours injectée, jamais routée',
+        vscode.l10n.t('Root'),
+        vscode.l10n.t('always injected, never routed'),
         tree.rootContent,
         undefined,
         write,
@@ -194,7 +199,7 @@ export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
     // éditer l'arbre du groupe alors qu'on édite sa surcharge personnelle.
     const bits: string[] = [branch.type];
     if (branch.layer === 'local') bits.push('local');
-    if (write) bits.push(`IA ${ago(write.at)}`);
+    if (write) bits.push(vscode.l10n.t('AI {0}', ago(write.at)));
     item.description = bits.join(' · ');
     item.tooltip = tooltip(branch.title, branch.loadWhen, branch.content, branch, write);
     item.resourceUri = vscode.Uri.file(fileForBranch(tree, branch.path));
@@ -211,7 +216,7 @@ export class ContextTreeProvider implements vscode.TreeDataProvider<string> {
 }
 
 function open(uri: vscode.Uri): vscode.Command {
-  return { command: 'vscode.open', title: 'Ouvrir la branche', arguments: [uri] };
+  return { command: 'vscode.open', title: vscode.l10n.t('Open the branch'), arguments: [uri] };
 }
 
 /** Le `load_when` est le vrai contenu de la vue : c'est lui qui décide de ce
@@ -226,14 +231,21 @@ function tooltip(
   const md = new vscode.MarkdownString();
   md.appendMarkdown(
     `**${title}**${branch ? ` · \`${branch.type}\`` : ''}` +
-      `${branch?.layer === 'local' ? ' · _calque local_' : ''}\n\n`,
+      `${branch?.layer === 'local' ? vscode.l10n.t(' · _local layer_') : ''}\n\n`,
   );
   if (write) {
-    const verb = { upsert: 'écrite', delete: 'supprimée', move: 'déplacée' }[write.op];
-    md.appendMarkdown(`✎ _${verb} par l'IA ${ago(write.at)}_`);
+    // Une phrase entière par opération : l'accord du participe change d'une
+    // langue à l'autre, un verbe isolé ne se traduit pas.
+    const when = ago(write.at);
+    const mark = {
+      upsert: vscode.l10n.t('✎ _written by the AI {0}_', when),
+      delete: vscode.l10n.t('✎ _deleted by the AI {0}_', when),
+      move: vscode.l10n.t('✎ _moved by the AI {0}_', when),
+    }[write.op];
+    md.appendMarkdown(mark);
     md.appendMarkdown(write.why ? ` — ${write.why}\n\n` : '\n\n');
   }
-  md.appendMarkdown(`_charge-moi quand_ : ${loadWhen}\n\n`);
+  md.appendMarkdown(`${vscode.l10n.t('_load me when_: {0}', loadWhen)}\n\n`);
   const body = content.trim();
   if (body) {
     md.appendMarkdown('---\n\n');

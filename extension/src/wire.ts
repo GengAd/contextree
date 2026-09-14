@@ -41,8 +41,8 @@ export async function wireAgent(core: Core, projectDir: string): Promise<boolean
       status: s,
     })),
     {
-      title: `contextree — ajouter à une IA · ${command}`,
-      placeHolder: 'Quel agent câbler ? (fusion, jamais d’écrasement)',
+      title: vscode.l10n.t('contextree — add to an AI · {0}', command),
+      placeHolder: vscode.l10n.t('Which agent to wire? (merge, never overwrite)'),
     },
   );
   if (!pick) return false;
@@ -59,20 +59,21 @@ export async function wireAgent(core: Core, projectDir: string): Promise<boolean
   const touched = report.filter(r => r.action !== 'unchanged');
 
   if (!touched.length) {
-    void vscode.window.showInformationMessage(`${pick.label} : déjà câblé, rien à changer.`);
+    void vscode.window.showInformationMessage(vscode.l10n.t('{0}: already wired, nothing to change.', pick.label));
     return false;
   }
 
   const written = touched.map(
     r =>
-      `${shorten(r.file)} (${r.action === 'created' ? 'créé' : r.action === 'repaired' ? 'réparé' : 'mis à jour'}` +
+      `${shorten(r.file)} (${r.action === 'created' ? vscode.l10n.t('created') : r.action === 'repaired' ? vscode.l10n.t('repaired') : vscode.l10n.t('updated')}` +
       `${r.note ? ` — ${r.note}` : ''})`,
   );
+  const openLabel = vscode.l10n.t('Open');
   const choice = await vscode.window.showInformationMessage(
-    `${pick.label} câblé — ${written.join(', ')}. Relance l’agent pour qu’il le voie.`,
-    'Ouvrir',
+    vscode.l10n.t('{0} wired — {1}. Restart the agent so it sees it.', pick.label, written.join(', ')),
+    openLabel,
   );
-  if (choice === 'Ouvrir') {
+  if (choice === openLabel) {
     await vscode.window.showTextDocument(vscode.Uri.file(touched[0]!.file));
   }
   return true;
@@ -81,8 +82,8 @@ export async function wireAgent(core: Core, projectDir: string): Promise<boolean
 /** L'état d'un agent, en un mot — c'est ce qui distingue un bouton honnête
  *  d'un bouton qui tente sa chance. */
 function state(s: AgentStatus): string {
-  if (s.wired) return '✓ câblé';
-  return s.detected ? 'à câbler' : 'non détecté';
+  if (s.wired) return vscode.l10n.t('✓ wired');
+  return s.detected ? vscode.l10n.t('to wire') : vscode.l10n.t('not detected');
 }
 
 /** Les chemins du home en `~` : une commande affichée doit tenir sur une ligne. */
@@ -113,7 +114,7 @@ function shorten(file: string): string {
 export async function initFromView(core: Core, projectDir: string): Promise<boolean> {
   const existing = await core.findTreeDir(projectDir);
   if (existing) {
-    void vscode.window.showInformationMessage(`Un arbre existe déjà : ${shorten(existing)}`);
+    void vscode.window.showInformationMessage(vscode.l10n.t('A tree already exists: {0}', shorten(existing)));
     return false;
   }
 
@@ -125,10 +126,11 @@ export async function initFromView(core: Core, projectDir: string): Promise<bool
     vscode.Uri.file(path.join(dir, core.ROOT_FILE)),
   );
 
+  const addLabel = vscode.l10n.t('Add to an AI');
   const next = await vscode.window.showInformationMessage(
-    `Arbre créé — ${branches} branches de départ. Corrige leur « charger quand », c'est lui qui décide de tout.`,
-    'Ajouter à une IA',
+    vscode.l10n.t('Tree created — {0} starter branches. Fix their “load when”, it decides everything.', branches),
+    addLabel,
   );
-  if (next === 'Ajouter à une IA') await wireAgent(core, projectDir);
+  if (next === addLabel) await wireAgent(core, projectDir);
   return true;
 }

@@ -10,6 +10,21 @@
   const GAP_Y = 56;
   const ROOT_ID = ':root';
 
+  /**
+   * Les textes de la toile, dans la langue de l'éditeur (14 septembre 2026).
+   * L'hôte les calcule avec `vscode.l10n.t` et les pose dans la page, en JSON :
+   * la webview n'a pas accès à l'API. La clé est le texte anglais, comme partout
+   * dans l'extension ; sans traduction, c'est lui qui s'affiche.
+   */
+  const L10N = (() => {
+    try {
+      return JSON.parse(document.getElementById('l10n')?.textContent || '{}');
+    } catch {
+      return {};
+    }
+  })();
+  const tr = (text, ...args) => (L10N[text] ?? text).replace(/\{(\d+)\}/g, (m, i) => (args[i] ?? m));
+
   const COLORS = {
     root: '#94a3b8',
     identity: '#c084fc',
@@ -71,8 +86,8 @@
     const root = {
       id: ROOT_ID,
       type: 'root',
-      title: 'Racine',
-      loadWhen: 'toujours injectée, jamais routée',
+      title: tr('Root'),
+      loadWhen: tr('always injected, never routed'),
       content: tree.rootContent || '',
       write: tree.rootWrite || null,
       children: [],
@@ -113,7 +128,7 @@
       if (node.loadWhen !== d.baseLoadWhen || node.content !== d.baseContent) d.stale = true;
     }
     if (editing && !byId.has(editing)) editing = null;
-    count.textContent = `${tree.branches.length} branche(s)`;
+    count.textContent = tr('{0} branch(es)', tree.branches.length);
   }
 
   // ── Mise en page ──────────────────────────────────────────────────────────
@@ -297,7 +312,7 @@
 
   function ago(at) {
     const seconds = Math.max(0, Math.round((Date.now() - at) / 1000));
-    return seconds < 60 ? "à l'instant" : `il y a ${Math.round(seconds / 60)} min`;
+    return seconds < 60 ? tr('just now') : tr('{0} min ago', Math.round(seconds / 60));
   }
 
   function buttonInto(row, label, title, onClick) {
@@ -318,17 +333,17 @@
     const row = document.createElement('div');
     row.className = 'actions';
 
-    buttonInto(row, 'éditer', 'Écrire le « charger quand » et le corps ici', () => beginEdit(n));
-    buttonInto(row, 'ouvrir le .md', "Éditer dans l'éditeur, à côté", () =>
+    buttonInto(row, tr('edit'), tr('Write the “load when” and the body here'), () => beginEdit(n));
+    buttonInto(row, tr('open the .md'), tr('Edit in the editor, alongside'), () =>
       vscode.postMessage({ type: 'open', path: n.id }),
     );
     const edit = op => vscode.postMessage({ type: 'edit', op, path: n.id });
-    buttonInto(row, '+ enfant', 'Créer une branche sous celle-ci', () => edit('child'));
+    buttonInto(row, tr('+ child'), tr('Create a branch under this one'), () => edit('child'));
     if (n.id !== ROOT_ID) {
-      buttonInto(row, 'renommer', 'Changer le titre', () => edit('rename'));
-      buttonInto(row, 'type', 'Changer le type de branche', () => edit('type'));
-      buttonInto(row, 'déplacer', 'Changer de parent', () => edit('move'));
-      buttonInto(row, 'supprimer', 'Supprimer la branche et ses enfants', () =>
+      buttonInto(row, tr('rename'), tr('Change the title'), () => edit('rename'));
+      buttonInto(row, tr('type'), tr('Change the branch type'), () => edit('type'));
+      buttonInto(row, tr('move'), tr('Change parent'), () => edit('move'));
+      buttonInto(row, tr('delete'), tr('Delete the branch and its children'), () =>
         edit('delete'),
       ).classList.add('danger');
     }
@@ -425,8 +440,8 @@
       }
     };
 
-    if (n.id !== ROOT_ID) field('charger quand…', 'loadWhen', 2, false);
-    field(n.id === ROOT_ID ? 'racine — toujours injectée' : 'corps', 'content', 8, true);
+    if (n.id !== ROOT_ID) field(tr('load when…'), 'loadWhen', 2, false);
+    field(n.id === ROOT_ID ? tr('root — always injected') : tr('body'), 'content', 8, true);
 
     const note = document.createElement('div');
     note.className = 'note';
@@ -434,24 +449,24 @@
       note.classList.add('warn');
       note.textContent = d.error;
     } else if (d.saving) {
-      note.textContent = 'écriture…';
+      note.textContent = tr('writing…');
     } else if (d.stale) {
       note.classList.add('warn');
-      note.textContent = 'le fichier a changé sur le disque — enregistrer écrasera cette version';
+      note.textContent = tr('the file changed on disk — saving will overwrite that version');
     } else if (dirty(d)) {
-      note.textContent = 'modifié, non enregistré — ⌘/Ctrl + Entrée écrit le .md';
+      note.textContent = tr('modified, not saved — ⌘/Ctrl + Enter writes the .md');
     } else {
-      note.textContent = '⌘/Ctrl + Entrée écrit le .md';
+      note.textContent = tr('⌘/Ctrl + Enter writes the .md');
     }
 
     const row = document.createElement('div');
     row.className = 'actions';
-    buttonInto(row, 'Enregistrer', 'Écrire le .md (⌘/Ctrl + Entrée)', () =>
+    buttonInto(row, tr('Save'), tr('Write the .md (⌘/Ctrl + Enter)'), () =>
       saveDraft(n.id),
     ).classList.add('primary');
-    buttonInto(row, 'Abandonner', 'Jeter le brouillon', () => endEdit(n.id, true));
+    buttonInto(row, tr('Discard'), tr('Throw away the draft'), () => endEdit(n.id, true));
     if (d.stale) {
-      buttonInto(row, 'reprendre le disque', 'Repartir de la version du fichier', () => {
+      buttonInto(row, tr('reload from disk'), tr("Start again from the file's version"), () => {
         d.loadWhen = n.loadWhen;
         d.content = n.content;
         d.baseLoadWhen = n.loadWhen;
@@ -460,7 +475,7 @@
         render();
       });
     }
-    buttonInto(row, 'ouvrir le .md', "Continuer dans l'éditeur", () =>
+    buttonInto(row, tr('open the .md'), tr('Continue in the editor'), () =>
       vscode.postMessage({ type: 'open', path: n.id }),
     );
     for (const b of row.children) b.disabled = d.saving;
@@ -503,7 +518,7 @@
     if (lu) {
       const dot = document.createElement('span');
       dot.className = 'dot';
-      dot.title = "lue par l'IA au dernier tour";
+      dot.title = tr('read by the AI on the last turn');
       head.append(dot);
     }
     head.append(badge);
@@ -518,7 +533,7 @@
       when.className = 'when';
       when.textContent = n.loadWhen;
       if (n.id === selected && n.id !== ROOT_ID) {
-        when.title = 'double-clic pour éditer';
+        when.title = tr('double-click to edit');
         when.addEventListener('dblclick', e => {
           e.stopPropagation();
           beginEdit(n, 'loadWhen');
@@ -533,8 +548,8 @@
       el.classList.add('drafted');
       const mark = document.createElement('div');
       mark.className = 'draft-mark';
-      mark.textContent = '✎ brouillon non enregistré';
-      mark.title = 'ouvrir la carte pour le reprendre';
+      mark.textContent = tr('✎ unsaved draft');
+      mark.title = tr('open the card to pick it up again');
       body.append(mark);
     }
 
@@ -545,8 +560,11 @@
       el.classList.add('written');
       const mark = document.createElement('div');
       mark.className = 'written-mark';
-      const verb = { upsert: 'écrite', delete: 'supprimée', move: 'déplacée' }[n.write.op] || 'touchée';
-      mark.textContent = `✎ ${verb} par l'IA ${ago(n.write.at)}`;
+      // Une phrase par opération : l'accord du participe ne se traduit pas mot à mot.
+      const phrase =
+        { upsert: '✎ written by the AI {0}', delete: '✎ deleted by the AI {0}', move: '✎ moved by the AI {0}' }[n.write.op] ||
+        '✎ touched by the AI {0}';
+      mark.textContent = tr(phrase, ago(n.write.at));
       if (n.write.why) mark.title = n.write.why;
       body.append(mark);
       if (n.id === selected && n.write.why) {
@@ -564,8 +582,8 @@
       content.className = 'content';
       const md = n.content.trim();
       if (md) markdown(content, md);
-      else content.textContent = '(vide)';
-      content.title = 'double-clic pour éditer';
+      else content.textContent = tr('(empty)');
+      content.title = tr('double-click to edit');
       content.addEventListener('dblclick', e => {
         e.stopPropagation();
         beginEdit(n, 'content');
@@ -717,22 +735,22 @@
   // dit toujours laquelle des deux on regarde.
 
   const LABELS = {
-    routed: 'routé',
-    all: 'tout chargé',
-    fallback: 'repli',
-    deferred: 'différé — routage en tâche de fond',
-    catalogue: 'catalogue seul — pas de routage disponible',
+    routed: tr('routed'),
+    all: tr('all loaded'),
+    fallback: tr('fallback'),
+    deferred: tr('deferred — routing in the background'),
+    catalogue: tr('catalogue only — no routing available'),
     // Le routage de fond a rendu son verdict : ces branches partiront au tour
     // suivant. Un `routed` comme un autre pour la couleur des cartes, mais on
     // ne laisse pas croire qu'il s'agit du tour qui vient de passer.
-    'routed-bg': 'routé (prochain tour)',
+    'routed-bg': tr('routed (next turn)'),
   };
 
 
   function askProbe() {
     const prompt = promptInput.value.trim();
     if (!prompt) return clearProbe();
-    trace.textContent = 'routage…';
+    trace.textContent = tr('routing…');
     trace.className = '';
     excerpt.textContent = '';
     clearBtn.hidden = false;
@@ -751,13 +769,13 @@
   function paint() {
     const o = overlay();
     if (!o) {
-      trace.textContent = all.length ? 'aucun tour routé pour l\'instant' : '';
+      trace.textContent = all.length ? tr('no routed turn yet') : '';
       trace.className = '';
       excerpt.textContent = '';
       return;
     }
     const total = Math.max(0, all.length - 1);
-    const head = probe ? 'sonde' : `dernier tour · ${o.source}`;
+    const head = probe ? tr('probe') : tr('last turn · {0}', o.source);
     // La clé vient du cœur (`turnLabelKey`) pour un tour du journal ; une sonde
     // n'en a pas, sa raison suffit.
     const key = o.key ?? o.reason;
@@ -771,13 +789,13 @@
     trace.className = warn ? 'warn' : '';
     excerpt.textContent =
       o.reason === 'fallback'
-        ? `repli sur la sélection précédente${o.error ? ` — ${o.error}` : ''}`
+        ? tr('fallback to the previous selection{0}', o.error ? ` — ${o.error}` : '')
         : o.reason === 'catalogue'
-          ? `aucune branche injectée — l'agent a reçu la racine et le catalogue${o.error ? ` — ${o.error}` : ''}`
+          ? tr('no branch injected — the agent received the root and the catalogue{0}', o.error ? ` — ${o.error}` : '')
         : o.reason === 'deferred'
-          ? `sélection du tour précédent — le routage de « ${(o.prompt || '').slice(0, 60)} » tourne derrière`
+          ? tr("previous turn's selection — routing for “{0}” is running behind", (o.prompt || '').slice(0, 60))
           : key === 'routed-bg'
-            ? `choisi pour « ${(o.prompt || '').slice(0, 60)} » — injecté au prochain prompt`
+            ? tr('chosen for “{0}” — injected on the next prompt', (o.prompt || '').slice(0, 60))
             : o.prompt || '';
     excerpt.className = warn ? 'warn' : '';
   }
@@ -801,7 +819,7 @@
   const readChip = document.createElement('span');
   const mark = document.createElement('i');
   mark.className = 'mark';
-  readChip.append(mark, document.createTextNode('lu au dernier tour'));
+  readChip.append(mark, document.createTextNode(tr('read on the last turn')));
   legend.append(readChip);
 
   window.addEventListener('message', e => {
@@ -816,7 +834,7 @@
         drafts.delete(msg.path);
         if (editing === msg.path) editing = null;
       } else {
-        d.error = msg.error || "rien n'a été écrit — le brouillon est gardé";
+        d.error = msg.error || tr('nothing was written — the draft is kept');
       }
       render();
       return;
@@ -827,7 +845,7 @@
             selected: new Set(msg.selected),
             reason: msg.reason,
             prompt: promptInput.value.trim(),
-            source: 'sonde',
+            source: tr('probe'),
             ms: msg.ms,
             error: msg.error,
           }
@@ -865,7 +883,7 @@
       roots = [];
       layerNodes.textContent = '';
       layerEdges.textContent = '';
-      count.textContent = 'aucun arbre';
+      count.textContent = tr('no tree');
       paint();
       return;
     }

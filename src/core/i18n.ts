@@ -10,8 +10,10 @@ import { execFileSync } from 'node:child_process';
  *
  * Ordre de résolution :
  *
- * 1. `CONTEXTREE_LANG` — posé à la main, par `--lang` sur la ligne de commande,
- *    ou par l'extension depuis la langue de VS Code ;
+ * 0. `setLang` — l'extension y passe la langue de VS Code, pour sa copie du
+ *    cœur seulement ;
+ * 1. `CONTEXTREE_LANG` — posé à la main, ou par `--lang` sur la ligne de
+ *    commande ;
  * 2. `LC_ALL`, `LC_MESSAGES`, `LANG` — sauf `C` et `POSIX`, qui ne disent rien ;
  * 3. sous macOS, la langue des préférences (`AppleLanguages`) ;
  * 4. la locale d'`Intl` — c'est elle qui marche sous Windows, où `LANG`
@@ -35,10 +37,25 @@ export type Lang = 'fr' | 'en';
 export const LANGS: readonly Lang[] = ['fr', 'en'];
 
 let cached: Lang | undefined;
+let override: Lang | undefined;
+
+/**
+ * Fixe la langue **de cette copie du cœur**, sans toucher à l'environnement.
+ *
+ * C'est le chemin de l'extension : sa langue est celle de VS Code
+ * (`vscode.env.language`). Poser `CONTEXTREE_LANG` dans le process de l'hôte
+ * d'extensions l'aurait fait hériter à tout ce que les autres extensions y
+ * lancent — jusqu'au hook de Claude Code, qui aurait changé de langue avec
+ * l'interface de l'éditeur.
+ */
+export function setLang(lang: Lang | undefined): void {
+  override = lang;
+}
 
 /** La langue de ce process. Relue si `CONTEXTREE_LANG` change — c'est ce qui
- *  permet à la CLI et à l'extension de la poser après le chargement du module. */
+ *  permet à la CLI de la poser après le chargement du module. */
 export function currentLang(): Lang {
+  if (override) return override;
   const forced = asLang(process.env['CONTEXTREE_LANG']);
   if (forced) return forced;
   cached ??= resolveLang();

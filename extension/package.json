@@ -1,7 +1,7 @@
 {
   "name": "contextree-vscode",
   "displayName": "contextree",
-  "description": "Voir son arbre de contexte et en éditer la structure, dans l'éditeur.",
+  "description": "%description%",
   "version": "0.1.0",
   "private": true,
   "publisher": "gengad",
@@ -13,6 +13,7 @@
     "Other"
   ],
   "main": "./out/extension.js",
+  "l10n": "./l10n",
   "activationEvents": [
     "onView:contextree.tree",
     "workspaceContains:**/.contextree/**"
@@ -29,50 +30,50 @@
     "commands": [
       {
         "command": "contextree.init",
-        "title": "contextree : créer l'arbre de contexte",
+        "title": "%command.init%",
         "icon": "$(new-folder)"
       },
       {
         "command": "contextree.wire",
-        "title": "contextree : ajouter à une IA",
+        "title": "%command.wire%",
         "icon": "$(plug)"
       },
       {
         "command": "contextree.copyBootstrap",
-        "title": "Copier la consigne pour l'IA",
+        "title": "%command.copyBootstrap%",
         "category": "contextree"
       },
       {
         "command": "contextree.openCanvas",
-        "title": "contextree : voir l'arbre (toile)",
+        "title": "%command.openCanvas%",
         "icon": "$(type-hierarchy)"
       },
       {
         "command": "contextree.newBranch",
-        "title": "contextree : nouvelle branche",
+        "title": "%command.newBranch%",
         "icon": "$(add)"
       },
       {
         "command": "contextree.newChild",
-        "title": "Nouvelle branche enfant",
+        "title": "%command.newChild%",
         "icon": "$(add)"
       },
       {
         "command": "contextree.rename",
-        "title": "Renommer",
+        "title": "%command.rename%",
         "icon": "$(edit)"
       },
       {
         "command": "contextree.changeType",
-        "title": "Changer le type"
+        "title": "%command.changeType%"
       },
       {
         "command": "contextree.move",
-        "title": "Déplacer sous un autre parent"
+        "title": "%command.move%"
       },
       {
         "command": "contextree.delete",
-        "title": "Supprimer",
+        "title": "%command.delete%",
         "icon": "$(trash)"
       }
     ],
@@ -157,12 +158,12 @@
     "viewsWelcome": [
       {
         "view": "contextree.tree",
-        "contents": "Aucun arbre de contexte dans ce dossier — mais ce projet a déjà des consignes pour une IA.\n\nLe plus court est de les lui faire lire : elle écrira l'arbre, tu relis les conditions de chargement.\n[Copier la consigne pour l'IA](command:contextree.copyBootstrap)\nColle-la dans ton assistant. Il écrira 6 à 12 branches et ne touchera à aucun fichier.\n[Créer un arbre vide](command:contextree.init)\n[Ajouter contextree à une IA](command:contextree.wire)",
+        "contents": "%welcome.withInstructions%",
         "when": "!contextree.hasTree && contextree.hasInstructions"
       },
       {
         "view": "contextree.tree",
-        "contents": "Aucun arbre de contexte dans ce dossier.\n\nUn arbre, ce sont de petites branches typées — identité, règles, contexte, références — dont seule la fraction utile est injectée à chaque appel.\n[Créer l'arbre](command:contextree.init)\nQuatre branches de départ, à corriger ensuite comme des fichiers markdown.\n[Copier la consigne pour l'IA](command:contextree.copyBootstrap)\n[Ajouter contextree à une IA](command:contextree.wire)",
+        "contents": "%welcome.empty%",
         "when": "!contextree.hasTree && !contextree.hasInstructions"
       }
     ]

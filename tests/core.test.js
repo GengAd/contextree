@@ -1251,6 +1251,44 @@ test("i18n : en anglais, ce que lit le modèle est en anglais — hook, get_cont
   assert.match(renderBootstrapPrompt([]), /dans la langue de l'utilisateur/);
 });
 
+test("i18n : l'extension a une traduction française pour chaque texte qu'elle affiche", async () => {
+  const ext = path.resolve('extension');
+  const bundle = JSON.parse(await fs.readFile(path.join(ext, 'l10n', 'bundle.l10n.fr.json'), 'utf8'));
+  const unquote = lit => JSON.parse(lit[0] === "'" ? `"${lit.slice(1, -1).replace(/\\'/g, "'").replace(/"/g, '\\"')}"` : lit);
+  const keysIn = (src, fn) =>
+    [...src.matchAll(new RegExp(`${fn}\\(\\s*('(?:[^'\\\\]|\\\\.)*'|"(?:[^"\\\\]|\\\\.)*")`, 'g'))].map(m => unquote(m[1]));
+
+  const missing = [];
+  for (const file of await fs.readdir(path.join(ext, 'src'))) {
+    const src = await fs.readFile(path.join(ext, 'src', file), 'utf8');
+    for (const key of keysIn(src, 'vscode\\.l10n\\.t')) if (!(key in bundle)) missing.push(`${file}: ${key}`);
+  }
+  // La toile : chaque `tr('…')` doit être dans CANVAS_STRINGS, sinon l'hôte ne
+  // le traduit jamais et il s'affiche en anglais sous un VS Code français.
+  const canvas = await fs.readFile(path.join(ext, 'media', 'canvas.js'), 'utf8');
+  const panel = await fs.readFile(path.join(ext, 'src', 'canvasPanel.ts'), 'utf8');
+  const listed = new Set([...panel.slice(panel.indexOf('const CANVAS_STRINGS')).matchAll(/^\s+("(?:[^"\\]|\\.)*"),$/gm)].map(m => JSON.parse(m[1])));
+  for (const key of keysIn(canvas, 'tr')) {
+    if (!listed.has(key)) missing.push(`canvas.js (CANVAS_STRINGS): ${key}`);
+    if (!(key in bundle)) missing.push(`canvas.js: ${key}`);
+  }
+  // Les phrases d'écriture de l'IA passent par une variable : vérifiées à part.
+  for (const key of ['✎ written by the AI {0}', '✎ deleted by the AI {0}', '✎ moved by the AI {0}', '✎ touched by the AI {0}']) {
+    if (!listed.has(key) || !(key in bundle)) missing.push(`canvas.js: ${key}`);
+  }
+  assert.deepEqual(missing, []);
+
+  // Le manifeste : chaque %clé% existe en anglais et en français.
+  const pkg = await fs.readFile(path.join(ext, 'package.json'), 'utf8');
+  const nlsEn = JSON.parse(await fs.readFile(path.join(ext, 'package.nls.json'), 'utf8'));
+  const nlsFr = JSON.parse(await fs.readFile(path.join(ext, 'package.nls.fr.json'), 'utf8'));
+  for (const [, key] of pkg.matchAll(/"%([^%"]+)%"/g)) {
+    assert.ok(key in nlsEn && key in nlsFr, key);
+  }
+  assert.deepEqual(Object.keys(nlsEn).sort(), Object.keys(nlsFr).sort());
+  assert.match(pkg, /"l10n": "\.\/l10n"/);
+});
+
 test("i18n : init pose un arbre de départ dans la langue de l'utilisateur", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-init-state-'));
   for (const [lang, root, first] of [['en', /^# Context —/, 'identity.md'], ['fr', /^# Contexte —/, 'identite.md']]) {

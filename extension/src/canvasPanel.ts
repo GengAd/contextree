@@ -72,7 +72,7 @@ export class CanvasPanel {
     }
     const panel = vscode.window.createWebviewPanel(
       'contextree.canvas',
-      'contextree — arbre de contexte',
+      vscode.l10n.t('contextree — context tree'),
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
@@ -171,7 +171,7 @@ export class CanvasPanel {
     try {
       const { findTreeDir, loadTree, route } = await this.core();
       const dir = await findTreeDir(this.searchFrom);
-      if (!dir) return void post({ selected: null, error: 'aucun arbre' });
+      if (!dir) return void post({ selected: null, error: vscode.l10n.t('no tree') });
       const tree = await loadTree(dir);
       const { selected, reason, error } = await route(tree, prompt);
       post({ selected: [...selected], reason, error, ms: Date.now() - started });
@@ -214,8 +214,14 @@ export class CanvasPanel {
     const csp =
       `default-src 'none'; img-src ${this.panel.webview.cspSource}; ` +
       `style-src ${this.panel.webview.cspSource}; script-src 'nonce-${nonce}';`;
+    // Les textes de la toile, traduits ici : la webview n'a pas `vscode.l10n`.
+    // `<` échappé, pour qu'un texte ne puisse pas fermer la balise.
+    const strings = JSON.stringify(
+      Object.fromEntries(CANVAS_STRINGS.map(s => [s, vscode.l10n.t(s)])),
+    ).replace(/</g, '\\u003c');
+    const lang = vscode.env.language.toLowerCase().startsWith('fr') ? 'fr' : 'en';
     return `<!DOCTYPE html>
-<html lang="fr">
+<html lang="${lang}">
 <head>
 <meta charset="utf-8" />
 <meta http-equiv="Content-Security-Policy" content="${csp}" />
@@ -230,12 +236,12 @@ export class CanvasPanel {
 </div>
 <div id="hud">
   <div class="row">
-    <button id="fit" title="Recadrer (double-clic sur le fond)">Recadrer</button>
+    <button id="fit" title="${vscode.l10n.t('Fit (double-click on the background)')}">${vscode.l10n.t('Fit')}</button>
     <span id="count"></span>
     <span class="sep"></span>
-    <input id="prompt" type="text" placeholder="Que chargerait le routeur pour…" />
-    <button id="go" title="Router ce prompt (Entrée)">Router</button>
-    <button id="clear" title="Revenir au dernier tour (Échap)" hidden>✕</button>
+    <input id="prompt" type="text" placeholder="${vscode.l10n.t('What would the router load for…')}" />
+    <button id="go" title="${vscode.l10n.t('Route this prompt (Enter)')}">${vscode.l10n.t('Route')}</button>
+    <button id="clear" title="${vscode.l10n.t('Back to the last turn (Esc)')}" hidden>✕</button>
   </div>
   <div class="row">
     <span id="trace"></span>
@@ -243,11 +249,76 @@ export class CanvasPanel {
   </div>
 </div>
 <div id="legend"></div>
+<script id="l10n" type="application/json">${strings}</script>
 <script nonce="${nonce}" src="${asset('canvas.js')}"></script>
 </body>
 </html>`;
   }
 }
+
+/** Les textes que `media/canvas.js` passe à `tr()` — sa clé est le texte
+ *  anglais. Un texte ajouté là-bas sans passer ici s'affiche en anglais. */
+const CANVAS_STRINGS: string[] = [
+  "Root",
+  "always injected, never routed",
+  "{0} branch(es)",
+  "just now",
+  "{0} min ago",
+  "edit",
+  "Write the “load when” and the body here",
+  "open the .md",
+  "Edit in the editor, alongside",
+  "+ child",
+  "Create a branch under this one",
+  "rename",
+  "Change the title",
+  "type",
+  "Change the branch type",
+  "move",
+  "Change parent",
+  "delete",
+  "Delete the branch and its children",
+  "load when…",
+  "root — always injected",
+  "body",
+  "writing…",
+  "the file changed on disk — saving will overwrite that version",
+  "modified, not saved — ⌘/Ctrl + Enter writes the .md",
+  "⌘/Ctrl + Enter writes the .md",
+  "Save",
+  "Write the .md (⌘/Ctrl + Enter)",
+  "Discard",
+  "Throw away the draft",
+  "reload from disk",
+  "Start again from the file's version",
+  "Continue in the editor",
+  "read by the AI on the last turn",
+  "double-click to edit",
+  "✎ unsaved draft",
+  "open the card to pick it up again",
+  "✎ written by the AI {0}",
+  "✎ deleted by the AI {0}",
+  "✎ moved by the AI {0}",
+  "✎ touched by the AI {0}",
+  "(empty)",
+  "routed",
+  "all loaded",
+  "fallback",
+  "deferred — routing in the background",
+  "catalogue only — no routing available",
+  "routed (next turn)",
+  "routing…",
+  "no routed turn yet",
+  "probe",
+  "last turn · {0}",
+  "fallback to the previous selection{0}",
+  "no branch injected — the agent received the root and the catalogue{0}",
+  "previous turn's selection — routing for “{0}” is running behind",
+  "chosen for “{0}” — injected on the next prompt",
+  "read on the last turn",
+  "nothing was written — the draft is kept",
+  "no tree",
+];
 
 function flatten(tree: ContextTree, writes: Map<string, AiWrite>): CanvasTree {
   // La racine est écrite par `write_root` comme une branche l'est par

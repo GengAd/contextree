@@ -127,7 +127,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       const branch = target ? tree.branches.get(target) : undefined;
       if (!branch) {
-        vscode.window.showErrorMessage(`Branche inconnue : ${target ?? '(aucune)'}`);
+        vscode.window.showErrorMessage(vscode.l10n.t('Unknown branch: {0}', target ?? vscode.l10n.t('(none)')));
         return;
       }
       if (op === 'rename') await edit.renameBranch(core, tree, branch);
@@ -137,7 +137,7 @@ export function activate(context: vscode.ExtensionContext): void {
       reloadViews();
     } catch (err) {
       vscode.window.showErrorMessage(
-        `contextree : ${err instanceof Error ? err.message : String(err)}`,
+        vscode.l10n.t('contextree: {0}', err instanceof Error ? err.message : String(err)),
       );
     }
   };
@@ -175,13 +175,13 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('contextree.init', async () => {
       try {
         if (!folder) {
-          vscode.window.showErrorMessage('contextree : ouvre un dossier pour y créer un arbre.');
+          vscode.window.showErrorMessage(vscode.l10n.t('contextree: open a folder to create a tree in it.'));
           return;
         }
         if (await initFromView(await loadCore(), folder.uri.fsPath)) reloadViews();
       } catch (err) {
         vscode.window.showErrorMessage(
-          `contextree : ${err instanceof Error ? err.message : String(err)}`,
+          vscode.l10n.t('contextree: {0}', err instanceof Error ? err.message : String(err)),
         );
       }
     }),
@@ -190,7 +190,7 @@ export function activate(context: vscode.ExtensionContext): void {
         if (await wireAgent(await loadCore(), searchFrom)) reloadViews();
       } catch (err) {
         vscode.window.showErrorMessage(
-          `contextree : ${err instanceof Error ? err.message : String(err)}`,
+          vscode.l10n.t('contextree: {0}', err instanceof Error ? err.message : String(err)),
         );
       }
     }),
@@ -203,12 +203,12 @@ export function activate(context: vscode.ExtensionContext): void {
         // l'utilisateur doit pouvoir vérifier qu'elle vise les bons.
         void vscode.window.showInformationMessage(
           found.length
-            ? `Consigne copiée — elle fera lire : ${found.join(', ')}. Colle-la dans ton IA.`
-            : 'Consigne copiée — aucun fichier de consignes trouvé, elle fera lire le dépôt.',
+            ? vscode.l10n.t('Instructions copied — they will have your AI read: {0}. Paste them into your AI.', found.join(', '))
+            : vscode.l10n.t('Instructions copied — no instruction file found, they will have the repo read.'),
         );
       } catch (err) {
         vscode.window.showErrorMessage(
-          `contextree : ${err instanceof Error ? err.message : String(err)}`,
+          vscode.l10n.t('contextree: {0}', err instanceof Error ? err.message : String(err)),
         );
       }
     }),

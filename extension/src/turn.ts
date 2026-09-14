@@ -14,19 +14,21 @@ export type LastTurn = {
   key: string;
 };
 
-export const LABELS: Record<string, string> = {
-  routed: 'routé',
-  all: 'tout chargé',
-  fallback: 'repli',
-  deferred: 'différé',
+/** Une fonction : les libellés se lisent dans la langue de l'éditeur au moment
+ *  où ils s'affichent. */
+export const LABELS = (): Record<string, string> => ({
+  routed: vscode.l10n.t('routed'),
+  all: vscode.l10n.t('all loaded'),
+  fallback: vscode.l10n.t('fallback'),
+  deferred: vscode.l10n.t('deferred'),
   // Rien de routable : l'agent MCP a reçu la racine et le catalogue, et trie
   // lui-même. Aucune branche injectée — ce n'est pas un « tout chargé ».
-  catalogue: 'catalogue seul',
+  catalogue: vscode.l10n.t('catalogue only'),
   // Un tour venu du routage de fond : ces branches n'ont pas servi à ce
   // prompt-là, elles partiront au suivant. Le dire, sinon on lit « routé » et
   // on croit que le tour affiché est celui qui vient de passer.
-  'routed-bg': 'routé (prochain tour)',
-};
+  'routed-bg': vscode.l10n.t('routed (next turn)'),
+});
 
 /** La teinte d'une branche injectée : celle des correspondances de recherche,
  *  jamais celle d'une erreur. */
@@ -80,16 +82,16 @@ export class LoadedDecorations implements vscode.FileDecorationProvider {
   /** Trois états, trois phrases : lue, choisie pour la suite, ou là faute de
    *  mieux. Les confondre, c'est laisser croire qu'un repli est un routage. */
   private tooltip(): string {
-    if (this.reason === 'routed') return "contextree : lue par l'IA au dernier tour";
-    if (this.reason === 'routed-bg') return 'contextree : choisie par le routeur pour le prochain tour';
-    return `contextree : injectée au dernier tour (${LABELS[this.reason ?? ''] ?? this.reason})`;
+    if (this.reason === 'routed') return vscode.l10n.t('contextree: read by the AI on the last turn');
+    if (this.reason === 'routed-bg') return vscode.l10n.t('contextree: chosen by the router for the next turn');
+    return vscode.l10n.t('contextree: injected on the last turn ({0})', LABELS()[this.reason ?? ''] ?? String(this.reason));
   }
 }
 
 /** Le titre de la vue dit l'état du routage — ce que disait le badge d'en bas. */
 export function turnDescription(last: LastTurn | null, total: number): string {
-  if (!last) return `${total} branche(s)`;
-  const label = LABELS[last.key] ?? last.key;
+  if (!last) return vscode.l10n.t('{0} branch(es)', total);
+  const label = LABELS()[last.key] ?? last.key;
   return `${last.turn.selected.length}/${total} · ${label}`;
 }
 
