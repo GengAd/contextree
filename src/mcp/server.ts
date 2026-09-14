@@ -1,10 +1,12 @@
 import { promises as fs } from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-import { findTreeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch, detectInstructionFiles, ensureLocalIgnored, DIR_NAME, ROOT_FILE } from '../core/store.js';
+import { findTreeDir, findStrayHomeTree, isHomeDir, loadTree, slugify, writeBranch, writeRoot, deleteBranch, moveBranch, detectInstructionFiles, ensureLocalIgnored, DIR_NAME, ROOT_FILE } from '../core/store.js';
+import { coreText } from '../core/messages.js';
 import { allBranches, formatTree } from '../core/tree.js';
 import { renderContext, renderTrace, renderBootstrapPrompt, renderBootstrapInvite, renderCatalogueOnly } from '../core/render.js';
 import { route, pickEngine, isCliEngine, withoutRouting, routeInBackground, ROUTE_THRESHOLD } from '../core/router.js';
@@ -55,11 +57,15 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
    *  le serveur à chaque session, donc l'invitation arrive une fois par session
    *  et pas à chaque tour. C'est le seul endroit où un projet sans arbre peut
    *  encore parler à une IA qui n'a ni hook ni terminal. */
+  // Un arbre égaré dans `~/.contextree` se signale dans les `instructions` :
+  // lues une fois par session, c'est le « une fois » qu'on veut.
+  const stray = await findStrayHomeTree();
+  const strayNote = stray.length ? `\n\n${coreText().strayTree(path.join(os.homedir(), DIR_NAME), stray.length)}` : '';
   const server = new McpServer(
     { name: 'contextree', version: '0.1.0' },
     // Le `cwd` seul ici : les roots du client ne se demandent qu'une fois
     // connecté, et le serveur n'existe pas encore.
-    { instructions: (await findTreeDir(cwd)) ? t.instructions : renderBootstrapInvite(await detectInstructionFiles(cwd)) },
+    { instructions: ((await findTreeDir(cwd)) ? t.instructions : renderBootstrapInvite(await detectInstructionFiles(cwd))) + strayNote },
   );
 
   /**
@@ -419,6 +425,9 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       // mauvaise.
       const base = await projectDir();
       const existing = await findTreeDir(base);
+      // Un serveur lancé dans le dossier utilisateur — sans `cwd` ni roots —
+      // aurait posé là un arbre lu par tous les projets qu'il contient.
+      if (!existing && isHomeDir(base)) throw new Error(coreText().homeRefused(base));
       const dir = existing ?? path.join(base, DIR_NAME);
       // L'arbre naît ici aussi, donc le garde-fou du calque personnel aussi.
       if (!existing) await ensureLocalIgnored(base);

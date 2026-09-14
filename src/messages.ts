@@ -31,6 +31,7 @@ const fr = {
   contextree import <source>         greffe un pack (jeton, JSON, ou fichier) [--prefix p]
   contextree mcp                     lance le serveur MCP (stdio)
   contextree hook                    point d'entrée du hook UserPromptSubmit
+  contextree rescue --to <projet>    rend à son projet un arbre écrit dans ~/.contextree par erreur
 
 Contexte partagé (phase 2) :
   contextree remote <url> <clé>      pointe le backend Supabase
@@ -117,6 +118,13 @@ Variables : CONTEXTREE_ROUTER (auto | anthropic | openai | claude | codex | gemi
   clipboardUnavailable: 'Presse-papier indisponible — sortie sur stdout.',
   exported: (n: number, out: string) => `${n} branche(s) → ${out}`,
   usageImport: 'Usage : contextree import <jeton|fichier.json> [--prefix equipe]',
+  usageRescue: 'Usage : contextree rescue --to <dossier du projet>',
+  rescueNothing: (dir: string) => `Rien à rendre : aucun arbre dans ${dir}.`,
+  rescueMoved: 'déplacé',
+  rescueSkipped: 'laissé',
+  rescueDone: (n: number, dir: string, skipped: number) =>
+    `${n} fichier(s) déplacé(s) vers ${dir}.` +
+    (skipped ? ` ${skipped} laissé(s) en place : un fichier du même nom existe déjà côté projet, rien n'a été écrasé.` : ''),
   imported: (n: number, dir: string) => `${n} branche(s) importée(s) dans ${dir}/`,
 
   usageRemote: 'Usage : contextree remote <url> <clé anon>',
@@ -178,6 +186,7 @@ const en: Dictionary<typeof fr> = {
   contextree import <source>         grafts a pack (token, JSON, or file) [--prefix p]
   contextree mcp                     starts the MCP server (stdio)
   contextree hook                    entry point for the UserPromptSubmit hook
+  contextree rescue --to <project>   gives back to its project a tree written to ~/.contextree by mistake
 
 Shared context (phase 2):
   contextree remote <url> <key>      points to the Supabase backend
@@ -262,6 +271,13 @@ Variables: CONTEXTREE_ROUTER (auto | anthropic | openai | claude | codex | gemin
   clipboardUnavailable: 'Clipboard unavailable — writing to stdout.',
   exported: (n, out) => `${n} branch(es) → ${out}`,
   usageImport: 'Usage: contextree import <token|file.json> [--prefix team]',
+  usageRescue: 'Usage: contextree rescue --to <project folder>',
+  rescueNothing: dir => `Nothing to give back: no tree in ${dir}.`,
+  rescueMoved: 'moved',
+  rescueSkipped: 'left',
+  rescueDone: (n, dir, skipped) =>
+    `${n} file(s) moved to ${dir}.` +
+    (skipped ? ` ${skipped} left in place: a file with the same name already exists in the project, nothing was overwritten.` : ''),
   imported: (n, dir) => `${n} branch(es) imported into ${dir}/`,
 
   usageRemote: 'Usage: contextree remote <url> <anon key>',

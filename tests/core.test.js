@@ -17,14 +17,14 @@ import { resolveLang, fromLocale } from '../dist/core/i18n.js';
 import { CORE_MESSAGES } from '../dist/core/messages.js';
 import { CLI_MESSAGES } from '../dist/messages.js';
 import { SERVER_MESSAGES } from '../dist/mcp/messages.js';
-import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree, detectInstructionFiles, ensureLocalIgnored } from '../dist/core/store.js';
+import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, findStrayHomeTree, rescueStrayTree, isHomeDir, localDirFor, fileForBranch, compareBranchPaths, initTree, detectInstructionFiles, ensureLocalIgnored } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { route, pickEngine, isCliEngine, parseIndices, timeoutFor, findBinIn, cmdLine } from '../dist/core/router.js';
 import { evaluateRouting, parseEvalCases } from '../dist/core/eval.js';
 import { renderContext, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite, renderCatalogueOnly } from '../dist/core/render.js';
 import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand, AGENTS, NoCliError } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
-import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites, turnLabelKey } from '../dist/core/journal.js';
+import { stateDir, appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites, turnLabelKey } from '../dist/core/journal.js';
 import { readSelection, writeSelection, claimBootstrapInvite } from '../dist/core/session.js';
 import {
   RemoteError, clearSession, createGroup, currentSession, me, myGroups,
@@ -2401,4 +2401,127 @@ test('sync : un conflit se tranche, et ne revient pas', () => {
   assert.deepEqual(theirs.conflicts, []);
   assert.deepEqual(theirs.incoming.map(d => d.path), ['a']);
   assert.equal(theirs.merged.get('a').content, 'du groupe');
+});
+
+
+// ── le dossier utilisateur n'est l'arbre de personne ─────────────────────────
+
+/** Un HOME simulé, pour les deux plateformes : `os.homedir()` lit `HOME` sous
+ *  Unix et `USERPROFILE` sous Windows. */
+async function withHome(fn) {
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-home-'));
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    return await fn(home);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+test("home : l'ancien dossier d'état ~/.contextree n'est plus pris pour l'arbre d'un projet sans arbre", async () => {
+  await withHome(async home => {
+    assert.equal(isHomeDir(home), true);
+    await fs.mkdir(path.join(home, '.contextree', 'journal'), { recursive: true });
+    const projet = path.join(home, 'code', 'pega');
+    await fs.mkdir(projet, { recursive: true });
+
+    assert.equal(await findTreeDir(projet), null);
+    assert.equal(await findTreeDir(home), null);
+    // Un vrai arbre de projet, lui, se trouve toujours depuis un sous-dossier.
+    await writeRoot(path.join(home, 'code', '.contextree'), 'racine');
+    assert.equal(await findTreeDir(projet), path.join(home, 'code', '.contextree'));
+  });
+});
+
+test("home : le serveur MCP d'un projet sans arbre invite, et write_root écrit dans le projet, pas dans HOME", async () => {
+  await withHome(async home => {
+    await fs.mkdir(path.join(home, '.contextree', 'selection'), { recursive: true });
+    const projet = path.join(home, 'pega');
+    await fs.mkdir(projet);
+    const client = await mcpClient(projet);
+
+    const ctx = await client.callTool({ name: 'get_context', arguments: { query: 'bonjour' } });
+    assert.equal(textOf(ctx), renderBootstrapInvite(await detectInstructionFiles(projet)));
+
+    const res = await client.callTool({ name: 'write_root', arguments: { content: '# Pega', why: 'poser la racine' } });
+    assert.equal(res.isError, undefined);
+    assert.equal(await fs.readFile(path.join(projet, '.contextree', 'root.md'), 'utf8'), '# Pega\n');
+    assert.deepEqual(await fs.readdir(path.join(home, '.contextree')), ['selection']);
+  });
+});
+
+test("home : write_root et init refusent le dossier utilisateur, en français comme en anglais", async () => {
+  await withHome(async home => {
+    const client = await mcpClient(home);
+    const res = await client.callTool({ name: 'write_root', arguments: { content: '# x', why: 'essai' } });
+    assert.equal(res.isError, true);
+    assert.match(textOf(res), /Refusé : .* est le dossier utilisateur/);
+    await assert.rejects(initTree(home), /dossier utilisateur/);
+    assert.match(CORE_MESSAGES.en.homeRefused(home), /^Refused: .* is the home folder/);
+    await assert.rejects(fs.stat(path.join(home, '.contextree')));
+  });
+});
+
+test("home : le dossier d'état vit hors de ~/.contextree, CONTEXTREE_STATE_DIR garde la priorité", async () => {
+  const forced = process.env.CONTEXTREE_STATE_DIR;
+  try {
+    assert.equal(stateDir(), forced);
+    delete process.env.CONTEXTREE_STATE_DIR;
+    await withHome(async home => {
+      const dir = stateDir();
+      assert.ok(dir.startsWith(home) || process.platform === 'win32', dir);
+      assert.notEqual(path.basename(dir), '.contextree');
+      assert.equal(path.basename(dir), 'contextree');
+    });
+  } finally {
+    process.env.CONTEXTREE_STATE_DIR = forced;
+  }
+});
+
+test("home : rescue rend l'arbre égaré à son projet — racine et branches, cache laissé, rien d'écrasé", async () => {
+  await withHome(async home => {
+    const legacy = path.join(home, '.contextree');
+    await fs.mkdir(path.join(legacy, 'journal'), { recursive: true });
+    await fs.writeFile(path.join(legacy, 'journal', 'x.md'), 'du cache');
+    await writeRoot(legacy, '# Pega');
+    await writeBranch(legacy, { path: 'archi', type: 'context', title: 'Archi', loadWhen: 'quand archi', content: 'a' });
+    await writeBranch(legacy, { path: 'archi/cmd', type: 'reference', title: 'Cmd', loadWhen: 'quand cmd', content: 'c' });
+    await writeBranch(legacy, { path: 'regles', type: 'rule', title: 'Règles', loadWhen: 'quand code', content: 'r' });
+    assert.deepEqual(await findStrayHomeTree(), ['archi.md', 'archi/cmd.md', 'regles.md', 'root.md']);
+
+    const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-rescue-'));
+    await writeBranch(path.join(projet, '.contextree'), { path: 'regles', type: 'rule', title: 'Mes règles', loadWhen: 'quand code', content: 'à moi' });
+
+    const { moved, skipped } = await rescueStrayTree(projet);
+    assert.deepEqual(moved, ['archi.md', 'archi/cmd.md', 'root.md']);
+    assert.deepEqual(skipped, ['regles.md']);
+    const tree = await loadTree(path.join(projet, '.contextree'));
+    assert.equal(tree.rootContent.trim(), '# Pega');
+    assert.equal(tree.branches.get('regles').title, 'Mes règles');
+    assert.ok(tree.branches.has('archi/cmd'));
+    // Le cache et ce qui n'a pas pu partir restent ; le dossier vidé s'en va.
+    assert.deepEqual((await fs.readdir(legacy)).sort(), ['journal', 'regles.md']);
+    assert.deepEqual(await findStrayHomeTree(), ['regles.md']);
+    await assert.rejects(rescueStrayTree(home), /dossier utilisateur/);
+  });
+});
+
+test("home : le hook signale l'arbre égaré une fois par session, dans son enveloppe", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-home-'));
+  await writeRoot(path.join(home, '.contextree'), '# égaré');
+  const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-hook-stray-'));
+  const env = { HOME: home, USERPROFILE: home, CONTEXTREE_STATE_DIR: await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-st-')) };
+  const payload = { prompt: 'bonjour', cwd: projet, session_id: 's1' };
+
+  const premier = await runHook(payload, env, ['--agent', 'gemini']);
+  const parsed = JSON.parse(premier.out);
+  assert.match(parsed.hookSpecificOutput.additionalContext, /Un arbre a été écrit dans .* par erreur/);
+  assert.match(parsed.hookSpecificOutput.additionalContext, /contextree rescue --to/);
+  const second = await runHook(payload, env, ['--agent', 'gemini']);
+  assert.doesNotMatch(second.out, /par erreur/);
 });

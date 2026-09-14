@@ -105,7 +105,16 @@ export async function writeSelection(
  * l'invitation revient une seconde fois dans la même session.
  */
 export async function claimBootstrapInvite(cwd: string, sessionId: string): Promise<boolean> {
-  const file = path.join(stateDir(), 'session', `${treeKey(cwd)}-${safe(sessionId)}.invited`);
+  return claimOnce(cwd, sessionId, 'invited');
+}
+
+/** Même marqueur, pour l'avertissement d'un arbre égaré dans `~/.contextree`. */
+export async function claimStrayWarning(cwd: string, sessionId: string): Promise<boolean> {
+  return claimOnce(cwd, sessionId, 'stray');
+}
+
+async function claimOnce(cwd: string, sessionId: string, what: string): Promise<boolean> {
+  const file = path.join(stateDir(), 'session', `${treeKey(cwd)}-${safe(sessionId)}.${what}`);
   try {
     await fs.mkdir(path.dirname(file), { recursive: true });
     // `wx` échoue si le fichier existe : tester puis écrire laisserait une

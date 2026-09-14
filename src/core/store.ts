@@ -1,6 +1,8 @@
-import { promises as fs } from 'node:fs';
+import { promises as fs, constants as fsConstants } from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { parseFrontmatter, serializeFrontmatter } from './frontmatter.js';
+import { stateDir } from './journal.js';
 import { isBranchType, type Branch, type BranchType, type ContextTree } from './types.js';
 import { coreText } from './messages.js';
 
@@ -22,16 +24,106 @@ export const ROOT_FILE = 'root.md';
  * frontmatter. Les deux axes restent ainsi indépendants et éditables à la main.
  */
 
-/** Remonte depuis `from` jusqu'à trouver un dossier `.contextree/` (comme `.git`). */
+/**
+ * Remonte depuis `from` jusqu'à trouver un dossier `.contextree/` (comme `.git`).
+ *
+ * **La remontée s'arrête avant le dossier utilisateur**, et ne rend jamais le
+ * dossier d'état (14 septembre 2026). Un `~/.contextree` n'est l'arbre d'aucun
+ * projet : c'était le cache de contextree, et tout projet sans arbre à lui le
+ * trouvait, le lisait et y écrivait. Un arbre perso monté partout viendra par
+ * montage (P8), jamais par remontée. Hors du dossier utilisateur, on remonte
+ * jusqu'à la racine du disque comme avant.
+ */
 export async function findTreeDir(from: string = process.cwd()): Promise<string | null> {
+  const state = stateDir();
   let dir = path.resolve(from);
   for (;;) {
+    if (isHomeDir(dir)) return null;
     const candidate = path.join(dir, DIR_NAME);
-    if (await isDir(candidate)) return candidate;
+    if (!samePath(candidate, state) && (await isDir(candidate))) return candidate;
     const parent = path.dirname(dir);
     if (parent === dir) return null;
     dir = parent;
   }
+}
+
+/** Le dossier utilisateur : aucun arbre n'y vit, aucun n'y naît. */
+export function isHomeDir(dir: string): boolean {
+  return samePath(dir, os.homedir());
+}
+
+function samePath(a: string, b: string): boolean {
+  const [x, y] = [path.resolve(a), path.resolve(b)];
+  return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
+
+/** Ce que `stateDir` laisse de côté dans l'ancien `~/.contextree` : du cache. */
+const LEGACY_STATE_ENTRIES = new Set(['journal', 'selection', 'session', 'tracking', '.cache']);
+
+/**
+ * Un arbre écrit par erreur dans `~/.contextree`, du temps où le dossier d'état
+ * portait ce nom : la racine et les branches, chemins relatifs. Vide s'il n'y a
+ * rien — le cache, lui, n'est pas un arbre.
+ */
+export async function findStrayHomeTree(): Promise<string[]> {
+  const legacy = path.join(os.homedir(), DIR_NAME);
+  const found: string[] = [];
+  const walk = async (dir: string, rel: string): Promise<void> => {
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory() && !(rel === '' && LEGACY_STATE_ENTRIES.has(e.name))) await walk(path.join(dir, e.name), r);
+      else if (e.isFile() && e.name.endsWith('.md')) found.push(r);
+    }
+  };
+  await walk(legacy, '');
+  return found.sort();
+}
+
+/**
+ * Déplace l'arbre égaré de `~/.contextree` vers `<projet>/.contextree/`.
+ *
+ * Seulement la racine et les branches : le cache reste où il est. **Rien n'est
+ * écrasé** — un fichier déjà présent côté projet est laissé des deux côtés et
+ * rapporté. Copie puis suppression plutôt qu'un `rename` : le projet est
+ * souvent sur un autre volume que le dossier utilisateur.
+ */
+export async function rescueStrayTree(
+  projectDir: string,
+): Promise<{ dir: string; moved: string[]; skipped: string[] }> {
+  if (isHomeDir(projectDir)) throw new Error(coreText().homeRefused(projectDir));
+  const legacy = path.join(os.homedir(), DIR_NAME);
+  const dir = path.join(projectDir, DIR_NAME);
+  const files = await findStrayHomeTree();
+  if (files.length && !(await isDir(dir))) await ensureLocalIgnored(projectDir);
+  const moved: string[] = [];
+  const skipped: string[] = [];
+  for (const rel of files) {
+    const from = path.join(legacy, ...rel.split('/'));
+    const to = path.join(dir, ...rel.split('/'));
+    await fs.mkdir(path.dirname(to), { recursive: true });
+    try {
+      await fs.copyFile(from, to, fsConstants.COPYFILE_EXCL);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      skipped.push(rel);
+      continue;
+    }
+    await fs.unlink(from);
+    moved.push(rel);
+  }
+  // Les dossiers de branches vidés s'en vont, les plus profonds d'abord ; un
+  // `rmdir` sur un dossier non vide échoue, et c'est exactement ce qu'on veut.
+  const parents = new Set(moved.flatMap(rel => rel.split('/').slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join('/'))));
+  for (const p of [...parents].sort((a, b) => b.length - a.length)) {
+    await fs.rmdir(path.join(legacy, ...p.split('/'))).catch(() => {});
+  }
+  return { dir, moved, skipped };
 }
 
 /** Le calque local d'un arbre : `.contextree.local/`, dossier frère. */
@@ -441,6 +533,7 @@ export async function initTree(
   projectDir: string,
   opts: { force?: boolean } = {},
 ): Promise<{ dir: string; branches: number }> {
+  if (isHomeDir(projectDir)) throw new Error(coreText().homeRefused(projectDir));
   const dir = path.join(projectDir, DIR_NAME);
   if (!opts.force && (await isDir(dir))) {
     throw new Error(coreText().treeExists(DIR_NAME));

@@ -4,12 +4,13 @@ import { spawn } from 'node:child_process';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { DIR_NAME, findTreeDir, loadTree, slugify, writeBranch, deleteBranch, moveBranch, initTree, detectInstructionFiles } from './core/store.js';
+import { DIR_NAME, findTreeDir, findStrayHomeTree, rescueStrayTree, loadTree, slugify, writeBranch, deleteBranch, moveBranch, initTree, detectInstructionFiles } from './core/store.js';
+import { coreText } from './core/messages.js';
 import { allBranches, formatTree } from './core/tree.js';
 import { renderContext, renderTrace, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite } from './core/render.js';
 import { route, pickEngine, isCliEngine, engineBin, withoutRouting, routeInBackground } from './core/router.js';
 import { encodePack, extractPack, applyPack } from './core/pack.js';
-import { readSelection, writeSelection, claimBootstrapInvite } from './core/session.js';
+import { readSelection, writeSelection, claimBootstrapInvite, claimStrayWarning } from './core/session.js';
 import { appendTurn } from './core/journal.js';
 import { evaluateRouting, parseEvalCases, type EvalReport } from './core/eval.js';
 import {
@@ -97,6 +98,8 @@ async function main(argv: string[]): Promise<number> {
       return cmdStatus();
     case 'route-bg':
       return cmdRouteBackground(flags);
+    case 'rescue':
+      return cmdRescue(str(flags.to));
     default:
       process.stderr.write(`${t.unknownCommand(String(command))}\n\n${t.help}`);
       return 1;
@@ -114,6 +117,32 @@ async function cmdInit(force: boolean): Promise<number> {
     process.stderr.write(
       `${err instanceof Error ? err.message : String(err)} ${cliText().initForceHint}\n`,
     );
+    return 1;
+  }
+}
+
+/**
+ * Rend à son projet un arbre écrit dans `~/.contextree`, du temps où le dossier
+ * d'état portait ce nom. Fichier par fichier, sans rien écraser.
+ */
+async function cmdRescue(to: string | undefined): Promise<number> {
+  const t = cliText();
+  if (!to) {
+    process.stderr.write(`${t.usageRescue}\n`);
+    return 1;
+  }
+  try {
+    const { dir, moved, skipped } = await rescueStrayTree(path.resolve(to));
+    if (!moved.length && !skipped.length) {
+      process.stdout.write(`${t.rescueNothing(shorten(path.join(os.homedir(), DIR_NAME)))}\n`);
+      return 0;
+    }
+    for (const f of moved) process.stdout.write(`${t.rescueMoved.padEnd(10)} ${f}\n`);
+    for (const f of skipped) process.stdout.write(`${t.rescueSkipped.padEnd(10)} ${f}\n`);
+    process.stdout.write(`\n${t.rescueDone(moved.length, shorten(dir), skipped.length)}\n`);
+    return skipped.length ? 1 : 0;
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     return 1;
   }
 }
@@ -160,6 +189,8 @@ async function cmdInstall(flags: Flags): Promise<number> {
     // Les agents sans surface à câbler existent aussi, et l'outil les sert :
     // le dire ici évite de chercher une ligne « non détecté » qui ne viendra pas.
     process.stdout.write(`\n${t.noSurfaceAgents}\n`);
+    const stray = await findStrayHomeTree();
+    if (stray.length) process.stdout.write(`\n${coreText().strayTree(shorten(path.join(os.homedir(), DIR_NAME)), stray.length)}\n`);
     process.stdout.write(`\n${wiredCommands()}`);
     process.stdout.write(`${t.routing(describeEngine())}\n`);
     return 0;
@@ -686,6 +717,19 @@ async function cmdHook(agent: string): Promise<number> {
     const sessionId = typeof payload['session_id'] === 'string' ? payload['session_id'] : 'default';
     if (!prompt) return 0;
 
+    // Un arbre égaré dans `~/.contextree` : dit une fois par session, en tête
+    // de ce que le hook écrit — c'est le seul canal que le modèle lit. Dans la
+    // même enveloppe que le reste : Gemini n'accepte qu'un objet JSON.
+    const stray = await findStrayHomeTree();
+    const warning =
+      stray.length && (await claimStrayWarning(cwd, sessionId))
+        ? coreText().strayTree(path.join(os.homedir(), DIR_NAME), stray.length)
+        : '';
+    const write = (...parts: string[]): void => {
+      const body = [warning, ...parts].filter(Boolean).join('\n\n');
+      if (body) process.stdout.write(envelope(body));
+    };
+
     const dir = await findTreeDir(cwd);
     // Pas d'arbre : on ne se tait plus, on invite — une fois par session.
     //
@@ -698,12 +742,15 @@ async function cmdHook(agent: string): Promise<number> {
       if (await claimBootstrapInvite(cwd, sessionId)) {
         // L'invitation passe par l'enveloppe comme le reste : sous Gemini, du
         // texte nu sur stdout casserait le JSON qu'il attend.
-        process.stdout.write(envelope(renderBootstrapInvite(await detectInstructionFiles(cwd))));
-      }
+        write(renderBootstrapInvite(await detectInstructionFiles(cwd)));
+      } else write();
       return 0;
     }
     const tree = await loadTree(dir);
-    if (!tree.order.length && !tree.rootContent.trim()) return 0;
+    if (!tree.order.length && !tree.rootContent.trim()) {
+      write();
+      return 0;
+    }
 
     const previous = await readSelection(dir, sessionId);
     // Un seul horodatage pour ce prompt : le tour du hook et celui que le
@@ -738,8 +785,7 @@ async function cmdHook(agent: string): Promise<number> {
       ...(engine ? { engine } : {}),
     });
 
-    const block = renderContext(tree, selected);
-    if (block) process.stdout.write(envelope(block));
+    write(renderContext(tree, selected));
     // La trace part sur stderr, pour les trois : l'inverser polluerait le
     // contexte du modèle, et casserait le JSON de Gemini.
     process.stderr.write(`${renderTrace(tree, selected, reason)}\n`);

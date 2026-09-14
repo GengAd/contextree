@@ -125,9 +125,24 @@ export type AiWrite = {
  *
  * Surchargeable, surtout pour les tests : ils n'ont pas à écrire dans le home de
  * qui lance la suite.
+ *
+ * **Jamais `~/.contextree`** (14 septembre 2026). C'était son nom, le même que
+ * l'arbre d'un projet : `findTreeDir` remontait jusqu'au dossier utilisateur et
+ * prenait le cache pour un arbre — tous les projets sans arbre à eux lisaient
+ * le même, et `write_root` y écrivait. L'emplacement du système, donc, et pas
+ * un cache purgeable (`~/Library/Caches`) : `config.json` et `session.json`
+ * du backend vivent ici aussi. L'ancien dossier n'est pas migré — ce n'était
+ * que du cache ; un arbre écrit là par erreur se récupère avec `rescue`.
  */
 export function stateDir(): string {
-  return process.env['CONTEXTREE_STATE_DIR'] ?? path.join(os.homedir(), '.contextree');
+  const forced = process.env['CONTEXTREE_STATE_DIR'];
+  if (forced) return forced;
+  const home = os.homedir();
+  if (process.platform === 'win32') {
+    return path.join(process.env['LOCALAPPDATA'] ?? path.join(home, 'AppData', 'Local'), 'contextree');
+  }
+  if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'contextree');
+  return path.join(process.env['XDG_STATE_HOME'] ?? path.join(home, '.local', 'state'), 'contextree');
 }
 
 export function journalDir(): string {

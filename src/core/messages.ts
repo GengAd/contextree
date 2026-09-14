@@ -16,6 +16,11 @@ const fr = {
   targetTaken: (target: string) => `Une branche occupe déjà ${target}.`,
   pathRefused: (p: string) => `Chemin de branche refusé : ${p}`,
   treeExists: (dir: string) => `${dir}/ existe déjà.`,
+  homeRefused: (dir: string) =>
+    `Refusé : ${dir} est le dossier utilisateur. Un arbre y serait lu par tous les projets qu'il contient — ouvre le dossier du projet et crée l'arbre là.`,
+  strayTree: (dir: string, n: number) =>
+    `⚠ Un arbre a été écrit dans ${dir} par erreur (${n} fichier(s)) : ce dossier n'est l'arbre d'aucun projet, et contextree ne le lit plus. ` +
+    "Dis-le à l'utilisateur. Pour le rendre à son projet : `contextree rescue --to <dossier du projet>` — rien n'est écrasé.",
   gitignoreComment: '# contextree : le calque personnel ne se partage pas',
   defaultSlug: 'branche',
 
@@ -65,6 +70,11 @@ const en: Dictionary<typeof fr> = {
   targetTaken: target => `A branch already exists at ${target}.`,
   pathRefused: p => `Branch path refused: ${p}`,
   treeExists: dir => `${dir}/ already exists.`,
+  homeRefused: dir =>
+    `Refused: ${dir} is the home folder. A tree there would be read by every project inside it — open the project folder and create the tree there.`,
+  strayTree: (dir, n) =>
+    `⚠ A tree was written to ${dir} by mistake (${n} file(s)): that folder is no project's tree, and contextree no longer reads it. ` +
+    'Tell the user. To give it back to its project: `contextree rescue --to <project folder>` — nothing is overwritten.',
   gitignoreComment: '# contextree: the personal layer is never shared',
   defaultSlug: 'branch',
 

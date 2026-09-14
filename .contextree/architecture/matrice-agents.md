@@ -17,7 +17,7 @@ Ce qui est **vu** marcher, ce qui est seulement **câblé**, et ce qu'on ne peut
 | Agent / éditeur | Injection | Édition | État | Ce qui reste |
 |---|---|---|---|---|
 | **Claude Code** (terminal, VS Code, Cursor) | hook `UserPromptSubmit` + MCP | MCP | **déroulé** le 11 sept. | — |
-| **VS Code + Copilot** | `.vscode/mcp.json` (forme `servers`) + `copilot-instructions.md` + `AGENTS.md` | MCP | **câblage vérifié** ; routage par **sampling** (le modèle de Copilot, sans clé ni CLI) testé sur un client MCP en mémoire | un tour de Copilot Chat : lit-il le bloc ? appelle-t-il `get_context` ? accepte-t-on l'invite de sampling, et le journal montre-t-il `engine: sampling` ? |
+| **VS Code + Copilot** | `.vscode/mcp.json` (forme `servers`) + `copilot-instructions.md` + `AGENTS.md` | MCP | **raté observé** le 14 sept. par Adrien : Copilot **écrit** l'arbre quand on le lui demande, mais ne le **lit jamais** (aucun `get_context`). Routage par **sampling** testé seulement sur un client MCP en mémoire | carte P6 « Copilot ne lit jamais l'arbre » : le bloc de consignes n'est écrit qu'à `install` si l'arbre existe déjà (et jamais par le bouton de l'extension), les `instructions` MCP sont figées à la connexion, et la consigne n'a pas de moment. Puis re-mesurer |
 | **Cursor** (agent intégré) | MCP + `AGENTS.md` | MCP | **câblage vérifié** | idem, dans l'agent de Cursor |
 | **Gemini CLI** | hook `BeforeAgent` + MCP + `GEMINI.md` | MCP | **câblage vérifié** — la commande écrite par `install`, exécutée telle quelle, rend le JSON attendu | le CLI n'est pas installé ; un vrai tour reste à voir |
 | **Codex CLI** | MCP + `AGENTS.md` | MCP | **câblage vérifié** (pas de hook — voir plus bas) | le CLI n'est pas installé |

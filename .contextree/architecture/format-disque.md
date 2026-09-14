@@ -21,7 +21,9 @@ Deux comportements à préserver :
 - **un dossier sans `.md` frère devient un hub implicite** (branche vide, type `context`) — sinon les fichiers qu'il contient seraient silencieusement ignorés ;
 - **`order` est un parcours en profondeur alphabétique et c'est contractuel** — les indices envoyés au routeur en dépendent. `compareBranchPaths` compare **segment par segment**, parce qu'un tri lexicographique nu se tromperait : `-` (0x2D) passe avant `/` (0x2F), donnant `a`, `a-b`, `a/b` au lieu de `a`, `a/b`, `a-b`.
 
-**`findTreeDir` remonte l'arborescence** comme `.git` : la CLI se lance depuis n'importe quel sous-dossier.
+**`findTreeDir` remonte l'arborescence** comme `.git` : la CLI se lance depuis n'importe quel sous-dossier. **Mais jamais jusqu'au dossier utilisateur** (14 septembre 2026) : sous `~`, la remontée s'arrête avant lui, et le dossier d'état n'est jamais rendu quel que soit son nom. Aucun arbre ne vit dans `~/.contextree` ni n'y naît — `write_root` et `init` y refusent. Un arbre perso monté dans chaque projet viendra par montage (P8), pas par remontée.
+
+**Où vit quoi.** L'arbre : `<projet>/.contextree/` (partagé) et `<projet>/.contextree.local/` (le calque perso). L'état — journal, sélection, marqueurs de session, config et suivi du backend — hors du projet, dans `stateDir()` : voir *Journal des tours*. Rien de ce qui est dans l'un ne va dans l'autre.
 
 **Un dépôt git *dans* l'arbre est ignoré**, ce qui rend le submodule possible. `walk()` écarte les dossiers commençant par `.`, et ne lit que les `.md` — or `.git` est un **dossier** dans un clone et un **fichier** dans un submodule (`gitdir: …`). Les deux passent à travers sans cas particulier. Vérifié le 11 septembre 2026 en montant un vrai submodule : l'arbre se lit, `findTreeDir` remonte, `install --status` ne bouge pas.
 
