@@ -90,6 +90,7 @@
       loadWhen: tr('always injected, never routed'),
       content: tree.rootContent || '',
       write: tree.rootWrite || null,
+      warnings: tree.rootWarnings || [],
       children: [],
     };
     byId.set(ROOT_ID, root);
@@ -102,6 +103,7 @@
         loadWhen: b.loadWhen,
         content: b.content || '',
         write: b.write || null,
+        warnings: b.warnings || [],
         children: [],
       });
     }
@@ -571,6 +573,28 @@
         const why = document.createElement('div');
         why.className = 'written-why';
         why.textContent = n.write.why;
+        body.append(why);
+      }
+    }
+
+    // Les défauts de forme (`lintTree`), sur la carte qu'ils concernent : c'est
+    // en regardant la toile qu'on voit un arbre plat, pas en lisant un rapport.
+    // Un avertissement, pas une erreur — la couleur est celle d'un avertissement.
+    if (n.warnings.length) {
+      el.classList.add('shaped');
+      const mark = document.createElement('div');
+      mark.className = 'shape-mark';
+      mark.textContent = `⚠ ${n.warnings[0]}${n.warnings.length > 1 ? ` (+${n.warnings.length - 1})` : ''}`;
+      mark.title = n.warnings.join('\n');
+      body.append(mark);
+      if (n.id === selected) {
+        const why = document.createElement('div');
+        why.className = 'shape-why';
+        for (const w of n.warnings) {
+          const line = document.createElement('div');
+          line.textContent = `⚠ ${w}`;
+          why.append(line);
+        }
         body.append(why);
       }
     }

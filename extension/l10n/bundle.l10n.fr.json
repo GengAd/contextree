@@ -129,5 +129,7 @@
   "✎ touched by the AI {0}": "✎ touchée par l'IA {0}",
   "✎ unsaved draft": "✎ brouillon non enregistré",
   "✎ written by the AI {0}": "✎ écrite par l'IA {0}",
-  "✓ wired": "✓ câblé"
+  "✓ wired": "✓ câblé",
+  "Tree created — {0} starter branches. To have your AI build the real one, copy the instructions: it will show you a plan first.": "Arbre créé — {0} branches de départ. Pour que ton IA construise le vrai, copie la consigne : elle te montrera d'abord un plan.",
+  "Copy the instructions for the AI": "Copier la consigne pour l'IA"
 }

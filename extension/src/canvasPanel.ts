@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { AiWrite, ContextTree } from '@gengad/contextree/view' with { 'resolution-mode': 'import' };
+import type { AiWrite, ContextTree, ShapeWarning } from '@gengad/contextree/view' with { 'resolution-mode': 'import' };
 import { freshWrites } from './treeProvider.js';
 import type { LastTurn } from './turn.js';
 import type { EditOp } from './extension.js';
@@ -22,7 +22,12 @@ type CanvasTree = {
     layer: string;
     /** L'écriture de l'IA sur cette branche, si elle est encore fraîche. */
     write?: { at: number; op: string; why?: string };
+    /** Les défauts de forme qui la concernent (`lintTree`), déjà traduits. */
+    warnings?: string[];
   }>;
+  /** Les défauts de forme de l'arbre entier — plat, pas de racine… —, portés
+   *  par la carte de la racine. */
+  rootWarnings?: string[];
 };
 
 /** La toile 2D : l'arbre entier d'un coup d'œil, comme dans Lacis. On y lit,
@@ -189,7 +194,7 @@ export class CanvasPanel {
   }
 
   private async update(): Promise<void> {
-    const { findTreeDir, loadTree } = await this.core();
+    const { findTreeDir, loadTree, lintTree } = await this.core();
 
     let tree: ContextTree | null = null;
     let writes = new Map<string, AiWrite>();
@@ -202,7 +207,7 @@ export class CanvasPanel {
     }
     await this.panel.webview.postMessage({
       type: 'tree',
-      tree: tree ? flatten(tree, writes) : null,
+      tree: tree ? flatten(tree, writes, lintTree(tree)) : null,
     });
     await this.postTurn();
   }
@@ -320,12 +325,17 @@ const CANVAS_STRINGS: string[] = [
   "no tree",
 ];
 
-function flatten(tree: ContextTree, writes: Map<string, AiWrite>): CanvasTree {
+function flatten(tree: ContextTree, writes: Map<string, AiWrite>, shape: ShapeWarning[]): CanvasTree {
   // La racine est écrite par `write_root` comme une branche l'est par
   // `upsert_branch` : sa trace voyage par le même chemin, sous `:root`.
   const rootWrite = writes.get(':root');
+  // Un défaut qui ne nomme aucune branche est un défaut de l'arbre : la racine
+  // le porte. Les autres vont sur chaque carte qu'ils nomment.
+  const rootWarnings = shape.filter(w => !w.paths.length).map(w => w.message);
+  const warningsOf = (p: string) => shape.filter(w => w.paths.includes(p)).map(w => w.message);
   return {
     rootContent: tree.rootContent,
+    ...(rootWarnings.length ? { rootWarnings } : {}),
     ...(rootWrite
       ? { rootWrite: { at: rootWrite.at, op: rootWrite.op, ...(rootWrite.why ? { why: rootWrite.why } : {}) } }
       : {}),
@@ -343,6 +353,7 @@ function flatten(tree: ContextTree, writes: Map<string, AiWrite>): CanvasTree {
           content: b.content,
           layer: b.layer,
           ...(w ? { write: { at: w.at, op: w.op, ...(w.why ? { why: w.why } : {}) } } : {}),
+          ...(warningsOf(b.path).length ? { warnings: warningsOf(b.path) } : {}),
         },
       ];
     }),

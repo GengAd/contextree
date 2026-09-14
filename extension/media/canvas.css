@@ -523,3 +523,27 @@ body {
   font-size: 11.5px;
   line-height: 1.4;
 }
+
+/* Un défaut de forme de l'arbre (`lintTree`) : un avertissement, jamais une
+   erreur — l'arbre reste valide, c'est son auteur qui tranche. */
+.node.shaped {
+  border-color: var(--vscode-editorWarning-foreground, #fbbf24);
+}
+
+.shape-mark {
+  flex: 0 0 auto;
+  overflow: hidden;
+  color: var(--vscode-editorWarning-foreground, #fbbf24);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shape-why {
+  flex: 0 0 auto;
+  padding-left: 8px;
+  border-left: 2px solid var(--vscode-editorWarning-foreground, #fbbf24);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}

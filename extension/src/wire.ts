@@ -121,11 +121,17 @@ export async function initFromView(core: Core, projectDir: string): Promise<bool
     vscode.Uri.file(path.join(dir, core.ROOT_FILE)),
   );
 
+  // La même consigne que partout — plan d'abord, méthode, arbres types — à
+  // portée d'un clic : quatre amorces génériques ne font pas un arbre, et c'est
+  // l'IA qui écrira le vrai, après avoir montré son plan.
+  const copyLabel = vscode.l10n.t('Copy the instructions for the AI');
   const addLabel = vscode.l10n.t('Add to an AI');
   const next = await vscode.window.showInformationMessage(
-    vscode.l10n.t('Tree created — {0} starter branches. Fix their “load when”, it decides everything.', branches),
+    vscode.l10n.t('Tree created — {0} starter branches. To have your AI build the real one, copy the instructions: it will show you a plan first.', branches),
+    copyLabel,
     addLabel,
   );
+  if (next === copyLabel) await vscode.commands.executeCommand('contextree.copyBootstrap');
   if (next === addLabel) await wireAgent(core, projectDir);
   return true;
 }
