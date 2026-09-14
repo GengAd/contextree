@@ -16,6 +16,7 @@ import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter
 import { resolveLang, fromLocale } from '../dist/core/i18n.js';
 import { CORE_MESSAGES } from '../dist/core/messages.js';
 import { CLI_MESSAGES } from '../dist/messages.js';
+import { SERVER_MESSAGES } from '../dist/mcp/messages.js';
 import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree, detectInstructionFiles, ensureLocalIgnored } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { route, pickEngine, isCliEngine, parseIndices, timeoutFor, findBinIn, cmdLine } from '../dist/core/router.js';
@@ -1156,7 +1157,7 @@ const FRENCH = /[éèàùêçœ]|\b(branche|arbre|charger quand|câblé|aucun|in
 const ENGLISH = /\b(branch(es)?|tree|load when|wired|not found|unknown|Routing|Run:|written)\b/i;
 
 test("i18n : les deux dictionnaires ont exactement les mêmes clés", () => {
-  for (const dicts of [CORE_MESSAGES, CLI_MESSAGES]) {
+  for (const dicts of [CORE_MESSAGES, CLI_MESSAGES, SERVER_MESSAGES]) {
     assert.deepEqual(Object.keys(dicts.en).sort(), Object.keys(dicts.fr).sort());
     for (const key of Object.keys(dicts.fr)) {
       assert.equal(typeof dicts.en[key], typeof dicts.fr[key], key);
@@ -1173,7 +1174,7 @@ test("i18n : la CLI parle anglais ou français, jamais un mélange — aide, ins
   }
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-cli-state-'));
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-cli-home-'));
-  const commands = [['--help'], ['install', '--status'], ['list'], ['rm', 'nope'], ['frobnicate']];
+  const commands = [['--help'], ['install', '--status'], ['list'], ['route', 'alpha'], ['rm', 'nope'], ['frobnicate']];
 
   for (const [lang, other] of [['en', FRENCH], ['fr', ENGLISH]]) {
     const env = { CONTEXTREE_LANG: lang, CONTEXTREE_STATE_DIR: stateDir, CONTEXTREE_ROUTER: 'off', HOME: home };
@@ -1193,6 +1194,61 @@ test("i18n : la CLI parle anglais ou français, jamais un mélange — aide, ins
   } finally {
     process.env.CONTEXTREE_LANG = 'fr';
   }
+});
+
+test("i18n : en anglais, ce que lit le modèle est en anglais — hook, get_context, instructions, outils — et les branches restent telles quelles", async () => {
+  const projet = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-model-en-'));
+  const dir = path.join(projet, '.contextree');
+  await writeRoot(dir, 'root of the project');
+  // Du contenu français dans un arbre, sous un outil en anglais : rendu tel quel.
+  for (const p of ['alpha', 'beta', 'gamma', 'delta']) {
+    await writeBranch(dir, { path: p, type: p === 'alpha' ? 'rule' : 'context', title: p, loadWhen: `when ${p}`, content: `contenu éphémère ${p}` });
+  }
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-model-state-'));
+  const env = { ...process.env, CONTEXTREE_LANG: 'en', CONTEXTREE_ROUTER: 'off', CONTEXTREE_STATE_DIR: stateDir, CONTEXTREE_MCP_FALLBACK: 'full' };
+  const strip = text => text.replace(/contenu éphémère \w+/g, '').replace(/contextree/g, '');
+
+  // Le hook.
+  const hook = await runHook({ prompt: 'alpha', cwd: projet, session_id: 'en' }, env);
+  assert.match(hook.out, /## Rules/);
+  assert.match(hook.out, /contenu éphémère alpha/, 'le contenu des branches est rendu tel quel');
+  assert.ok(!FRENCH.test(strip(hook.out)), strip(hook.out).match(FRENCH)?.[0]);
+  assert.match(hook.out, /\*\*Before you finish your answer\*\*/);
+
+  // Le vrai serveur stdio : instructions, descriptions, get_context, et le catalogue seul.
+  const client = new Client({ name: 'test', version: '0' });
+  await client.connect(new StdioClientTransport({
+    command: process.execPath, args: [path.resolve('dist/cli.js'), 'mcp'], cwd: projet, env, stderr: 'ignore',
+  }));
+  try {
+    const instructions = client.getInstructions() ?? '';
+    assert.match(instructions, /Before working on a non-trivial task/);
+    const tools = JSON.stringify((await client.listTools()).tools);
+    const got = textOf(await client.callTool({ name: 'get_context', arguments: { query: 'alpha' } }));
+    for (const [label, text] of [['instructions', instructions], ['tools', tools], ['get_context', got]]) {
+      assert.ok(!FRENCH.test(strip(text)), `${label}: ${strip(text).match(FRENCH)?.[0]}`);
+    }
+  } finally {
+    await client.close();
+  }
+
+  // Le catalogue seul et l'invitation gardent leur moment en anglais.
+  process.env.CONTEXTREE_LANG = 'en';
+  try {
+    const tree = await loadTree(dir);
+    assert.match(renderCatalogueOnly(tree, 'no engine'), /\*\*Before answering\*\*/);
+    const invite = renderBootstrapInvite(['CLAUDE.md']);
+    assert.match(invite, /\*\*Before you finish your answer\*\*/);
+    assert.match(invite, /Do not create anything until they have said yes/);
+    assert.ok(!FRENCH.test(strip(invite)));
+    const prompt = renderBootstrapPrompt(['CLAUDE.md']);
+    assert.match(prompt, /in the user's language/);
+    assert.ok(!FRENCH.test(strip(prompt)), strip(prompt).match(FRENCH)?.[0]);
+  } finally {
+    process.env.CONTEXTREE_LANG = 'fr';
+  }
+  // Et en français, la consigne demande la langue de l'utilisateur aussi.
+  assert.match(renderBootstrapPrompt([]), /dans la langue de l'utilisateur/);
 });
 
 test("i18n : init pose un arbre de départ dans la langue de l'utilisateur", async () => {

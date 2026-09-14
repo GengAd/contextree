@@ -16,29 +16,8 @@ import { fileURLToPath } from 'node:url';
 import { decodePack, encodePack, extractPack, applyPack } from '../core/pack.js';
 import { BRANCH_TYPES } from '../core/types.js';
 import type { ContextTree } from '../core/types.js';
+import { serverText } from './messages.js';
 
-const INSTRUCTIONS = `contextree expose l'arbre de contexte du projet courant : identité, règles,
-contexte de domaine, références et skills, sous forme de petites branches typées.
-
-Avant de travailler sur une tâche non triviale, appelle \`get_context\` avec la demande de
-l'utilisateur : tu récupères uniquement les branches pertinentes. Quand tu découvres un fait
-durable sur ce projet (une convention, une contrainte, un chemin qui compte), écris-le avec
-\`upsert_branch\` — directement, sans demander la permission. L'arbre est fait pour être enrichi
-à l'usage. Sur un arbre neuf, commence par \`write_root\` : c'est le seul contenu toujours
-injecté, et aucune branche ne le remplace. Si le projet a déjà un \`CLAUDE.md\`, des règles
-Cursor ou un README nourri, le prompt \`bootstrap\` donne la consigne pour en tirer l'arbre.
-
-En échange, **dis-le**. Après chaque écriture, annonce en une phrase ce que tu as ajouté ou
-changé dans l'arbre et pourquoi. Écrire en silence est la seule façon de mal faire ici : tu
-écris dans l'arbre qui te sera réinjecté ensuite, et personne ne peut corriger ce qu'il ne
-voit pas.
-
-Sous Claude Code, un hook injecte déjà une première sélection à chaque prompt. Ce n'est qu'une
-**avance** : elle est routée sur le prompt seul, parfois avec un tour de retard, et le bloc
-injecté liste en fin de message les branches qu'il n'a **pas** chargées. Dès que la tâche se
-précise — une carte ou un ticket que tu viens de lire, une trace d'erreur, un fichier que tu
-ouvres —, rappelle \`get_context\` avec ce que tu sais maintenant. C'est le régime normal, pas
-un rattrapage exceptionnel : un prompt de départ ne contient presque jamais la tâche entière.`;
 
 const branchTypeSchema = z.enum(BRANCH_TYPES);
 
@@ -60,6 +39,10 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
    * toutes sessions confondues) les fait quand même se parler.
    */
   const sessionId = `mcp-${randomUUID()}`;
+  // La langue est celle du process : l'agent lance le serveur avec `--lang`,
+  // inscrit par `install`. Lue une fois — les descriptions d'outils sont figées
+  // à l'enregistrement, et une session ne change pas de langue en route.
+  const t = serverText();
   /** Ce que l'IA doit faire ici quand il n'y a rien : proposer l'arbre.
    *
    *  Une seule copie pour les deux surfaces du serveur — les `instructions` et
@@ -76,7 +59,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
     { name: 'contextree', version: '0.1.0' },
     // Le `cwd` seul ici : les roots du client ne se demandent qu'une fois
     // connecté, et le serveur n'existe pas encore.
-    { instructions: (await findTreeDir(cwd)) ? INSTRUCTIONS : renderBootstrapInvite(await detectInstructionFiles(cwd)) },
+    { instructions: (await findTreeDir(cwd)) ? t.instructions : renderBootstrapInvite(await detectInstructionFiles(cwd)) },
   );
 
   /**
@@ -123,10 +106,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
     // s'arrête pour la demander (constaté le 10 septembre 2026, scénario
     // « depuis zéro »).
     if (!dir) {
-      throw new Error(
-        `Aucun dossier ${DIR_NAME} trouvé depuis ${base}. Pour créer l'arbre d'ici : ` +
-          '`write_root`, qui pose le dossier et la racine. Sinon : `contextree init`.',
-      );
+      throw new Error(t.noTree(DIR_NAME, base));
     }
     return { dir, tree: await loadTree(dir) };
   };
@@ -173,11 +153,11 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
           },
           { timeout },
         );
-        if (res.content.type !== 'text') throw new Error(`réponse ${res.content.type}, texte attendu`);
+        if (res.content.type !== 'text') throw new Error(t.samplingNotText(res.content.type));
         return res.content.text;
       } catch (err) {
         samplingRefused = err instanceof Error ? err.message : String(err);
-        throw new Error(`sampling refusé ou en échec — plus demandé de la session : ${samplingRefused}`);
+        throw new Error(t.samplingRefused(samplingRefused));
       }
     };
   };
@@ -192,11 +172,8 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
   server.registerPrompt(
     'bootstrap',
     {
-      title: "Construire l'arbre depuis les fichiers du projet",
-      description:
-        "Donne à l'IA la consigne pour lire les fichiers de consignes existants " +
-        "(CLAUDE.md, règles Cursor, README…) et en écrire un arbre de contexte : " +
-        '6 à 12 branches, un `load_when` par branche, aucun fichier source touché.',
+      title: t.bootstrapPromptTitle,
+      description: t.bootstrapPromptDescription,
     },
     async () => {
       const found = await detectInstructionFiles(await projectDir());
@@ -233,12 +210,8 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
   server.registerTool(
     'bootstrap_prompt',
     {
-      title: "La consigne pour construire l'arbre",
-      description:
-        "Rend la consigne complète pour construire l'arbre de contexte de ce projet à partir " +
-        'de ses fichiers de consignes existants et du dépôt. À appeler quand ce projet ' +
-        "n'a pas encore d'arbre et que l'utilisateur vient d'accepter d'en créer un. " +
-        "Suis ensuite ce qu'elle dit : `write_root` en premier, puis `upsert_branch`.",
+      title: t.bootstrapToolTitle,
+      description: t.bootstrapToolDescription,
       annotations: { readOnlyHint: true },
     },
     async () => text(renderBootstrapPrompt(await detectInstructionFiles(await projectDir()))),
@@ -247,15 +220,10 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
   server.registerTool(
     'get_context',
     {
-      title: 'Charger le contexte pertinent',
-      description:
-        "Renvoie les branches de l'arbre de contexte pertinentes pour une demande donnée, " +
-        'assemblées en un bloc prêt à lire. Les branches parentes sont incluses d\'office. ' +
-        "À appeler dès que tu sais sur quoi porte la tâche : au début avec la demande telle " +
-        'quelle, puis à nouveau chaque fois qu\'elle se précise — une carte lue, une trace ' +
-        "d'erreur, un fichier ouvert. Rappeler cet outil est le régime normal.",
+      title: t.getContextTitle,
+      description: t.getContextDescription,
       inputSchema: {
-        query: z.string().describe("La demande de l'utilisateur, en clair."),
+        query: z.string().describe(t.getContextQuery),
       },
       annotations: { readOnlyHint: true },
     },
@@ -337,11 +305,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
 
       if (catalogueOnly) {
         const cause =
-          reason === 'deferred'
-            ? 'à froid — le routage de cette demande tourne en tâche de fond et servira au prochain appel'
-            : reason === 'all'
-              ? 'aucun moteur de routage sur ce poste — ni clé API, ni sampling du client, ni CLI'
-              : `repli — ${error ?? 'raison inconnue'}`;
+          reason === 'deferred' ? t.causeCold : reason === 'all' ? t.causeNoEngine : t.causeFallback(error);
         const trace = renderTrace(tree, new Set(), 'catalogue');
         return text([renderCatalogueOnly(tree, cause), '', `<!-- ${trace} — ${cause} -->`].join('\n'));
       }
@@ -349,7 +313,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       const block = renderContext(tree, selected);
       const trace = renderTrace(tree, selected, reason);
       return text(
-        [block || '(arbre de contexte vide)', '', `<!-- ${trace}${error ? ` — ${error}` : ''} -->`].join(
+        [block || t.emptyTree, '', `<!-- ${trace}${error ? ` — ${error}` : ''} -->`].join(
           '\n',
         ),
       );
@@ -359,33 +323,25 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
   server.registerTool(
     'list_branches',
     {
-      title: "Lister l'arbre de contexte",
-      description:
-        "Catalogue de toutes les branches : chemin, type, titre et condition de chargement. " +
-        "Utile pour savoir ce que le projet sait déjà avant d'en ajouter.",
+      title: t.listTitle,
+      description: t.listDescription,
       annotations: { readOnlyHint: true },
     },
     async () => {
       const { tree } = await open();
       const branches = allBranches(tree);
-      if (!branches.length) return text('Arbre vide.');
-      return text(
-        `${formatTree(tree)}\n\n${branches.length} branche(s).\nChemins : ${branches
-          .map(b => b.path)
-          .join(', ')}`,
-      );
+      if (!branches.length) return text(t.listEmpty);
+      return text(`${formatTree(tree)}\n\n${t.listCount(branches.length, branches.map(b => b.path).join(', '))}`);
     },
   );
 
   server.registerTool(
     'read_branch',
     {
-      title: 'Lire une branche',
-      description: "Contenu complet d'une branche, par son chemin (voir list_branches).",
+      title: t.readTitle,
+      description: t.readDescription,
       inputSchema: {
-        path: z
-          .string()
-          .describe("Chemin logique, ex. 'archi-store/commandes-npm'. `:root` pour la racine."),
+        path: z.string().describe(t.readPath),
       },
       annotations: { readOnlyHint: true },
     },
@@ -395,47 +351,34 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       // mais elle se relit par le même outil : on ne remplace pas un contenu
       // qu'on n'a pas pu lire.
       if (branchPath === ROOT_PATH) {
-        return text(`# Racine\ntoujours injectée, jamais routée\n\n${tree.rootContent}`);
+        return text(t.readRoot(tree.rootContent));
       }
       const branch = tree.branches.get(branchPath);
-      if (!branch) throw new Error(`Branche inconnue : ${branchPath}`);
-      return text(
-        `# ${branch.title}\ntype: ${branch.type}\ncharger quand: ${branch.loadWhen}\n\n${branch.content}`,
-      );
+      if (!branch) throw new Error(t.unknownBranch(branchPath));
+      return text(t.readBranch(branch.title, branch.type, branch.loadWhen, branch.content));
     },
   );
 
   server.registerTool(
     'upsert_branch',
     {
-      title: 'Créer ou mettre à jour une branche',
-      description:
-        "Écrit une branche sur le disque. Utilise-le pour capitaliser un fait durable sur le " +
-        "projet. `load_when` est la phrase que lira le routeur : formule-la comme une condition " +
-        "(« quand on touche à X », « si la demande parle de Y »), pas comme un résumé.",
+      title: t.upsertTitle,
+      description: t.upsertDescription,
       inputSchema: {
-        title: z.string().describe('Titre lisible de la branche.'),
-        type: branchTypeSchema.describe(
-          'identity = qui est l\'IA · rule = contrainte dure · context = connaissance de domaine · reference = API, chemins, commandes · skill = savoir-faire activable (feuille).',
-        ),
-        load_when: z.string().describe('Condition de chargement, une phrase.'),
-        content: z.string().describe('Corps markdown de la branche.'),
-        path: z.string().optional().describe('Chemin explicite. Par défaut, dérivé du titre.'),
-        parent: z.string().optional().describe("Chemin de la branche parente, si c'est un enfant."),
-        why: z
-          .string()
-          .describe(
-            "Pourquoi cette branche mérite d'exister, en une phrase. Elle apparaît dans la vue " +
-              "à côté de la branche : c'est ce qui permet à l'utilisateur de relire ce que tu as " +
-              'écrit, et de le corriger. Dis la même chose à l\'utilisateur en clair.',
-          ),
+        title: z.string().describe(t.upsertTitleParam),
+        type: branchTypeSchema.describe(t.upsertTypeParam),
+        load_when: z.string().describe(t.upsertLoadWhenParam),
+        content: z.string().describe(t.upsertContentParam),
+        path: z.string().optional().describe(t.upsertPathParam),
+        parent: z.string().optional().describe(t.upsertParentParam),
+        why: z.string().describe(t.upsertWhyParam),
       },
     },
     async ({ title, type, load_when, content, path: explicit, parent, why }) => {
       const { dir, tree } = await open();
-      if (parent && !tree.branches.has(parent)) throw new Error(`Parent inconnu : ${parent}`);
+      if (parent && !tree.branches.has(parent)) throw new Error(t.unknownParent(parent));
       const slug = explicit ?? slugify(title);
-      if (slug.includes('..')) throw new Error(`Chemin refusé : ${slug}`);
+      if (slug.includes('..')) throw new Error(t.pathRefused(slug));
       const branchPath = parent && !explicit ? `${parent}/${slug}` : slug;
       const file = await writeBranch(dir, {
         path: branchPath,
@@ -446,33 +389,18 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       });
       const existed = tree.branches.has(branchPath);
       await appendAiWrite(dir, { at: Date.now(), op: 'upsert', path: branchPath, title, why });
-      return text(
-        `${existed ? 'Branche mise à jour' : 'Branche écrite'} : ${branchPath} (${type})\n` +
-          `${path.relative(process.cwd(), file)}\n\n` +
-          "Annonce-le maintenant à l'utilisateur : ce que tu viens d'écrire dans l'arbre, et pourquoi.",
-      );
+      return text(t.upsertDone(existed, branchPath, type, path.relative(process.cwd(), file)));
     },
   );
 
   server.registerTool(
     'write_root',
     {
-      title: 'Écrire la racine',
-      description:
-        "Le contenu toujours injecté, jamais routé : qui, quoi, dans quel repo. Court. " +
-        "C'est la première chose à poser sur un arbre neuf, et la seule que `upsert_branch` " +
-        "ne sait pas écrire. **Crée le dossier `.contextree/` s'il n'existe pas encore** : " +
-        "sur un projet sans arbre, c'est par ici qu'on commence, sans aucune commande à " +
-        'taper. Relis la racine avec `read_branch` sur `:root` avant de la remplacer.',
+      title: t.rootTitle,
+      description: t.rootDescription,
       inputSchema: {
-        content: z.string().describe('Corps markdown de la racine. Quelques lignes, pas une page.'),
-        why: z
-          .string()
-          .describe(
-            'Pourquoi la racine doit dire ça, en une phrase. Elle apparaît dans la vue à côté ' +
-              "de la racine : c'est ce qui permet à l'utilisateur de relire ce que tu as écrit. " +
-              "Dis la même chose à l'utilisateur en clair.",
-          ),
+        content: z.string().describe(t.rootContentParam),
+        why: z.string().describe(t.rootWhyParam),
       },
     },
     async ({ content, why }) => {
@@ -498,14 +426,14 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       // Tracée comme une branche, sous le chemin que les vues emploient déjà
       // pour la racine : la pastille « écrite par l'IA » s'allume au même
       // endroit, sans cas particulier de plus.
-      await appendAiWrite(dir, { at: Date.now(), op: 'upsert', path: ROOT_PATH, title: 'Racine', why });
+      await appendAiWrite(dir, { at: Date.now(), op: 'upsert', path: ROOT_PATH, title: t.rootAiWriteTitle, why });
+      // Un dossier vient d'apparaître dans son projet : il doit l'apprendre
+      // maintenant, pas en le découvrant dans un `git status`.
       return text(
-        `Racine écrite : ${path.relative(process.cwd(), path.join(dir, ROOT_FILE))}\n` +
-          // Un dossier vient d'apparaître dans son projet : il doit l'apprendre
-          // maintenant, pas en le découvrant dans un `git status`.
-          (existing ? '' : `Arbre créé : ${path.relative(process.cwd(), dir)}/\n`) +
-          "\nAnnonce-le maintenant à l'utilisateur : ce que tu viens d'écrire dans la racine, et pourquoi." +
-          (existing ? '' : " Dis-lui aussi que le dossier `.contextree/` vient d'être créé."),
+        t.rootDone(
+          path.relative(process.cwd(), path.join(dir, ROOT_FILE)),
+          existing ? null : path.relative(process.cwd(), dir),
+        ),
       );
     },
   );
@@ -513,18 +441,18 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
   server.registerTool(
     'delete_branch',
     {
-      title: 'Supprimer une branche',
-      description: 'Supprime une branche et toutes ses branches enfants. Irréversible.',
+      title: t.deleteTitle,
+      description: t.deleteDescription,
       inputSchema: {
-        path: z.string().describe('Chemin de la branche à supprimer.'),
-        why: z.string().describe('Pourquoi cette branche ne doit plus exister, en une phrase.'),
+        path: z.string().describe(t.deletePathParam),
+        why: z.string().describe(t.deleteWhyParam),
       },
       annotations: { destructiveHint: true },
     },
     async ({ path: branchPath, why }) => {
       const { dir, tree } = await open();
       const branch = tree.branches.get(branchPath);
-      if (!branch) throw new Error(`Branche inconnue : ${branchPath}`);
+      if (!branch) throw new Error(t.unknownBranch(branchPath));
       await deleteBranch(dir, branchPath);
       const kids = branch.childPaths.length;
       await appendAiWrite(dir, {
@@ -534,35 +462,29 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         title: branch.title,
         why,
       });
-      return text(
-        `Supprimé : ${branchPath}${kids ? ` (+ ${kids} enfant(s))` : ''}\n\n` +
-          "Annonce-le maintenant à l'utilisateur : ce que tu viens de retirer de l'arbre, et pourquoi.",
-      );
+      return text(t.deleteDone(branchPath, kids));
     },
   );
 
   server.registerTool(
     'move_branch',
     {
-      title: 'Déplacer ou renommer une branche',
-      description:
-        "Change le chemin d'une branche — renommer et reparenter sont la même opération. " +
-        'Ses branches enfants suivent. Refusé si le chemin d\'arrivée est déjà occupé ou ' +
-        "s'il est sous la branche déplacée.",
+      title: t.moveTitle,
+      description: t.moveDescription,
       inputSchema: {
-        from: z.string().describe('Chemin actuel de la branche.'),
-        to: z.string().describe('Nouveau chemin complet (parent inclus).'),
-        why: z.string().optional().describe('Pourquoi ce rangement, si ce n\'est pas évident.'),
+        from: z.string().describe(t.moveFromParam),
+        to: z.string().describe(t.moveToParam),
+        why: z.string().optional().describe(t.moveWhyParam),
       },
       annotations: { destructiveHint: false },
     },
     async ({ from, to, why }) => {
       const { dir, tree } = await open();
       const branch = tree.branches.get(from);
-      if (!branch) throw new Error(`Branche inconnue : ${from}`);
+      if (!branch) throw new Error(t.unknownBranch(from));
       // Même garde que `upsert_branch` : un parent inconnu se crée à la main.
       const parent = to.includes('/') ? to.slice(0, to.lastIndexOf('/')) : '';
-      if (parent && !tree.branches.has(parent)) throw new Error(`Parent inconnu : ${parent}`);
+      if (parent && !tree.branches.has(parent)) throw new Error(t.unknownParent(parent));
       await moveBranch(dir, from, to);
       const kids = branch.childPaths.length;
       await appendAiWrite(dir, {
@@ -573,20 +495,18 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         title: branch.title,
         ...(why ? { why } : {}),
       });
-      return text(`${from} → ${to}${kids ? ` (+ ${kids} enfant(s))` : ''}`);
+      return text(`${from} → ${to}${kids ? t.moveChildren(kids) : ''}`);
     },
   );
 
   server.registerTool(
     'export_pack',
     {
-      title: "Exporter l'arbre pour le partager",
-      description:
-        "Sérialise l'arbre complet en un pack autonome. `as_token` renvoie un jeton compressé " +
-        "à coller dans une conversation ; sinon, du JSON.",
+      title: t.exportTitle,
+      description: t.exportDescription,
       inputSchema: {
-        as_token: z.boolean().optional().describe('Renvoyer un jeton compressé plutôt que du JSON.'),
-        title: z.string().optional().describe('Nom du pack.'),
+        as_token: z.boolean().optional().describe(t.exportTokenParam),
+        title: z.string().optional().describe(t.exportNameParam),
       },
       annotations: { readOnlyHint: true },
     },
@@ -600,20 +520,18 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
   server.registerTool(
     'import_pack',
     {
-      title: 'Importer un arbre partagé',
-      description:
-        "Greffe un pack (jeton `contextree:…`, JSON brut, ou chemin de fichier) dans l'arbre local. " +
-        '`prefix` isole les branches importées sous une branche à toi.',
+      title: t.importTitle,
+      description: t.importDescription,
       inputSchema: {
-        source: z.string().describe('Jeton, JSON, ou chemin de fichier.'),
-        prefix: z.string().optional().describe('Préfixe de chemin pour les branches importées.'),
+        source: z.string().describe(t.importSourceParam),
+        prefix: z.string().optional().describe(t.importPrefixParam),
       },
     },
     async ({ source, prefix }) => {
       const { dir } = await open();
       const pack = await resolvePack(source);
       const written = await applyPack(dir, pack, { prefix, mergeRoot: true });
-      return text(`${written.length} branche(s) importée(s)${prefix ? ` sous ${prefix}/` : ''}.`);
+      return text(t.importDone(written.length, prefix));
     },
   );
 
@@ -642,7 +560,5 @@ export async function runStdio(cwd: string = process.cwd()): Promise<void> {
   // serveur MCP, et c'est là qu'on lit, sans rien installer, dans quel dossier
   // il a été lancé et s'il y a trouvé un arbre.
   const tree = await findTreeDir(cwd);
-  process.stderr.write(
-    `contextree mcp — lancé dans ${cwd} — ${tree ? `arbre ${tree}` : "pas d'arbre ici (les roots du client seront demandés)"}\n`,
-  );
+  process.stderr.write(`${serverText().startup(cwd, tree)}\n`);
 }

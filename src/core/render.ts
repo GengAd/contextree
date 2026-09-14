@@ -1,6 +1,18 @@
 import { allBranches } from './tree.js';
 import type { ContextTree } from './types.js';
 import type { RouteReason } from './router.js';
+import { currentLang, type Lang } from './i18n.js';
+
+/*
+ * **La langue de ce que lit le modèle** (14 septembre 2026). Chaque texte existe
+ * en français et en anglais, rangé en `Record<Lang, …>` : une langue oubliée
+ * casse le typecheck. Le français est resté mot pour mot celui qui a été
+ * mesuré ; l'anglais en garde les **moments** — « before you finish your
+ * answer », « before answering » —, pas seulement le sens : une traduction qui
+ * rendrait ces consignes permissives recréerait des ratés déjà payés (voir
+ * `CAPITALIZE`, `renderBootstrapInvite`). `## Rules` et `## Context` étaient
+ * déjà en anglais et le restent. Le contenu des branches n'est jamais traduit.
+ */
 
 /**
  * Assemble le bloc injecté dans l'appel IA.
@@ -37,22 +49,35 @@ export function renderContext(tree: ContextTree, selected: Set<string>): string 
   // le catalogue depuis toujours. Les trois surfaces sont des adaptateurs au-
   // dessus du même moteur ; celle-ci en divergeait.
   const others = branches.filter(b => !selected.has(b.path));
-  if (others.length) parts.push(`## Catalogue — branches non chargées\n\n${PULL}\n\n${catalogue(others)}`);
+  const lang = currentLang();
+  if (others.length) parts.push(`${CATALOGUE_HEADER[lang]}\n\n${PULL[lang]}\n\n${catalogue(others)}`);
 
   if (!parts.length) return '';
   // Le rappel d'écrire passe en tout dernier : c'est une consigne pour la suite
   // du tour, pas une information sur ce qu'on vient de recevoir.
-  return `<contextree>\n${parts.join('\n\n')}\n\n${CAPITALIZE}\n</contextree>`;
+  return `<contextree>\n${parts.join('\n\n')}\n\n${CAPITALIZE[lang]}\n</contextree>`;
 }
 
 /** L'invitation à tirer le reste. Le push n'est qu'une avance : il route sur le
  *  prompt de départ, qui ne contient presque jamais la tâche entière. */
-const PULL =
+const CATALOGUE_HEADER: Record<Lang, string> = {
+  fr: '## Catalogue — branches non chargées',
+  en: '## Catalogue — branches not loaded',
+};
+
+const PULL: Record<Lang, string> = {
+  fr:
   "Le routage de ce tour s'est fait sur le prompt seul, et parfois avec un tour de retard. " +
   "Dès que la tâche se précise — une carte ou un ticket que tu viens de lire, une trace " +
   "d'erreur, un fichier que tu ouvres —, charge la branche qui va avec au lieu d'attendre le " +
   'tour suivant : outil MCP `get_context` avec ce que tu sais maintenant, ou ' +
-  '`npx -y @gengad/contextree route "<la demande>"`.';
+  '`npx -y @gengad/contextree route "<la demande>"`.',
+  en:
+    "This turn was routed on the prompt alone, sometimes one turn late. " +
+    'As soon as the task becomes clearer — a card or ticket you just read, an error trace, ' +
+    'a file you open —, load the matching branch instead of waiting for the next turn: MCP ' +
+    'tool `get_context` with what you know now, or `npx -y @gengad/contextree route "<the request>"`.',
+};
 
 /**
  * Le rappel d'écrire ce qu'on découvre. **Une ligne, et une seule copie.**
@@ -74,12 +99,20 @@ const PULL =
  * Il demande aussi de **dire quand on n'écrit pas** : un refus visible se
  * discute, un silence ne se corrige pas.
  */
-const CAPITALIZE =
+const CAPITALIZE: Record<Lang, string> = {
+  fr:
   '**Avant de terminer ta réponse**, dis en une ligne ce que cette tâche t\'a appris sur ce ' +
   'projet et qui restera vrai demain — une convention, une contrainte, un chemin qui compte. ' +
   'Si c\'est le cas, écris-le dans l\'arbre avec `upsert_branch` **avant** de répondre, sans ' +
   "demander la permission ; sinon dis « rien à retenir » et passe. Ne termine pas sans l'un " +
-  'ou l\'autre.';
+  'ou l\'autre.',
+  en:
+    '**Before you finish your answer**, say in one line what this task taught you about this ' +
+    'project that will still be true tomorrow — a convention, a constraint, a path that matters. ' +
+    'If there is something, write it into the tree with `upsert_branch` **before** answering, ' +
+    'without asking for permission; otherwise say "nothing to keep" and move on. Do not finish ' +
+    'without one or the other.',
+};
 
 function section(b: { title: string; content: string }): string {
   return `### ${b.title}\n${b.content}`.trim();
@@ -92,12 +125,15 @@ function section(b: { title: string; content: string }): string {
  * donne sans son contenu. Un seul rendu, deux appelants (`renderContext` et
  * `renderAgentsBlock`) : deux copies divergeraient au premier correctif.
  */
+/** La ponctuation suit la langue : espace avant les deux-points en français. */
+const LOAD_WHEN_LABEL: Record<Lang, string> = { fr: 'charger quand :', en: 'load when:' };
+
 function catalogue(
   branches: { path: string; title: string; type: string; loadWhen: string }[],
   withPaths = false,
 ): string {
   return branches
-    .map(b => `- **${b.title}** (${b.type})${withPaths ? ` \`${b.path}\`` : ''} — charger quand : ${b.loadWhen}`)
+    .map(b => `- **${b.title}** (${b.type})${withPaths ? ` \`${b.path}\`` : ''} — ${LOAD_WHEN_LABEL[currentLang()]} ${b.loadWhen}`)
     .join('\n');
 }
 
@@ -122,25 +158,32 @@ function catalogue(
  * Le hook de Claude Code n'y passe pas : il garde l'arbre entier en repli.
  * Changer ce qui arrive devant chaque prompt est une autre décision.
  */
+const CATALOGUE_ONLY: Record<Lang, (cause: string) => string> = {
+  fr: cause =>
+    `## Catalogue — aucune branche chargée\n\n` +
+    `Ce tour n'a pas pu être routé (${cause}). **Avant de répondre**, lis avec l'outil ` +
+    '`read_branch` les branches dont la condition de chargement correspond à la tâche — ' +
+    'par leur chemin exact, entre accents graves ci-dessous, un appel par branche. Pour ce ' +
+    "tour, c'est toi qui tries ; si aucune ne correspond, dis-le et continue.",
+  en: cause =>
+    `## Catalogue — no branch loaded\n\n` +
+    `This turn could not be routed (${cause}). **Before answering**, read with the ` +
+    '`read_branch` tool the branches whose load condition matches the task — by their exact ' +
+    'path, in backticks below, one call per branch. For this turn, you do the sorting; if none ' +
+    'matches, say so and carry on.',
+};
+
 export function renderCatalogueOnly(tree: ContextTree, cause: string): string {
   const parts: string[] = [];
   const root = tree.rootContent.trim();
   if (root) parts.push(root);
 
+  const lang = currentLang();
   const branches = allBranches(tree);
-  if (branches.length) {
-    parts.push(
-      `## Catalogue — aucune branche chargée\n\n` +
-        `Ce tour n'a pas pu être routé (${cause}). **Avant de répondre**, lis avec l'outil ` +
-        '`read_branch` les branches dont la condition de chargement correspond à la tâche — ' +
-        'par leur chemin exact, entre accents graves ci-dessous, un appel par branche. Pour ce ' +
-        "tour, c'est toi qui tries ; si aucune ne correspond, dis-le et continue.\n\n" +
-        catalogue(branches, true),
-    );
-  }
+  if (branches.length) parts.push(`${CATALOGUE_ONLY[lang](cause)}\n\n${catalogue(branches, true)}`);
 
   if (!parts.length) return '';
-  return `<contextree>\n${parts.join('\n\n')}\n\n${CAPITALIZE}\n</contextree>`;
+  return `<contextree>\n${parts.join('\n\n')}\n\n${CAPITALIZE[lang]}\n</contextree>`;
 }
 
 /**
@@ -155,17 +198,32 @@ export function renderCatalogueOnly(tree: ContextTree, cause: string): string {
  * Dégradation prévue : sans MCP, il reste la racine et une carte des branches,
  * ce qui est déjà mieux que rien — et beaucoup moins que tout.
  */
-export function renderAgentsBlock(tree: ContextTree): string {
-  const parts: string[] = ['## Contexte du projet (contextree)'];
-  const root = tree.rootContent.trim();
-  if (root) parts.push(root);
-
-  parts.push(
-    "Le reste du contexte vit dans `.contextree/`, en petites branches typées. " +
+const AGENTS_BLOCK: Record<Lang, { header: string; pull: string }> = {
+  fr: {
+    header: '## Contexte du projet (contextree)',
+    pull:
+      "Le reste du contexte vit dans `.contextree/`, en petites branches typées. " +
       "**N'ouvre pas tout** : appelle l'outil MCP `get_context` avec la demande de " +
       "l'utilisateur, tu récupères uniquement les branches pertinentes. Sans MCP : " +
       '`npx -y @gengad/contextree route "<la demande>"`.',
-  );
+  },
+  en: {
+    header: '## Project context (contextree)',
+    pull:
+      'The rest of the context lives in `.contextree/`, as small typed branches. ' +
+      "**Don't open everything**: call the MCP tool `get_context` with the user's request, " +
+      'and you get only the relevant branches. Without MCP: ' +
+      '`npx -y @gengad/contextree route "<the request>"`.',
+  },
+};
+
+export function renderAgentsBlock(tree: ContextTree): string {
+  const lang = currentLang();
+  const parts: string[] = [AGENTS_BLOCK[lang].header];
+  const root = tree.rootContent.trim();
+  if (root) parts.push(root);
+
+  parts.push(AGENTS_BLOCK[lang].pull);
 
   const branches = allBranches(tree);
   if (branches.length) parts.push(`### Branches\n${catalogue(branches)}`);
@@ -190,6 +248,10 @@ export function renderAgentsBlock(tree: ContextTree): string {
  * paierait le prix.
  */
 export function renderBootstrapPrompt(found: string[]): string {
+  return BOOTSTRAP_PROMPT[currentLang()](found);
+}
+
+function bootstrapPromptFr(found: string[]): string {
   const sources = found.length
     ? `Ce projet contient déjà de quoi partir :\n${found.map(f => `- \`${f}\``).join('\n')}\n\n` +
       'Lis-les, **et** parcours le dépôt : un fichier de consignes dit ce que ' +
@@ -203,6 +265,10 @@ export function renderBootstrapPrompt(found: string[]): string {
     'Écris ensuite les branches avec les outils MCP `write_root` et `upsert_branch`. ' +
       "Commence **toujours** par `write_root` : c'est le seul contenu toujours injecté, " +
       'et il tient en quelques lignes — qui, quoi, dans quel dépôt.',
+    // Ajouté le 14 septembre 2026 avec l'anglais : l'outil parle deux langues,
+    // l'arbre doit parler celle de la personne qui le relira.
+    "Écris l'arbre **dans la langue de l'utilisateur** — celle dans laquelle il te parle —, " +
+      'titres et `load_when` compris : c\'est lui qui les relira et les corrigera.',
     "Si l'arbre contient déjà des branches de départ génériques (« Architecture », " +
       '« Commandes », « Identité », « Règles du projet », avec un contenu à compléter), ' +
       '**remplace-les** — même chemin, `upsert_branch` — ou supprime celles qui ne servent ' +
@@ -269,6 +335,10 @@ export function renderBootstrapPrompt(found: string[]): string {
  * avant un oui. On a resserré le déclenchement, pas la politesse.
  */
 export function renderBootstrapInvite(found: string[]): string {
+  return BOOTSTRAP_INVITE[currentLang()](found);
+}
+
+function bootstrapInviteFr(found: string[]): string {
   const sources = found.length
     ? `Il a déjà de quoi partir : ${found.map(f => `\`${f}\``).join(', ')} — plus le dépôt lui-même.`
     : "Il n'a pas de fichier de consignes pour une IA ; le dépôt lui-même fera l'affaire.";
@@ -288,12 +358,109 @@ export function renderBootstrapInvite(found: string[]): string {
   ].join('\n\n');
 }
 
-const TRACE_LABELS: Record<RouteReason, string> = {
-  routed: 'routé',
-  all: 'tout chargé',
-  fallback: 'fallback',
-  deferred: 'différé — routage en tâche de fond',
-  catalogue: 'catalogue seul — pas de routage disponible',
+/**
+ * La consigne de construction, en anglais — même plan, mêmes interdits, mêmes
+ * exemples de `load_when`, même fin : « ne termine pas sur c'est fait ».
+ */
+function bootstrapPromptEn(found: string[]): string {
+  const sources = found.length
+    ? `This project already has something to start from:\n${found.map(f => `- \`${f}\``).join('\n')}\n\n` +
+      'Read them, **and** walk through the repo: an instructions file says what someone ' +
+      'took the trouble to write, the code says what is true.'
+    : 'This project has no instructions file for an AI. Walk through the repo: ' +
+      'the README, the folder structure, the scripts, the tests.';
+
+  return [
+    "# Build this project's context tree",
+    sources,
+    'Then write the branches with the MCP tools `write_root` and `upsert_branch`. ' +
+      '**Always** start with `write_root`: it is the only content that is always injected, ' +
+      'and it fits in a few lines — who, what, which repo.',
+    "Write the tree **in the user's language** — the one they speak to you in —, titles and " +
+      '`load_when` included: they are the one who will reread and correct them.',
+    'If the tree already holds generic starter branches ("Architecture", "Commands", ' +
+      '"Identity", "Project rules", with content to fill in), **replace them** — same path, ' +
+      '`upsert_branch` — or delete the ones that are not useful. Never leave an empty stub ' +
+      'next to the real branch: two entries for the same topic, and the router loads the wrong one.',
+    '## What makes a good tree',
+    '- **6 to 12 branches, not 40.** A tree nobody rereads is worthless, and rereading is ' +
+      'how load conditions get corrected. Group rather than multiply.\n' +
+      '- **One doc section ≈ one branch**, as a first approximation only: meaning decides, ' +
+      'not how the original file was split. Two sections about the same thing make one ' +
+      'branch; a section mixing two topics makes two.\n' +
+      '- **The type says where the branch is injected**, and nothing else: `identity` and ' +
+      '`rule` under "Rules", before `context`, `reference` and `skill` under "Context". ' +
+      'No type guarantees loading.',
+    '## `load_when` is the only field that matters',
+    'It decides whether the branch gets loaded. Write a **condition**, not a summary:\n\n' +
+      '- ✅ "when touching the router, the routing prompt or the model choice"\n' +
+      '- ✅ "when the request is about authentication, sessions or tokens"\n' +
+      '- ❌ "the router and how it works" — that is a title, not a condition\n' +
+      '- ❌ "always relevant", "always" — that is not a condition. Measured: the router honours ' +
+      'it only one time in three, and it is the most consistently missed branch of a tree.\n\n' +
+      '**Including for the identity branch**, where the temptation is strongest: write when it ' +
+      'really helps — "when writing, reviewing or designing anything on this project" — rather ' +
+      'than "always".',
+    "## What you don't do",
+    '**Do not modify or delete any source file.** Existing instruction files stay as they ' +
+      'are: it is up to their author to decide whether they go, and when. You write in ' +
+      '`.contextree/`, nowhere else.',
+    '## To finish',
+    'When the tree is written, **tell the user to open the canvas** ("contextree: canvas" ' +
+      'command) and to reread the `load_when` one by one — those are what will need ' +
+      'correcting, and only they know what they will ask their AI. The branches you just ' +
+      'wrote are flagged there for a quarter of an hour. ' +
+      'Do not end on "done": the tree is only useful once it has been reread.',
+  ].join('\n\n');
+}
+
+/**
+ * L'invitation, en anglais. Le moment est la partie qui a été payée : « before
+ * you finish your answer », pas « at the right time ».
+ */
+function bootstrapInviteEn(found: string[]): string {
+  const sources = found.length
+    ? `It already has something to start from: ${found.map(f => `\`${f}\``).join(', ')} — plus the repo itself.`
+    : 'It has no instructions file for an AI; the repo itself will do.';
+
+  return [
+    'This project has no contextree context tree (no `.contextree/` folder).',
+    sources,
+    '**Before you finish your answer**, tell them in one sentence that this project has no ' +
+      'context tree and that you can build one from these files and the repo, in place of the ' +
+      "big instructions file. One sentence, at the end, without coming back to it: it is the " +
+      'only time in the session it is offered.',
+    'If they accept, call the `bootstrap_prompt` tool: it gives you the full instructions, ' +
+      'and `write_root` creates the tree — nothing to type in a terminal. (Without an MCP ' +
+      'server: `contextree bootstrap`.)',
+    "**Do not create anything until they have said yes**, and do not touch any source file. " +
+      'A tree written behind their back is a tree nobody rereads.',
+  ].join('\n\n');
+}
+
+const BOOTSTRAP_PROMPT: Record<Lang, (found: string[]) => string> = { fr: bootstrapPromptFr, en: bootstrapPromptEn };
+const BOOTSTRAP_INVITE: Record<Lang, (found: string[]) => string> = { fr: bootstrapInviteFr, en: bootstrapInviteEn };
+
+const TRACE_LABELS: Record<Lang, Record<RouteReason, string>> = {
+  fr: {
+    routed: 'routé',
+    all: 'tout chargé',
+    fallback: 'fallback',
+    deferred: 'différé — routage en tâche de fond',
+    catalogue: 'catalogue seul — pas de routage disponible',
+  },
+  en: {
+    routed: 'routed',
+    all: 'all loaded',
+    fallback: 'fallback',
+    deferred: 'deferred — routing in the background',
+    catalogue: 'catalogue only — no routing available',
+  },
+};
+
+const TRACE_COUNT: Record<Lang, (n: number, titles: string) => string> = {
+  fr: (n, titles) => `${n} branche(s) : ${titles}`,
+  en: (n, titles) => `${n} branch(es): ${titles}`,
 };
 
 /** Ligne de transparence : ce qui a été chargé, et pourquoi. Jamais de boîte noire. */
@@ -303,6 +470,7 @@ export function renderTrace(
   reason: RouteReason,
 ): string {
   const titles = [...selected].map(p => tree.branches.get(p)?.title ?? p);
-  const label = TRACE_LABELS[reason] ?? reason;
-  return `contextree (${label}) — ${titles.length} branche(s) : ${titles.join(', ') || '—'}`;
+  const lang = currentLang();
+  const label = TRACE_LABELS[lang][reason] ?? reason;
+  return `contextree (${label}) — ${TRACE_COUNT[lang](titles.length, titles.join(', ') || '—')}`;
 }
