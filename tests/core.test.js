@@ -18,7 +18,7 @@ import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { route, pickEngine, isCliEngine, parseIndices, timeoutFor, findBinIn, cmdLine } from '../dist/core/router.js';
 import { evaluateRouting, parseEvalCases } from '../dist/core/eval.js';
 import { renderContext, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite, renderCatalogueOnly } from '../dist/core/render.js';
-import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand, AGENTS } from '../dist/install.js';
+import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand, AGENTS, NoCliError } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
 import { appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites, turnLabelKey } from '../dist/core/journal.js';
 import { readSelection, writeSelection, claimBootstrapInvite } from '../dist/core/session.js';
@@ -584,6 +584,68 @@ test("install : une entrée .mcp.json venue d'une autre machine est réécrite, 
   assert.equal(JSON.parse(await fs.readFile(file, 'utf8')).mcpServers.contextree.command, selfCommand('mcp').command);
   // Réparé une fois : la suivante ne touche plus à rien.
   assert.equal((await installAgent('cursor', projectDir))[0].action, 'unchanged');
+});
+
+test("install : sous l'hôte d'extensions, la commande inscrite lance contextree — jamais le binaire Electron", async () => {
+  // Le bouton de l'extension : execPath est le binaire Electron, argv[1] son amorce.
+  const electron = { execPath: '/Applications/Cursor.app/Contents/Frameworks/Cursor Helper (Plugin)', argv1: '/tmp/bootstrap-fork', electron: '37.2.0' };
+
+  // Un contextree installé par `npm i -g` : un lien vers dist/cli.js — ou, sous
+  // Windows, un shim `.cmd` à côté de `node_modules/@gengad/contextree` (une
+  // jonction ici : un lien symbolique y demanderait des droits d'administration).
+  const bins = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-global-'));
+  let lien;
+  if (process.platform === 'win32') {
+    await fs.mkdir(path.join(bins, 'node_modules', '@gengad'), { recursive: true });
+    await fs.symlink(path.resolve('.'), path.join(bins, 'node_modules', '@gengad', 'contextree'), 'junction');
+    lien = path.join(bins, 'contextree.cmd');
+    await fs.writeFile(lien, '@echo off\r\n', 'utf8');
+  } else {
+    lien = path.join(bins, 'contextree');
+    await fs.symlink(path.resolve('dist/cli.js'), lien);
+  }
+  const find = name => (name === 'contextree' ? lien : name === 'node' ? process.execPath : null);
+
+  const mcp = selfCommand('mcp', { ...electron, find });
+  assert.notEqual(mcp.command, electron.execPath);
+  assert.ok(!mcp.shell.includes('Cursor Helper'));
+  assert.match(mcp.args[0], /cli\.js$/);
+  assert.equal(await fs.realpath(mcp.args[0]), await fs.realpath(path.resolve('dist/cli.js')));
+
+  // Exécutée telle quelle : le serveur répond à `initialize`…
+  const projet = path.dirname(await scratch());
+  await writeRoot(path.join(projet, '.contextree'), 'racine du projet');
+  const client = new Client({ name: 'test', version: '0' });
+  await client.connect(new StdioClientTransport({
+    command: mcp.command, args: mcp.args, cwd: projet, stderr: 'ignore',
+    env: { ...process.env, CONTEXTREE_ROUTER: 'off' },
+  }));
+  try {
+    assert.equal(client.getServerVersion().name, 'contextree');
+  } finally {
+    await client.close();
+  }
+
+  // … et le hook rend un bloc.
+  const hook = selfCommand('hook', { ...electron, find });
+  const sortie = await new Promise((resolve, reject) => {
+    const child = spawn(hook.command, hook.args, { env: { ...process.env, CONTEXTREE_ROUTER: 'off' } });
+    let out = '';
+    child.stdout.on('data', c => (out += c));
+    child.on('error', reject);
+    child.on('close', () => resolve(out));
+    child.stdin.end(JSON.stringify({ prompt: 'bonjour', cwd: projet, session_id: 'electron' }));
+  });
+  assert.match(sortie, /<contextree>[\s\S]*racine du projet/);
+
+  // Sans contextree installé : rien d'inscriptible, et le message dit quoi faire.
+  assert.throws(() => selfCommand('mcp', { ...electron, find: () => null }), err =>
+    err instanceof NoCliError && /npm install -g/.test(err.message));
+
+  // Le terminal ne change pas : ce qui tourne est contextree.
+  const terminal = selfCommand('mcp', { execPath: process.execPath, argv1: path.resolve('dist/cli.js') });
+  assert.deepEqual(terminal.args, [path.resolve('dist/cli.js'), 'mcp']);
+  assert.equal(terminal.command, process.execPath);
 });
 
 test('install : Claude Code est câblé quand le hook ET le serveur MCP y sont', async () => {

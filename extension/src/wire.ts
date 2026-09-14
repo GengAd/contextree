@@ -18,11 +18,20 @@ import type { Core } from './treeProvider.js';
  * on n'écrase jamais.
  */
 export async function wireAgent(core: Core, projectDir: string): Promise<boolean> {
-  const statuses = await core.agentStatus(projectDir);
   // La commande qui *serait* écrite, avant de choisir : câbler sur `npx` (le
   // paquet publié) ou sur le binaire local n'est pas le même geste, et on ne
   // l'apprenait jusqu'ici qu'en ouvrant le JSON après coup.
-  const command = tildify(core.selfCommand('hook').shell);
+  //
+  // Calculée **avant** toute liste : sans contextree installé, il n'y a rien de
+  // lançable à inscrire, et on le dit au lieu d'écrire une commande morte.
+  let command: string;
+  try {
+    command = tildify(core.selfCommand('hook').shell);
+  } catch (err) {
+    void vscode.window.showWarningMessage(err instanceof Error ? err.message : String(err));
+    return false;
+  }
+  const statuses = await core.agentStatus(projectDir);
 
   const pick = await vscode.window.showQuickPick(
     statuses.map(s => ({

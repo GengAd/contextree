@@ -1,6 +1,7 @@
-import { existsSync, promises as fs } from 'node:fs';
+import { existsSync, promises as fs, realpathSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { findBin } from './core/router.js';
 
 /**
  * Câblage de l'injection, un agent à la fois.
@@ -61,8 +62,19 @@ const PACKAGE = '@gengad/contextree';
  * shell (même raison que `findBin`, dans `router.ts`). Et toujours entre
  * guillemets dans la forme shell — un chemin avec une espace casserait le hook.
  */
-export function selfCommand(cmd: 'hook' | 'mcp'): { command: string; args: string[]; shell: string } {
-  const self = process.argv[1];
+export function selfCommand(
+  cmd: 'hook' | 'mcp',
+  host: SelfHost = {
+    execPath: process.execPath,
+    argv1: process.argv[1],
+    electron: process.versions.electron,
+    find: findBin,
+  },
+): { command: string; args: string[]; shell: string } {
+  // Sous l'hôte d'extensions, « ce qui tourne » n'est pas contextree : voir
+  // `installedCommand`.
+  if (host.electron) return installedCommand(cmd, host.find ?? findBin);
+  const self = host.argv1;
   // `/_npx/` sous Unix, `\_npx\` sous Windows.
   if (!self || /[\\/]_npx[\\/]/.test(self)) {
     const args = ['-y', PACKAGE, cmd];
@@ -70,10 +82,71 @@ export function selfCommand(cmd: 'hook' | 'mcp'): { command: string; args: strin
   }
   const entry = path.resolve(self);
   return {
-    command: process.execPath,
+    command: host.execPath,
     args: [entry, cmd],
-    shell: `"${process.execPath}" "${entry}" ${cmd}`,
+    shell: `"${host.execPath}" "${entry}" ${cmd}`,
   };
+}
+
+/** Le process qui demande la commande — simulable en test. */
+export type SelfHost = {
+  execPath: string;
+  argv1?: string;
+  /** `process.versions.electron` : présent dans l'hôte d'extensions de VS Code / Cursor. */
+  electron?: string;
+  find?: (name: string) => string | null;
+};
+
+/** Levée quand aucune commande lançable n'existe : mieux vaut ne rien écrire
+ *  qu'écrire une commande morte. Le message dit quoi installer. */
+export class NoCliError extends Error {}
+
+/**
+ * La commande d'un contextree **installé**, pour qui n'est pas contextree.
+ *
+ * Le bouton « Ajouter à une IA » tourne dans l'hôte d'extensions (14 septembre
+ * 2026) : `process.execPath` y est le binaire Electron — constaté,
+ * `/Applications/Cursor.app/…/Cursor Helper (Plugin)` — et `argv[1]` son
+ * amorce. Inscrire « ce qui tourne » écrivait donc une commande qui ne lance pas
+ * contextree ; le hook sortant toujours en 0 et un serveur MCP muet ne disant
+ * rien dans le chat, l'agent travaillait sans arbre, en silence.
+ *
+ * Tranché, dans cet ordre :
+ *
+ * 1. un `contextree` trouvé comme le routeur trouve ses CLI (`findBin`), inscrit
+ *    en chemins absolus `node` + `cli.js` — le lien de `npm i -g` résolu, ou,
+ *    sous Windows, le `cli.js` à côté du shim `.cmd` ;
+ * 2. sinon **rien** : `NoCliError`, et le bouton dit quoi installer.
+ *
+ * La forme `npx -y @gengad/contextree` n'est pas proposée tant que le paquet
+ * n'est pas publié — elle échouerait exactement comme l'hôte d'extensions. Elle
+ * viendra avec la carte de publication.
+ */
+function installedCommand(
+  cmd: 'hook' | 'mcp',
+  find: (name: string) => string | null,
+): { command: string; args: string[]; shell: string } {
+  const bin = find('contextree');
+  let entry: string | null = null;
+  if (bin) {
+    try {
+      entry = /\.(cmd|bat)$/i.test(bin)
+        ? path.join(path.dirname(bin), 'node_modules', '@gengad', 'contextree', 'dist', 'cli.js')
+        : realpathSync(bin);
+    } catch {
+      entry = null;
+    }
+  }
+  const node = find('node');
+  if (!entry || !existsSync(entry) || !node) {
+    throw new NoCliError(
+      "contextree n'est pas installé en ligne de commande sur cette machine" +
+        (entry && !node ? ' (node introuvable)' : '') +
+        " : le bouton écrirait une commande qui ne lance rien. Installe-le — " +
+        '`npm install -g <le .tgz de contextree>` — puis recommence.',
+    );
+  }
+  return { command: node, args: [entry, cmd], shell: `"${node}" "${entry}" ${cmd}` };
 }
 
 /** Les bornes du bloc synchronisé dans un fichier de consignes. Ce qui est
