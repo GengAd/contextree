@@ -12,6 +12,7 @@
  * demande, et à défaut route par le CLI de l'utilisateur.
  */
 export * from './core/types.js';
+export * from './core/i18n.js';
 export * from './core/store.js';
 export * from './core/tree.js';
 export * from './core/journal.js';

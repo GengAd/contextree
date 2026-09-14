@@ -13,6 +13,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createServer } from '../dist/mcp/server.js';
 
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
+import { resolveLang, fromLocale } from '../dist/core/i18n.js';
 import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree, detectInstructionFiles, ensureLocalIgnored } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { route, pickEngine, isCliEngine, parseIndices, timeoutFor, findBinIn, cmdLine } from '../dist/core/router.js';
@@ -30,6 +31,11 @@ import {
   merge, outgoingDiff, snapshotOf, pull, push, readTracking, writeTracking, localSnapshot,
 } from '../dist/core/sync.js';
 
+// Les textes attendus par ces tests sont en français : la langue est posée
+// explicitement, pour qu'une machine en anglais ne les fasse pas échouer. Les
+// tests de l'anglais la posent eux-mêmes.
+process.env.CONTEXTREE_LANG = 'fr';
+
 process.env.CONTEXTREE_STATE_DIR = await fs.mkdtemp(
   path.join(os.tmpdir(), 'contextree-journal-'),
 );
@@ -38,6 +44,23 @@ async function scratch() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-test-'));
   return path.join(dir, '.contextree');
 }
+
+test("i18n : la langue se résout dans l'ordre — explicite, variables de locale, macOS, Intl, anglais", () => {
+  const jamais = () => { throw new Error('ne devait pas être consulté'); };
+  // L'explicite gagne sur tout.
+  assert.equal(resolveLang({ CONTEXTREE_LANG: 'en', LANG: 'fr_FR.UTF-8' }, { appleLanguage: jamais, intlLocale: jamais }), 'en');
+  // Les variables de locale ensuite ; C et POSIX ne disent rien.
+  assert.equal(resolveLang({ LANG: 'fr_FR.UTF-8' }, { platform: 'linux', intlLocale: jamais }), 'fr');
+  assert.equal(resolveLang({ LC_ALL: 'fr_CA', LANG: 'en_US' }, { platform: 'linux', intlLocale: jamais }), 'fr');
+  // Le Mac mesuré : LANG=C.UTF-8, Intl en-US, préférences en français.
+  assert.equal(resolveLang({ LANG: 'C.UTF-8' }, { platform: 'darwin', appleLanguage: () => 'fr-FR', intlLocale: () => 'en-US' }), 'fr');
+  // Hors macOS, les préférences Apple ne sont pas lues : Intl décide (Windows).
+  assert.equal(resolveLang({}, { platform: 'win32', appleLanguage: jamais, intlLocale: () => 'fr-FR' }), 'fr');
+  // Une locale qu'on ne parle pas vaut l'anglais, pas le français.
+  assert.equal(resolveLang({}, { platform: 'win32', intlLocale: () => 'de-DE' }), 'en');
+  assert.equal(resolveLang({ CONTEXTREE_LANG: 'fr-BE' }), 'fr');
+  assert.equal(fromLocale('french'), 'en');
+});
 
 test('frontmatter : aller-retour, valeurs citées, corps intact', () => {
   const raw = serializeFrontmatter(
