@@ -25,6 +25,8 @@ Ce qui est **vu** marcher, ce qui est seulement **câblé**, et ce qu'on ne peut
 | **Claude Desktop** | MCP | MCP | **câblage vérifié** | un tour réel |
 | **ChatGPT / Claude web** | presse-papier (`render --agents --copy`) | — | **câblage vérifié** — le bloc rendu tient en 13 lignes | — |
 
+**Toute la matrice est mesurée sous macOS.** Windows — la cible entreprise — n'a jamais fait tourner un agent : le routage par CLI y a été corrigé et testé avec un faux `claude.cmd` le 14 septembre 2026, et `.github/workflows/test.yml` lance `npm test` sur `windows-latest`, mais aucune ligne de ce tableau n'est encore vérifiée sur un poste Windows.
+
 ## Ce qui est coché sans agent, et comment
 
 Trois choses se vérifient sans jamais lancer l'agent, et elles couvrent la moitié du travail :

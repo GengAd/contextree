@@ -20,6 +20,8 @@ Le contrat tient en une phrase : **le routeur ne demande qu'un tableau d'entiers
 
 **Le journal dit qui a trié** : chaque tour qui a vraiment appelé un modèle porte `engine` (hook, MCP et fond). Absent d'un `deferred` ou d'un court-circuit — personne n'a été appelé.
 
+**Sous Windows** (14 septembre 2026) : le binaire se cherche avec les extensions de `PATHEXT`, dans leur ordre (`claude.exe` natif comme `claude.cmd` de npm, plus `%APPDATA%\npm`). Un `.cmd`/`.bat` ne se lance que par `cmd.exe` depuis Node 20.12.2 : `run` passe par `cmd /d /s /c` avec une ligne échappée en deux couches (`cmdLine`, recette de `cross-spawn` sans la dépendance) et la consigne système part sur stdin, parce que `cmd` coupe une ligne au premier saut de ligne. Ce qui rend `cmd.exe` sûr ici : **le prompt ne passe jamais en argument**. `shell: true` est écarté — Node n'y échappe rien. `windowsHide: true` sur tous les `spawn`, sinon une console clignote à chaque routage. Prouvé par un faux CLI dans `npm test`, CI Windows écrite mais pas encore passée.
+
 **Le hook n'attend jamais un moteur CLI** (5 à 60 s mesurées) : le tour part avec la sélection du tour précédent (`reason: 'deferred'`), et `contextree route-bg` — détaché, sans stdio — route ce prompt derrière pour le tour suivant. Hook à ~150 ms. `CONTEXTREE_ROUTER_BLOCKING=1` rend l'attente.
 
 **Le routage de fond écrit son tour dans le journal** (9 septembre 2026), avec `source: 'bg'` et le **même `at`** que le tour du hook — passé en `--at`, pour que les deux entrées d'un prompt se lisent ensemble. Un prompt produit donc deux tours : le `deferred` du hook, puis le `routed`/`bg` du fond. On ne les fusionne pas, c'est ce qui s'est passé.

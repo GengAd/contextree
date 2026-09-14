@@ -331,7 +331,9 @@ export function routeInBackground(dir: string, sessionId: string, prompt: string
         '--prompt64', Buffer.from(prompt.slice(0, 4000), 'utf8').toString('base64'),
         '--at', String(at),
       ],
-      { detached: true, stdio: 'ignore' },
+      // `windowsHide` : sans lui, Windows ouvre une fenêtre de console détachée
+      // à chaque prompt, le temps du routage.
+      { detached: true, stdio: 'ignore', windowsHide: true },
     );
     child.unref();
   } catch {
@@ -500,17 +502,64 @@ async function askCli(spec: CliSpec, message: string, timeout: number): Promise<
   if (!bin) throw new Error(`CLI \`${spec.bin}\` introuvable`);
 
   const model = ROUTER_MODEL ?? spec.defaultModel;
-  const system = spec.systemArgs?.(PLAIN_SYSTEM);
+  // Un shim `.cmd` passe par `cmd.exe`, qui coupe une ligne de commande au
+  // premier saut de ligne : la consigne système (multi-lignes) y part donc sur
+  // stdin, comme pour les CLI qui n'ont pas d'option dédiée.
+  const system = viaCmd(bin) ? undefined : spec.systemArgs?.(PLAIN_SYSTEM);
   const stdin = system ? message : `${PLAIN_SYSTEM}\n\n${message}`;
 
   return parseIndices(await run(bin, [...spec.args(model), ...(system ?? [])], stdin, timeout));
 }
 
+/** Un `.cmd` / `.bat` sous Windows : il ne se lance que par `cmd.exe`. */
+function viaCmd(bin: string, platform: NodeJS.Platform = process.platform): boolean {
+  return platform === 'win32' && /\.(cmd|bat)$/i.test(bin);
+}
+
+/**
+ * La ligne de commande pour lancer un `.cmd` par `cmd.exe`, échappée.
+ *
+ * Depuis Node 20.12.2 (CVE-2024-27980), `spawn` sur un `.cmd` sans shell lève
+ * `EINVAL` — et c'est la forme de tout CLI installé par npm sous Windows
+ * (`%APPDATA%\npm\claude.cmd`). Il faut donc passer par `cmd.exe`, et ce qui
+ * rend ça sûr ici tient en deux choses (14 septembre 2026) :
+ *
+ * - **le prompt ne passe jamais en argument** : il part sur stdin, où `cmd.exe`
+ *   ne l'interprète pas. Les arguments sont nos drapeaux, plus un nom de modèle
+ *   venu de l'environnement de l'utilisateur ;
+ * - **chaque argument est échappé en deux couches** : les règles de
+ *   `CommandLineToArgvW` pour le programme final (guillemets, antislashs), puis
+ *   un `^` devant chaque métacaractère de `cmd.exe`, doublé parce que le `.cmd`
+ *   relit ses arguments. C'est la recette de `cross-spawn`, recopiée plutôt
+ *   qu'importée : ce serait la quatrième dépendance du projet pour vingt lignes.
+ *
+ * `shell: true` a été écarté : Node y concatène les arguments **sans les
+ * échapper**, et `--mcp-config {"mcpServers":{}}` suffit à le casser.
+ */
+export function cmdLine(bin: string, args: string[]): string {
+  const meta = /([()\][%!^"`<>&|;, *?])/g;
+  // Deux lectures par `cmd` : la ligne `/c`, puis la ligne du `.cmd` qui
+  // relaie ses arguments (`%*` — c'est ce que fait tout shim npm). Chaque
+  // lecture consomme un niveau de `^`, d'où le doublement.
+  const escapeArg = (arg: string): string => {
+    let a = arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1');
+    a = `"${a}"`.replace(meta, '^$1');
+    return a.replace(meta, '^$1');
+  };
+  return [bin.replace(meta, '^$1'), ...args.map(escapeArg)].join(' ');
+}
+
 /** Un `spawn` qui rend stdout, ou lève — avec un timeout dur. */
 function run(bin: string, args: string[], stdin: string, timeout: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, {
+    const [file, argv, verbatim] = viaCmd(bin)
+      ? [process.env['ComSpec'] ?? 'cmd.exe', ['/d', '/s', '/c', `"${cmdLine(bin, args)}"`], true]
+      : [bin, args, false];
+    const child = spawn(file, argv, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      // Pas de fenêtre de console qui clignote à chaque routage sous Windows.
+      windowsHide: true,
+      windowsVerbatimArguments: verbatim,
       // Le garde-fou anti-récursion, en plus de `--setting-sources ''` : si un
       // jour ce process relance un hook contextree, le hook se tait.
       env: { ...cleanEnv(), CONTEXTREE_ROUTING: '1' },
@@ -585,28 +634,61 @@ export function findBin(name: string): string | null {
     return explicit;
   }
 
-  const exe = process.platform === 'win32' ? `${name}.cmd` : name;
   const home = os.homedir();
   const dirs = [
     ...(process.env['PATH'] ?? '').split(path.delimiter),
     path.join(home, '.local', 'bin'),
     path.join(home, '.claude', 'local'),
     path.join(home, '.bun', 'bin'),
+    // Là où `npm i -g` pose ses shims `.cmd` sous Windows.
+    ...(process.platform === 'win32' && process.env['APPDATA'] ? [path.join(process.env['APPDATA'], 'npm')] : []),
     '/opt/homebrew/bin',
     '/usr/local/bin',
   ];
+  const found = findBinIn(name, dirs);
+  cachedBins.set(name, found);
+  return found;
+}
+
+/**
+ * Le premier `<dossier>/<nom><extension>` présent, dossier par dossier.
+ *
+ * Sous Windows, les extensions sont celles de `PATHEXT`, dans son ordre — comme
+ * le shell (14 septembre 2026). On ne cherchait que `<nom>.cmd` : Claude Code en
+ * installation native est un `claude.exe`, jamais trouvé, donc « aucun moteur »
+ * et l'arbre entier sur un poste qui avait tout ce qu'il fallait. Seules les
+ * extensions qu'on sait lancer sont retenues (`.exe`, `.com` directement ;
+ * `.cmd`, `.bat` par `cmd.exe`). `X_OK` n'y teste que l'existence : c'est
+ * suffisant.
+ *
+ * Pur, sans cache : c'est ce qui se teste avec une plateforme et un `PATHEXT`
+ * simulés.
+ */
+export function findBinIn(
+  name: string,
+  dirs: string[],
+  opts: { platform?: NodeJS.Platform; pathext?: string } = {},
+): string | null {
+  const platform = opts.platform ?? process.platform;
+  const names =
+    platform === 'win32'
+      ? (opts.pathext ?? process.env['PATHEXT'] ?? '.COM;.EXE;.BAT;.CMD')
+          .split(';')
+          .map(e => e.trim().toLowerCase())
+          .filter(e => ['.exe', '.com', '.cmd', '.bat'].includes(e))
+          .map(e => `${name}${e}`)
+      : [name];
   for (const dir of dirs) {
     if (!dir) continue;
-    const candidate = path.join(dir, exe);
-    try {
-      accessSync(candidate, constants.X_OK);
-      cachedBins.set(name, candidate);
-      return candidate;
-    } catch {
-      // Candidat suivant.
+    for (const candidate of names.map(n => path.join(dir, n))) {
+      try {
+        accessSync(candidate, constants.X_OK);
+        return candidate;
+      } catch {
+        // Candidat suivant.
+      }
     }
   }
-  cachedBins.set(name, null);
   return null;
 }
 

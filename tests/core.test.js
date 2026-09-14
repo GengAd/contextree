@@ -15,7 +15,7 @@ import { createServer } from '../dist/mcp/server.js';
 import { parseFrontmatter, serializeFrontmatter } from '../dist/core/frontmatter.js';
 import { loadTree, writeBranch, writeRoot, deleteBranch, moveBranch, slugify, findTreeDir, localDirFor, fileForBranch, compareBranchPaths, initTree, detectInstructionFiles, ensureLocalIgnored } from '../dist/core/store.js';
 import { withAncestors, allBranches } from '../dist/core/tree.js';
-import { route, pickEngine, isCliEngine, parseIndices, timeoutFor } from '../dist/core/router.js';
+import { route, pickEngine, isCliEngine, parseIndices, timeoutFor, findBinIn, cmdLine } from '../dist/core/router.js';
 import { evaluateRouting, parseEvalCases } from '../dist/core/eval.js';
 import { renderContext, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite, renderCatalogueOnly } from '../dist/core/render.js';
 import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand, AGENTS } from '../dist/install.js';
@@ -259,6 +259,72 @@ test('routeur : le moteur forcé est respecté, anciens noms compris', () => {
     for (const k of ['CONTEXTREE_ROUTER', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY']) {
       if (saved[k] === undefined) delete process.env[k];
       else process.env[k] = saved[k];
+    }
+  }
+});
+
+test("routeur : sous Windows, le binaire se cherche par PATHEXT — claude.exe comme claude.cmd", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-bin-'));
+  const poser = async nom => {
+    await fs.writeFile(path.join(dir, nom), '', 'utf8');
+    await fs.chmod(path.join(dir, nom), 0o755);
+  };
+  const win = pathext => ({ platform: 'win32', pathext });
+
+  // L'installation native de Claude Code : un .exe, que l'ancien code ne voyait pas.
+  await poser('claude.exe');
+  assert.match(findBinIn('claude', [dir], win('.COM;.EXE;.BAT;.CMD')) ?? '', /claude\.exe$/);
+
+  // Un shim npm à côté : l'ordre de PATHEXT décide, comme dans le shell.
+  await poser('claude.cmd');
+  assert.match(findBinIn('claude', [dir], win('.CMD;.EXE')) ?? '', /claude\.cmd$/);
+  // Une extension qu'on ne sait pas lancer n'est pas candidate.
+  assert.equal(findBinIn('claude', [dir], win('.PS1;.VBS')), null);
+
+  // Hors Windows, rien ne change : le nom nu, et lui seul.
+  assert.equal(findBinIn('claude', [dir], { platform: 'darwin' }), null);
+  await poser('claude');
+  assert.equal(findBinIn('claude', [dir], { platform: 'linux' }), path.join(dir, 'claude'));
+});
+
+test("routeur : la ligne cmd.exe échappe les métacaractères et garde les arguments vides", () => {
+  const ligne = cmdLine('C:\\npm\\claude.cmd', ['--tools', '', '--mcp-config', '{"mcpServers":{}}', 'a&b|c']);
+  // Aucun métacaractère de cmd.exe ne reste nu : & | " sont tous précédés d'un ^.
+  assert.ok(!/(^|[^^])[&|"]/.test(ligne), ligne);
+  // L'argument vide survit comme argument : une paire de guillemets échappée.
+  assert.match(ligne, /--tools\^\^\^" \^\^\^"\^\^\^"/);
+});
+
+test("routeur : un faux CLI claude est lancé et sa réponse donne un tour routé", async () => {
+  const dir = await scratch();
+  await writeRoot(dir, 'racine');
+  for (const p of ['a', 'b', 'c', 'd']) {
+    await writeBranch(dir, { path: p, type: 'context', title: p, loadWhen: `quand ${p}`, content: p });
+  }
+  const bins = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-fauxcli-'));
+  // Sous Windows, un .cmd — la forme de tout CLI installé par npm, et celle qui
+  // levait EINVAL. Ailleurs, un script shell. Les deux lisent stdin et répondent [1].
+  const bin = process.platform === 'win32' ? path.join(bins, 'claude.cmd') : path.join(bins, 'claude');
+  await fs.writeFile(
+    bin,
+    process.platform === 'win32' ? '@echo off\r\nmore > nul\r\necho [1]\r\n' : '#!/bin/sh\ncat > /dev/null\necho "[1]"\n',
+    'utf8',
+  );
+  await fs.chmod(bin, 0o755);
+
+  const saved = { router: process.env.CONTEXTREE_ROUTER, bin: process.env.CONTEXTREE_CLAUDE_BIN };
+  process.env.CONTEXTREE_ROUTER = 'claude';
+  process.env.CONTEXTREE_CLAUDE_BIN = bin;
+  try {
+    const tree = await loadTree(dir);
+    const res = await route(tree, 'quelque chose sur b', { waiter: 'batch' });
+    assert.equal(res.reason, 'routed', res.error);
+    assert.equal(res.engine, 'claude');
+    assert.deepEqual([...res.selected], ['b']);
+  } finally {
+    for (const [k, v] of [['CONTEXTREE_ROUTER', saved.router], ['CONTEXTREE_CLAUDE_BIN', saved.bin]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
     }
   }
 });

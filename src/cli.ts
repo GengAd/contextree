@@ -480,7 +480,7 @@ function toClipboard(text: string): Promise<boolean> {
         : ['xclip', ['-selection', 'clipboard']];
   return new Promise(resolve => {
     try {
-      const child = spawn(bin, args, { stdio: ['pipe', 'ignore', 'ignore'] });
+      const child = spawn(bin, args, { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
       child.on('error', () => resolve(false));
       child.on('close', code => resolve(code === 0));
       child.stdin.on('error', () => resolve(false));
