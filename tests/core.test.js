@@ -25,7 +25,8 @@ import { evaluateRouting, parseEvalCases } from '../dist/core/eval.js';
 import { renderContext, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite, renderCatalogueOnly } from '../dist/core/render.js';
 import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand, AGENTS, NoCliError, syncInstructionFiles, instructionsState } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
-import { stateDir, appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites, turnLabelKey } from '../dist/core/journal.js';
+import { stateDir, appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites, turnLabelKey, treeKey, recordRead, READ_WINDOW_MS } from '../dist/core/journal.js';
+import { VERSION } from '../dist/core/version.js';
 import { readSelection, writeSelection, claimBootstrapInvite } from '../dist/core/session.js';
 import {
   RemoteError, clearSession, createGroup, currentSession, me, myGroups,
@@ -1638,14 +1639,30 @@ test("mcp : sans moteur, get_context sur le vrai serveur stdio rend le catalogue
     assert.match(txt, /catalogue seul/);
     assert.match(txt, /aucun moteur/);
 
+    // La trace est la première ligne, en texte : un commentaire HTML se masque.
+    assert.match(txt.split('\n')[0], /^contextree \(catalogue seul/);
+    assert.ok(!txt.includes('<!--'));
+
+    const [avant] = (await readJournal(dir)).slice(-1);
+    assert.equal(avant.reason, 'catalogue');
+    assert.deepEqual(avant.selected, []);
+    assert.equal(turnLabelKey(avant), 'catalogue');
+
     // Et l'agent peut suivre la consigne : le chemin du catalogue se lit tel quel.
     const lu = textOf(await client.callTool({ name: 'read_branch', arguments: { path: 'b' } }));
     assert.match(lu, /contenu b/);
+    assert.match(lu.split('\n')[0], /^contextree \(lue par l'agent\) — B `b`/);
+    await client.callTool({ name: 'read_branch', arguments: { path: 'c' } });
 
-    const [tour] = (await readJournal(dir)).slice(-1);
+    // Les deux lectures rejoignent le tour du catalogue : c'est lui que la vue montre.
+    const tours = await readJournal(dir);
+    const tour = tours.at(-1);
+    assert.equal(tours.length, 1 + tours.indexOf(tour));
     assert.equal(tour.reason, 'catalogue');
-    assert.deepEqual(tour.selected, []);
-    assert.equal(turnLabelKey(tour), 'catalogue');
+    assert.deepEqual(tour.read, ['b', 'c']);
+    assert.deepEqual(tour.selected, ['b', 'c']);
+    assert.equal(turnLabelKey(tour), 'read');
+    assert.equal(tour.version, VERSION);
   } finally {
     await client.close();
   }
@@ -2846,4 +2863,67 @@ test("mcp : la réponse de write_root à la création donne le plan d'abord et l
 
 test("bootstrap : l'invitation fait de bootstrap_prompt le premier appel, avant write_root", () => {
   assert.match(renderBootstrapInvite([]), /ton premier appel est l'outil `bootstrap_prompt`\*\* — avant `write_root`/);
+});
+
+test("journal : treeKey ignore la casse sous Windows — c:\\ et C:\\ sont le même arbre", async () => {
+  assert.equal(treeKey('c:\\x\\.contextree', 'win32'), treeKey('C:\\x\\.contextree', 'win32'));
+  assert.equal(treeKey('C:\\Projets\\App\\.contextree', 'win32'), treeKey('c:\\projets\\app\\.contextree', 'win32'));
+  if (process.platform === 'win32') {
+    // Le vrai système : le même dossier, deux casses de lecteur.
+    const dir = await scratch();
+    await fs.mkdir(dir, { recursive: true });
+    const autre = dir[0] === dir[0].toUpperCase() ? dir[0].toLowerCase() + dir.slice(1) : dir[0].toUpperCase() + dir.slice(1);
+    assert.equal(treeKey(dir), treeKey(autre));
+  }
+});
+
+test("journal : une lecture sans get_context récent de la même session ouvre un tour « read »", async () => {
+  const dir = await scratch();
+  const at = Date.now();
+  // Le hook a écrit en dernier : la lecture ne s'y accroche pas.
+  await appendTurn(dir, { at, prompt: 'p', selected: ['a'], reason: 'routed', source: 'hook' });
+  await recordRead(dir, { at: at + 1, session: 's1', path: 'b' });
+  let tour = (await readJournal(dir)).at(-1);
+  assert.equal(tour.reason, 'read');
+  assert.equal(tour.source, 'mcp');
+  assert.deepEqual(tour.selected, ['b']);
+  assert.equal(turnLabelKey(tour), 'read');
+
+  // Une autre session ne rejoint pas ce tour, et une lecture tardive non plus.
+  await recordRead(dir, { at: at + 2, session: 's2', path: 'c' });
+  assert.equal((await readJournal(dir)).length, 3);
+  await recordRead(dir, { at: at + 2 + READ_WINDOW_MS, session: 's2', path: 'd' });
+  assert.equal((await readJournal(dir)).length, 4);
+
+  // Lectures en parallèle, même session : aucune ne s'efface.
+  await Promise.all(['e', 'f', 'g', 'e'].map(p => recordRead(dir, { at: at + 3 + READ_WINDOW_MS, session: 's2', path: p })));
+  tour = (await readJournal(dir)).at(-1);
+  assert.deepEqual(tour.read, ['d', 'e', 'f', 'g']);
+
+  // Un tour routé enrichi de lectures reste « routé ».
+  assert.equal(turnLabelKey({ reason: 'routed', source: 'mcp', read: ['x'] }), 'routed');
+});
+
+test("version : la constante du cœur suit le package.json", async () => {
+  const pkg = JSON.parse(await fs.readFile('package.json', 'utf8'));
+  assert.equal(VERSION, pkg.version);
+});
+
+test("mcp : la première ligne de get_context nomme les branches envoyées, en français et en anglais", async () => {
+  const { projet, restore } = await samplingSetup({ CONTEXTREE_ROUTER: 'off', CONTEXTREE_MCP_FALLBACK: 'full' });
+  try {
+    for (const [lang, motif] of [['fr', /^contextree \(tout chargé\) — 5 branche\(s\) : .*B/], ['en', /^contextree \(all loaded\) — 5 branch\(es\): .*B/]]) {
+      process.env.CONTEXTREE_LANG = lang;
+      const client = await mcpClient(projet);
+      const txt = textOf(await client.callTool({ name: 'get_context', arguments: { query: 'b' } }));
+      assert.match(txt.split('\n')[0], motif);
+      assert.ok(!txt.includes('<!--'));
+      const lu = textOf(await client.callTool({ name: 'read_branch', arguments: { path: 'b' } }));
+      assert.match(lu.split('\n')[0], lang === 'fr' ? /lue par l'agent/ : /read by the agent/);
+    }
+  } finally {
+    process.env.CONTEXTREE_LANG = 'fr';
+    delete process.env.CONTEXTREE_MCP_FALLBACK;
+    restore();
+  }
 });

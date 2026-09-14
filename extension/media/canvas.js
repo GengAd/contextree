@@ -768,6 +768,9 @@
     // suivant. Un `routed` comme un autre pour la couleur des cartes, mais on
     // ne laisse pas croire qu'il s'agit du tour qui vient de passer.
     'routed-bg': tr('routed (next turn)'),
+    // L'agent a lu ses branches lui-même (`read_branch`) : rien de routé, mais
+    // quelque chose est bien parti — ce n'est plus un tour dégradé.
+    read: tr('read by the agent'),
   };
 
 
@@ -809,11 +812,13 @@
     // Un repli n'est pas un routage : il doit se voir sans être lu.
     // Un catalogue seul est un tour dégradé comme un repli : aucune branche n'est
     // partie, l'agent trie lui-même.
-    const warn = o.reason === 'fallback' || o.reason === 'catalogue';
+    const warn = key !== 'read' && (o.reason === 'fallback' || o.reason === 'catalogue');
     trace.className = warn ? 'warn' : '';
     excerpt.textContent =
       o.reason === 'fallback'
         ? tr('fallback to the previous selection{0}', o.error ? ` — ${o.error}` : '')
+        : key === 'read'
+          ? tr('read by the agent with read_branch — {0}', (o.read || []).join(', '))
         : o.reason === 'catalogue'
           ? tr('no branch injected — the agent received the root and the catalogue{0}', o.error ? ` — ${o.error}` : '')
         : o.reason === 'deferred'
@@ -895,6 +900,7 @@
             prompt: t.turn.prompt,
             source: t.turn.source,
             error: t.turn.error,
+            read: t.turn.read,
           }
         : null;
       paint();

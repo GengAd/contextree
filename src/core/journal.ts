@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { RouteReason, RouterEngine } from './router.js';
+import { VERSION } from './version.js';
 
 /**
  * Ce que l'arbre a vécu : les tours de routage, et les écritures de l'IA.
@@ -28,7 +29,7 @@ import type { RouteReason, RouterEngine } from './router.js';
  * - **Hors du repo, borné.** C'est de l'état, jamais du contenu : sa disparition
  *   ne coûte rien, et il ne doit pas grossir sans fin.
  *
- * Il vit sous `~/.contextree/` et non dans `os.tmpdir()`, et c'est le seul
+ * Il vit sous `stateDir()` et non dans `os.tmpdir()`, et c'est le seul
  * endroit qui marche : le transport stdio du SDK MCP lance le serveur avec un
  * environnement nettoyé (`HOME`, `PATH`, `SHELL`, `USER`… mais pas `TMPDIR`).
  * Le serveur retombe donc sur `/tmp` pendant que le hook écrit dans le
@@ -63,17 +64,35 @@ const MAX_WRITES = 100;
  */
 export type TurnSource = 'hook' | 'mcp' | 'bg';
 
+/**
+ * La raison d'un tour : celle du routeur, ou `read` — un tour qui n'a pas été
+ * routé du tout, seulement fait de lectures de l'agent (`read_branch`) sans
+ * `get_context` récent de la même session auquel les rattacher.
+ */
+export type TurnReason = RouteReason | 'read';
+
 export type RoutingTurn = {
   /** Horodatage du tour, en ms epoch. */
   at: number;
   /** Extrait du prompt, tronqué — de quoi reconnaître le tour. */
   prompt: string;
-  /** Chemins des branches retenues, ancêtres compris. */
+  /** Chemins des branches parties à l'agent, ancêtres compris — y compris
+   *  celles qu'il a lues lui-même (`read`), pour que les vues les allument
+   *  sans cas particulier. */
   selected: string[];
   /** `fallback` est l'indicateur de repli : pas de booléen en double, il
    *  finirait par contredire la raison. */
-  reason: RouteReason;
+  reason: TurnReason;
   source: TurnSource;
+  /** Les branches que l'agent a lues lui-même avec `read_branch`, pendant ce
+   *  tour. Sans elles, un tour `catalogue` affichait « catalogue seul » alors
+   *  que Copilot avait bien lu deux branches (14 septembre 2026). */
+  read?: string[];
+  /** La session MCP qui a écrit le tour : c'est elle qui décide à quel tour une
+   *  lecture se rattache. Absente des tours du hook, qui ne lit pas. */
+  session?: string;
+  /** La version de contextree qui a écrit le tour — posée par `appendTurn`. */
+  version?: string;
   /** Le message d'erreur du routeur, quand il y en a eu un. */
   error?: string;
   /** Le moteur essayé, quand le tour a vraiment demandé à un modèle. Absent
@@ -93,9 +112,17 @@ export type RoutingTurn = {
  * la toile doivent dire la même chose du même tour, et c'est du cœur que vient
  * ce genre d'accord.
  */
-export function turnLabelKey(turn: Pick<RoutingTurn, 'reason' | 'source'>): string {
-  return turn.source === 'bg' && turn.reason === 'routed' ? 'routed-bg' : turn.reason;
+export function turnLabelKey(turn: Pick<RoutingTurn, 'reason' | 'source' | 'read'>): string {
+  if (turn.source === 'bg' && turn.reason === 'routed') return 'routed-bg';
+  // Rien n'a été routé, mais l'agent a lu : c'est ce qu'on veut lire dans la
+  // vue, pas « catalogue seul ».
+  if ((turn.reason === 'catalogue' || turn.reason === 'read') && turn.read?.length) return 'read';
+  return turn.reason;
 }
+
+/** Au-delà, une lecture n'appartient plus au dernier `get_context` : l'agent
+ *  est passé à autre chose, elle ouvre un tour à elle. */
+export const READ_WINDOW_MS = 5 * 60_000;
 
 /**
  * Une écriture de l'IA dans l'arbre.
@@ -162,13 +189,21 @@ export function journalDir(): string {
  * macOS, tout projet rangé derrière un lien symbolique ailleurs). Mesuré : le
  * même arbre donnait deux journaux.
  */
-export function treeKey(treeDir: string): string {
-  let resolved = path.resolve(treeDir);
+export function treeKey(treeDir: string, platform: NodeJS.Platform = process.platform): string {
+  const windows = platform === 'win32';
+  let resolved = (windows ? path.win32 : path).resolve(treeDir);
   try {
-    resolved = realpathSync(resolved);
+    // `.native` : la casse que le système rend, pas celle qu'on lui a donnée.
+    resolved = realpathSync.native(resolved);
   } catch {
     // Pas encore sur le disque : le chemin littéral fera l'affaire.
   }
+  // **Sous Windows, la casse ne compte pas** (14 septembre 2026). VS Code donne
+  // la lettre de lecteur en minuscule (`c:\…`), un process lancé ailleurs en
+  // majuscule, et le système de fichiers les confond : deux clés, deux
+  // journaux, et une vue qui lit celui où personne n'écrit. L'ancien journal
+  // n'est pas migré — ce n'est que de l'état.
+  if (windows) resolved = resolved.toLowerCase();
   return createHash('sha256').update(resolved).digest('hex').slice(0, 16);
 }
 
@@ -196,7 +231,61 @@ export async function readJournal(treeDir: string): Promise<RoutingTurn[]> {
  * c'est le même invariant que le reste du hook.
  */
 export async function appendTurn(treeDir: string, turn: RoutingTurn): Promise<void> {
-  await appendLog(journalFile(treeDir), { ...turn, prompt: excerpt(turn.prompt) }, isTurn, MAX_TURNS);
+  const entry = { ...turn, prompt: excerpt(turn.prompt), version: VERSION };
+  await updateLog(journalFile(treeDir), isTurn, MAX_TURNS, turns => [...turns, entry]);
+}
+
+/**
+ * Une branche lue par l'agent (`read_branch`), rattachée au tour qui l'a
+ * amenée à la lire.
+ *
+ * En mode catalogue, `get_context` ne rend aucune branche : c'est l'agent qui
+ * lit les siennes ensuite. Sans cette trace, la vue affichait « catalogue
+ * seul » et n'allumait rien, alors que des branches étaient bien parties.
+ *
+ * Rattachée au **dernier tour du journal** s'il vient de la même session MCP
+ * depuis moins de `READ_WINDOW_MS` — c'est le tour que la vue montre. Sinon
+ * (un tour du hook ou du routage de fond s'est intercalé, ou l'agent lit sans
+ * avoir demandé de contexte), un tour `read` à elle : la vue montre le dernier
+ * tour, et une lecture accrochée plus haut ne s'y verrait pas.
+ */
+export async function recordRead(
+  treeDir: string,
+  read: { at: number; session: string; path: string },
+): Promise<void> {
+  await updateLog(journalFile(treeDir), isTurn, MAX_TURNS, (turns): RoutingTurn[] => {
+    const last = turns.at(-1);
+    if (last && last.source === 'mcp' && last.session === read.session && read.at - last.at < READ_WINDOW_MS) {
+      const merged: RoutingTurn = {
+        ...last,
+        selected: unique([...last.selected, read.path]),
+        read: unique([...(last.read ?? []), read.path]),
+      };
+      return [...turns.slice(0, -1), merged];
+    }
+    return [
+      ...turns,
+      {
+        at: read.at,
+        prompt: '',
+        selected: [read.path],
+        read: [read.path],
+        reason: 'read',
+        source: 'mcp',
+        session: read.session,
+        version: VERSION,
+      },
+    ];
+  });
+}
+
+/**
+ * Le journal qu'écrivait un contextree d'avant le 14 septembre 2026, sous
+ * `~/.contextree/journal/`. L'extension le regarde : s'il bouge encore, c'est
+ * qu'un serveur MCP ou un hook d'une autre version écrit là où elle ne lit plus.
+ */
+export function legacyJournalFile(treeDir: string): string {
+  return path.join(os.homedir(), '.contextree', 'journal', `${treeKey(treeDir)}.json`);
 }
 
 /** Les écritures de l'IA, de la plus ancienne à la plus récente. */
@@ -207,7 +296,8 @@ export async function readAiWrites(treeDir: string): Promise<AiWrite[]> {
 /** Trace une écriture de l'IA. Ne rejette jamais : la trace ne doit pas pouvoir
  *  faire échouer l'écriture qu'elle raconte. */
 export async function appendAiWrite(treeDir: string, write: AiWrite): Promise<void> {
-  await appendLog(writesFile(treeDir), { ...write, why: excerpt(write.why ?? '') }, isWrite, MAX_WRITES);
+  const entry = { ...write, why: excerpt(write.why ?? '') };
+  await updateLog(writesFile(treeDir), isWrite, MAX_WRITES, writes => [...writes, entry]);
 }
 
 // ── Le journal, mécaniquement ────────────────────────────────────────────────
@@ -221,23 +311,45 @@ async function readLog<T>(file: string, guard: (v: unknown) => v is T): Promise<
   }
 }
 
-/** L'écriture passe par un fichier temporaire renommé, pour qu'un lecteur ne
- *  tombe jamais sur un JSON à moitié écrit. */
-async function appendLog<T>(
+/** Les mises à jour en vol, par fichier. */
+const pending = new Map<string, Promise<void>>();
+
+/**
+ * Relit, transforme, réécrit. L'écriture passe par un fichier temporaire
+ * renommé, pour qu'un lecteur ne tombe jamais sur un JSON à moitié écrit.
+ *
+ * **À la file, par fichier, dans un même process.** Un agent lance volontiers
+ * plusieurs `read_branch` en parallèle : sans file, chacun relisait le journal
+ * d'avant les autres et la dernière écriture effaçait les précédentes. Entre
+ * deux process, la fenêtre reste ouverte — elle coûte au pire une lecture non
+ * affichée, pas un journal cassé.
+ */
+function updateLog<T>(
   file: string,
-  entry: T,
   guard: (v: unknown) => v is T,
   max: number,
+  change: (entries: T[]) => T[],
 ): Promise<void> {
-  try {
-    const entries = [...(await readLog(file, guard)), entry];
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(entries.slice(-max)), 'utf8');
-    await fs.rename(tmp, file);
-  } catch {
-    // Le journal est un confort, pas une dépendance.
-  }
+  const run = (pending.get(file) ?? Promise.resolve()).then(async () => {
+    try {
+      const entries = change(await readLog(file, guard));
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      const tmp = `${file}.${process.pid}.tmp`;
+      await fs.writeFile(tmp, JSON.stringify(entries.slice(-max)), 'utf8');
+      await fs.rename(tmp, file);
+    } catch {
+      // Le journal est un confort, pas une dépendance.
+    }
+  });
+  pending.set(file, run);
+  void run.then(() => {
+    if (pending.get(file) === run) pending.delete(file);
+  });
+  return run;
+}
+
+function unique(paths: string[]): string[] {
+  return [...new Set(paths)];
 }
 
 function excerpt(prompt: string): string {

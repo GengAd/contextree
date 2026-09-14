@@ -14,7 +14,8 @@ import { lintTree, renderShapeWarnings } from '../core/lint.js';
 import { currentLang } from '../core/i18n.js';
 import { route, pickEngine, isCliEngine, withoutRouting, routeInBackground, ROUTE_THRESHOLD } from '../core/router.js';
 import type { Complete } from '../core/router.js';
-import { appendTurn, appendAiWrite } from '../core/journal.js';
+import { appendTurn, appendAiWrite, recordRead } from '../core/journal.js';
+import { VERSION } from '../core/version.js';
 import { readSelection, writeSelection } from '../core/session.js';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -65,7 +66,7 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
   const stray = await findStrayHomeTree();
   const strayNote = stray.length ? `\n\n${coreText().strayTree(path.join(os.homedir(), DIR_NAME), stray.length)}` : '';
   const server = new McpServer(
-    { name: 'contextree', version: '0.1.0' },
+    { name: 'contextree', version: VERSION },
     // Le `cwd` seul ici : les roots du client ne se demandent qu'une fois
     // connecté, et le serveur n'existe pas encore.
     // Sans arbre, les **deux** consignes : l'invitation, et ce qui vaut dès que
@@ -351,24 +352,27 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
         selected: catalogueOnly ? [] : [...selected],
         reason: catalogueOnly ? 'catalogue' : reason,
         source: 'mcp',
+        session: sessionId,
         ...(error ? { error } : {}),
         ...(engine ? { engine } : {}),
       });
 
+      /**
+       * La trace est la **première ligne**, en texte (14 septembre 2026). Elle
+       * fermait la réponse dans un commentaire HTML, que le chat de VS Code
+       * masque : qui dépliait l'appel d'outil ne voyait pas quelles branches
+       * étaient parties. En tête, elle se lit sans rien faire défiler.
+       */
       if (catalogueOnly) {
         const cause =
           reason === 'deferred' ? t.causeCold : reason === 'all' ? t.causeNoEngine : t.causeFallback(error);
         const trace = renderTrace(tree, new Set(), 'catalogue');
-        return text([renderCatalogueOnly(tree, cause), '', `<!-- ${trace} — ${cause} -->`].join('\n') + synced);
+        return text([`${trace} — ${cause}`, '', renderCatalogueOnly(tree, cause)].join('\n') + synced);
       }
 
       const block = renderContext(tree, selected);
       const trace = renderTrace(tree, selected, reason);
-      return text(
-        [block || t.emptyTree, '', `<!-- ${trace}${error ? ` — ${error}` : ''} -->`].join(
-          '\n',
-        ) + synced,
-      );
+      return text([`${trace}${error ? ` — ${error}` : ''}`, '', block || t.emptyTree].join('\n') + synced);
     },
   );
 
@@ -398,16 +402,22 @@ export async function createServer(cwd: string = process.cwd()): Promise<McpServ
       annotations: { readOnlyHint: true },
     },
     async ({ path: branchPath }) => {
-      const { tree } = await open();
+      const { dir, tree } = await open();
       // La racine n'est pas une branche — elle n'a ni type ni `load_when` —
       // mais elle se relit par le même outil : on ne remplace pas un contenu
-      // qu'on n'a pas pu lire.
+      // qu'on n'a pas pu lire. Elle n'est pas journalisée : les vues la
+      // comptent déjà comme lue à chaque tour.
       if (branchPath === ROOT_PATH) {
         return text(t.readRoot(tree.rootContent));
       }
       const branch = tree.branches.get(branchPath);
       if (!branch) throw new Error(t.unknownBranch(branchPath));
-      return text(t.readBranch(branch.title, branch.type, branch.loadWhen, branch.content));
+      // Une lecture est une branche partie à l'agent, comme une branche routée :
+      // sans cette trace, un tour en catalogue n'allumait rien dans les vues.
+      await recordRead(dir, { at: Date.now(), session: sessionId, path: branchPath });
+      return text(
+        `${t.readTrace(branch.title, branchPath)}\n\n${t.readBranch(branch.title, branch.type, branch.loadWhen, branch.content)}`,
+      );
     },
   );
 

@@ -312,6 +312,8 @@ const CANVAS_STRINGS: string[] = [
   "deferred — routing in the background",
   "catalogue only — no routing available",
   "routed (next turn)",
+  "read by the agent",
+  "read by the agent with read_branch — {0}",
   "routing…",
   "no routed turn yet",
   "probe",

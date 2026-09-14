@@ -131,5 +131,12 @@
   "✎ written by the AI {0}": "✎ écrite par l'IA {0}",
   "✓ wired": "✓ câblé",
   "Tree created — {0} starter branches. To have your AI build the real one, copy the instructions: it will show you a plan first.": "Arbre créé — {0} branches de départ. Pour que ton IA construise le vrai, copie la consigne : elle te montrera d'abord un plan.",
-  "Copy the instructions for the AI": "Copier la consigne pour l'IA"
+  "Copy the instructions for the AI": "Copier la consigne pour l'IA",
+  "read by the agent": "lues par l'agent",
+  "read by the agent with read_branch — {0}": "lues par l'agent avec read_branch — {0}",
+  "contextree {0} — watching {1}": "contextree {0} — surveille {1}",
+  "read: {0}": "lues : {0}",
+  "error: {0}": "erreur : {0}",
+  "the extension ({0}) and contextree ({1}) are not the same version: reinstall the .vsix": "l'extension ({0}) et contextree ({1}) ne sont pas de la même version : réinstalle le .vsix",
+  "an older contextree writes its turns to {0}, which this extension no longer reads: update the contextree that your agent runs": "un contextree plus ancien écrit ses tours dans {0}, que cette extension ne lit plus : mets à jour le contextree que lance ton agent"
 }

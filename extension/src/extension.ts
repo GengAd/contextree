@@ -2,7 +2,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { CanvasPanel } from './canvasPanel.js';
 import { ContextTreeProvider, ROOT_ELEMENT, freshWrites, loadCore } from './treeProvider.js';
-import { LoadedDecorations, lastTurn, turnDescription, watchJournal } from './turn.js';
+import { LoadedDecorations, TurnLog, lastTurn, turnDescription, watchJournal } from './turn.js';
 import * as edit from './edit.js';
 import { wireAgent, initFromView } from './wire.js';
 
@@ -16,6 +16,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const provider = new ContextTreeProvider(searchFrom);
   const view = vscode.window.createTreeView('contextree.tree', { treeDataProvider: provider });
   const decorations = new LoadedDecorations();
+  const turnLog = new TurnLog();
+  context.subscriptions.push(turnLog);
+  /** Le dossier d'arbre dont le journal a été annoncé dans le canal. */
+  let announced: string | null = null;
 
   /**
    * Ce qui a réellement été chargé au dernier tour, montré là où on regarde
@@ -36,6 +40,12 @@ export function activate(context: vscode.ExtensionContext): void {
       const tree = await core.loadTree(dir);
       const total = tree.order.length;
       const last = await lastTurn(core, dir, total);
+      if (announced !== dir) {
+        announced = dir;
+        turnLog.watching(core, dir);
+      }
+      if (last) turnLog.turn(last);
+      void turnLog.checkVersion(core, dir, last);
       view.description = turnDescription(last, total);
       // `root.md` est toujours injecté : il fait partie de ce qui a été lu.
       decorations.set(

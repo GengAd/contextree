@@ -17,6 +17,7 @@ src/core/     le moteur, sans I/O externe autre que le disque
   pack.ts         export/import pour le partage
   session.ts      la sélection dont hérite le tour suivant (~/.contextree)
   journal.ts      les tours de routage et les écritures de l'IA
+  version.ts      la version du build, portée par chaque tour du journal
   eval.ts         la comparaison qui mesure le routage (npm run eval)
   lint.ts         le contrôle de forme de l'arbre : avertissements, jamais refus
 src/mcp/server.ts serveur MCP stdio, 10 outils

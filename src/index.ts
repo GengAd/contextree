@@ -6,6 +6,7 @@ export * from './core/render.js';
 export * from './core/lint.js';
 export * from './core/router.js';
 export * from './core/journal.js';
+export * from './core/version.js';
 export * from './core/pack.js';
 export * from './core/remote.js';
 export * from './core/sync.js';

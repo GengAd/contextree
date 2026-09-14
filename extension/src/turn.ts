@@ -28,6 +28,10 @@ export const LABELS = (): Record<string, string> => ({
   // prompt-là, elles partiront au suivant. Le dire, sinon on lit « routé » et
   // on croit que le tour affiché est celui qui vient de passer.
   'routed-bg': vscode.l10n.t('routed (next turn)'),
+  // Rien de routé, mais l'agent a lu ses branches lui-même (`read_branch`) :
+  // c'est ce qui est parti, et « catalogue seul » laisserait croire que rien ne
+  // l'a été.
+  read: vscode.l10n.t('read by the agent'),
 });
 
 /** La teinte d'une branche injectée : celle des correspondances de recherche,
@@ -82,7 +86,7 @@ export class LoadedDecorations implements vscode.FileDecorationProvider {
   /** Trois états, trois phrases : lue, choisie pour la suite, ou là faute de
    *  mieux. Les confondre, c'est laisser croire qu'un repli est un routage. */
   private tooltip(): string {
-    if (this.reason === 'routed') return vscode.l10n.t('contextree: read by the AI on the last turn');
+    if (this.reason === 'routed' || this.reason === 'read') return vscode.l10n.t('contextree: read by the AI on the last turn');
     if (this.reason === 'routed-bg') return vscode.l10n.t('contextree: chosen by the router for the next turn');
     return vscode.l10n.t('contextree: injected on the last turn ({0})', LABELS()[this.reason ?? ''] ?? String(this.reason));
   }
@@ -98,7 +102,7 @@ export function turnDescription(last: LastTurn | null, total: number): string {
 /**
  * Surveille le journal des tours.
  *
- * Le journal vit hors du workspace (`~/.contextree/journal/`) : le motif est
+ * Le journal vit hors du workspace (`stateDir()/journal/`) : le motif est
  * donc non récursif, seul cas supporté par VS Code hors dossier ouvert. On crée
  * le dossier s'il manque — un observateur n'a rien à observer sinon, et le cœur
  * le créerait de toute façon au premier tour.
@@ -120,6 +124,83 @@ export async function watchJournal(core: Core, onChange: () => void): Promise<vs
     watcher.onDidChange(onChange),
     watcher.onDidDelete(onChange),
   );
+}
+
+/**
+ * Le canal *Sortie › contextree* : une ligne par tour, et ce que l'extension
+ * surveille.
+ *
+ * C'est le premier endroit à regarder quand le surlignage ne suit pas
+ * (14 septembre 2026 : sous VS Code + Copilot, rien ne s'allumait et rien ne
+ * disait pourquoi). Il dit quel journal est lu — si le serveur MCP écrit
+ * ailleurs, ça se voit ici — et chaque tour tel que la vue l'a compris.
+ */
+export class TurnLog {
+  private readonly channel = vscode.window.createOutputChannel('contextree');
+  private lastLine = '';
+  private versionWarned = false;
+  private legacyWarned = false;
+
+  dispose(): void {
+    this.channel.dispose();
+  }
+
+  watching(core: Core, treeDir: string): void {
+    this.channel.appendLine(
+      vscode.l10n.t('contextree {0} — watching {1}', core.VERSION, core.journalFile(treeDir)),
+    );
+  }
+
+  /** Un tour, une ligne — et seulement quand il a changé : l'observateur se
+   *  déclenche aussi pour le journal des écritures. */
+  turn(last: LastTurn): void {
+    const t = last.turn;
+    const line = [
+      new Date(t.at).toLocaleTimeString(),
+      t.source,
+      LABELS()[last.key] ?? last.key,
+      t.engine ?? '—',
+      `${t.selected.length}/${last.total}`,
+      t.selected.join(', ') || '—',
+      ...(t.read?.length ? [vscode.l10n.t('read: {0}', t.read.join(', '))] : []),
+      ...(t.error ? [vscode.l10n.t('error: {0}', t.error)] : []),
+    ].join(' · ');
+    if (line === this.lastLine) return;
+    this.lastLine = line;
+    this.channel.appendLine(line);
+  }
+
+  /**
+   * L'extension et ce qui écrit le journal ne sont pas le même contextree.
+   *
+   * Deux signes, dits une fois chacun. Un tour signé d'une autre version : le
+   * serveur ou le hook a été mis à jour sans le `.vsix`, ou l'inverse. Et
+   * l'ancien journal, sous `~/.contextree/journal/`, qui bouge après le dernier
+   * tour lu ici : un contextree d'avant le déménagement de l'état écrit encore
+   * là, et la vue ne verra jamais ses tours.
+   */
+  async checkVersion(core: Core, treeDir: string, last: LastTurn | null): Promise<void> {
+    const other = last?.turn.version;
+    if (other && other !== core.VERSION && !this.versionWarned) {
+      this.versionWarned = true;
+      this.warn(vscode.l10n.t('the extension ({0}) and contextree ({1}) are not the same version: reinstall the .vsix', core.VERSION, other));
+    }
+    if (this.legacyWarned) return;
+    try {
+      const { mtimeMs } = await fs.stat(core.legacyJournalFile(treeDir));
+      if (mtimeMs > (last?.turn.at ?? 0) && Date.now() - mtimeMs < 24 * 3600_000) {
+        this.legacyWarned = true;
+        this.warn(vscode.l10n.t('an older contextree writes its turns to {0}, which this extension no longer reads: update the contextree that your agent runs', core.legacyJournalFile(treeDir)));
+      }
+    } catch {
+      // Pas d'ancien journal : le cas normal.
+    }
+  }
+
+  private warn(message: string): void {
+    this.channel.appendLine(`⚠ ${message}`);
+    void vscode.window.showWarningMessage(`contextree: ${message}`);
+  }
 }
 
 /** Le dernier tour de cet arbre, ou `null` s'il n'y en a pas encore. */
