@@ -15,7 +15,7 @@ import type { Branch, ContextTree } from './types.js';
  * des exemples de la consigne `bootstrap`. On ne signale que ce qui se voit à
  * la structure.
  */
-export type ShapeCode = 'no-root' | 'too-few' | 'crowded' | 'flat' | 'family' | 'load-when' | 'heavy-parent';
+export type ShapeCode = 'no-root' | 'too-few' | 'crowded' | 'flat' | 'family' | 'load-when' | 'heavy-parent' | 'long';
 
 export type ShapeWarning = {
   code: ShapeCode;
@@ -30,6 +30,9 @@ const MIN_BRANCHES = 4;
 const MAX_SIBLINGS = 15;
 /** Plat : au-delà de ce nombre, sans un seul enfant. */
 const FLAT_FROM = 6;
+/** Au-delà (en caractères de corps), une branche n'est plus une fraction : elle
+ *  est injectée en entier pour la moindre question qui la touche. */
+const MAX_CHARS = 6000;
 
 export function lintTree(tree: ContextTree): ShapeWarning[] {
   const t = LINT[currentLang()];
@@ -91,6 +94,15 @@ export function lintTree(tree: ContextTree): ShapeWarning[] {
     }
   }
 
+  // Une branche longue ruine le routage de l'intérieur : la bonne branche arrive,
+  // et avec elle vingt kilo-octets dont la question n'utilise qu'un paragraphe.
+  // Constaté sur l'arbre de ce dépôt le 15 septembre 2026 — trois branches de
+  // 17 à 22 Ko, 30 à 60 Ko injectés par prompt.
+  for (const b of branches) {
+    const n = b.content.trim().length;
+    if (n > MAX_CHARS) out.push({ code: 'long', paths: [b.path], message: t.long(b.path, n) });
+  }
+
   return out;
 }
 
@@ -148,6 +160,7 @@ const LINT: Record<
     family: (motif: string, paths: string[]) => string;
     loadWhen: (path: string, why: LoadWhenProblem) => string;
     heavyParent: (path: string) => string;
+    long: (path: string, n: number) => string;
   }
 > = {
   fr: {
@@ -166,6 +179,8 @@ const LINT: Record<
       } — écris une condition, à partir des demandes qu'elle doit servir (« quand on touche à… »).`,
     heavyParent: path =>
       `\`${path}\` est plus long que tous ses enfants réunis, et il est injecté avec chacun d'eux : garde-lui ce qui vaut pour tous, en court.`,
+    long: (path, n) =>
+      `\`${path}\` fait ${n} caractères (au-delà de ${MAX_CHARS}) : elle est injectée en entier dès qu'une question la touche. Découpe-la en enfants, un par sujet, et retire l'historique — ce qui a été décidé, pas comment on y est arrivé.`,
   },
   en: {
     header: '⚠ Tree shape (warnings, nothing is refused):',
@@ -183,5 +198,7 @@ const LINT: Record<
       } — write a condition, from the requests it must serve ("when working on…").`,
     heavyParent: path =>
       `\`${path}\` is longer than all its children together, and it is injected with each of them: keep only what applies to all, briefly.`,
+    long: (path, n) =>
+      `\`${path}\` is ${n} characters long (past ${MAX_CHARS}): it is injected whole as soon as a question touches it. Split it into children, one per topic, and drop the history — what was decided, not how it got there.`,
   },
 };

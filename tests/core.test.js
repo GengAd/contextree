@@ -2753,6 +2753,18 @@ test("forme : un parent plus long que tous ses enfants réunis", async () => {
   assert.deepEqual(lintTree(naissante), []);
 });
 
+test("forme : une branche au-delà de 6000 caractères est signalée", async () => {
+  const tree = await treeOf('racine', [
+    { path: 'a', title: 'a', content: 'x'.repeat(6001) },
+    { path: 'b', title: 'b', content: 'x'.repeat(6000) },
+    { path: 'c', title: 'c' },
+    { path: 'd', title: 'd' },
+  ]);
+  const long = lintTree(tree).filter(w => w.code === 'long');
+  assert.deepEqual(long.map(w => w.paths), [['a']]);
+  assert.match(long[0].message, /`a` fait 6001 caractères/);
+});
+
 test("forme : les avertissements parlent la langue de l'utilisateur", async () => {
   const plat = await treeOf('', ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map(path => ({ path, title: path })));
   const saved = process.env.CONTEXTREE_LANG;
