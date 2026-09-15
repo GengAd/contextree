@@ -1,45 +1,28 @@
 ---
 type: skill
 title: Partager un arbre par git
-load_when: quand on partage un arbre avec une équipe par git, en submodule ou dans le repo, ou qu'on règle un conflit sur .contextree/
+load_when: quand on partage un arbre avec une équipe par git, en submodule ou dans le repo, qu'on se demande quoi commiter, ou qu'on règle un conflit sur .contextree/
 ---
 
-Une équipe qui a déjà un dépôt commun n'a besoin de **rien d'autre que git** pour partager un arbre : pull/push, conflits, historique et revue sont ceux de git. Le backend (P7) est pour ceux qui n'ont pas ce dépôt.
+Une équipe qui a un dépôt commun n'a besoin **que de git** : pull/push, conflits, historique et revue. Le backend est pour ceux qui n'en ont pas.
 
-## Deux montages, et lequel choisir
+## Où le mettre
 
-**Le dossier dans le repo du projet** — `.contextree/` versionné avec le code. C'est le défaut : l'arbre suit les branches et les PR du projet, un changement de contexte se relit dans la même revue que le changement de code. À préférer tant qu'un seul projet est concerné.
+- **Dans le repo du projet** (défaut) : l'arbre suit les branches et les PR, un changement de contexte se relit dans la même revue que le code.
+- **En submodule** (`git submodule add <url> .contextree`) : quand **plusieurs dépôts partagent le même contexte**, ou que l'arbre doit se relire sans accès au code.
 
-**Le submodule** — `.contextree/` est un dépôt à part, monté dans le projet :
+## Ce qui ne se commite pas
 
-```bash
-git submodule add <url-de-l-arbre> .contextree
-```
-
-À prendre quand **plusieurs dépôts partagent le même contexte** (une équipe, un domaine métier), ou quand l'arbre doit se relire sans donner accès au code.
-
-Les deux marchent, vérifié le 11 septembre 2026 : `.git` est un **dossier** dans un clone et un **fichier** dans un submodule, et `walk()` ignore les deux — `findTreeDir` remonte comme d'habitude, `install --status` ne change pas.
-
-## Ce qui ne se partage jamais
-
-`.contextree.local/` est **gitignoré dès la création de l'arbre**. C'est tout ce qui fait tenir le calque personnel : un dossier frère plutôt qu'un champ dans le frontmatter, précisément pour qu'un `git add -A` ne puisse pas pousser des notes privées au groupe.
-
-La ligne s'ajoute toute seule (`ensureLocalIgnored`), sur les deux chemins de création — `init` et `write_root`. Elle n'écrase jamais un `.gitignore` existant, et ne fait rien hors d'un dépôt git.
-
-**Les fichiers de câblage des agents ne se partagent pas non plus — pour l'instant** (14 septembre 2026). `.vscode/mcp.json`, `.mcp.json`, `.cursor/mcp.json` portent la commande de *cette* machine (`/Users/<toi>/…/node …/cli.js`) tant que le paquet n'est pas publié et pinné : chez un collègue qui pull, elle n'existe pas. `install` le dit à côté de chaque fichier écrit (« contient des chemins de cette machine — ne le commite pas »). Si un tel fichier a déjà été commité, rien n'est cassé pour longtemps : `install` reconnaît une entrée contextree dont la commande **n'existe pas ici**, la dit « à câbler », et la réécrit (`repaired`) sans toucher aux autres serveurs du fichier. Dès la publication (`npx -y @gengad/contextree@<version> mcp`), la forme devient portable et ces fichiers pourront se commiter.
-
-Déroulé à deux : Béa surcharge `deploiement` dans son calque, ajoute une branche perso, et son `git status` reste **vide**. Adrien continue de voir la version du groupe. Les vues marquent la branche surchargée `· local`.
+- **`.contextree.local/`**, gitignoré à la création de l'arbre. Un collègue qui surcharge une branche dans son calque garde un `git status` vide.
+- **Les fichiers de câblage** (`.vscode/mcp.json`, `.mcp.json`, `.cursor/mcp.json`) **tant que le paquet n'est pas publié** : ils portent des chemins de cette machine, et `install` le dit. Déjà commités, rien de grave : `install` reconnaît une commande absente de la machine et la réécrit. Une fois publié et pinné (`npx -y @gengad/contextree@<version> mcp`), ils deviendront portables.
+- Les fichiers de consignes (`AGENTS.md`, `copilot-instructions.md`) **se commitent** : leur bloc est rendu sans le calque personnel.
 
 ## Le rituel
 
-Rien de particulier : `git pull` avant de travailler, `git push` après avoir écrit dans l'arbre. Un arbre modifié par l'IA en cours de session est un changement comme un autre — il se relit dans le diff avant d'être poussé, et c'est souhaitable : *l'arbre écrit par l'IA est réinjecté ensuite, donc il se relit comme du code*.
+`git pull` avant, `git push` après avoir écrit dans l'arbre. **Un arbre écrit par l'IA est réinjecté ensuite : il se relit comme du code**, dans le diff.
 
-## Les conflits — deux choses qu'on ne devine pas
+## Les conflits
 
-Un conflit sur une branche de l'arbre est un conflit git ordinaire, et le fichier reste lisible à la main. Mais :
-
-**1. Un conflit non résolu dans le *corps* d'une branche part au modèle.** Mesuré : les marqueurs `<<<<<<<` se retrouvent tels quels dans le bloc injecté. Rien ne casse — le hook sort en 0, l'arbre se charge — mais le modèle reçoit deux versions contradictoires sans savoir laquelle vaut. **Résoudre avant de relancer l'agent**, pas après.
-
-**2. Un conflit dans le *frontmatter* ne se voit pas du tout.** Le parseur prend la dernière valeur rencontrée et n'annonce rien : `contextree list` affiche un `load_when` plausible, choisi au hasard entre les deux. C'est le cas le plus traître, parce qu'il ressemble à un arbre sain. **Après un merge qui a touché `.contextree/`, relire les `load_when` des branches concernées** — c'est le champ qui décide de tout, et c'est celui qu'un conflit corrompt en silence.
-
-**Effet de bord utile** : une branche surchargée dans le calque local masque son propre conflit — le local gagne, et l'utilisateur travaille sans voir le fichier de groupe abîmé. Pratique sur le moment, trompeur à la longue : le conflit reste à résoudre pour les autres.
+- **Un conflit non résolu dans le corps part au modèle** : les marqueurs `<<<<<<<` arrivent tels quels dans le bloc. Résoudre **avant** de relancer l'agent.
+- **Un conflit dans le frontmatter ne se voit pas** : le parseur garde la dernière valeur, `list` affiche un `load_when` plausible. **Après un merge qui touche `.contextree/`, relire les `load_when` concernés.**
+- Une branche surchargée en local **masque son propre conflit** : il reste à résoudre pour les autres.

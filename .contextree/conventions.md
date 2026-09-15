@@ -1,13 +1,24 @@
 ---
 type: rule
 title: Conventions de code
-load_when: quand on écrit ou renomme du code, un fichier, un test, un message de commit, un texte affiché, une clé de frontmatter ou un nom d'outil MCP
+load_when: quand on écrit ou renomme du code, un fichier, un test, un message de commit, un texte affiché ou lu par un modèle, une clé de frontmatter ou un nom d'outil MCP
 ---
 
 - **Modules** en `camelCase.ts`. Les types vivent dans `src/core/types.ts` et nulle part ailleurs.
-- **Langues** (fait le 14 septembre 2026) : **l'outil est bilingue, FR + EN**, selon la langue de l'utilisateur — CLI, `install`, erreurs, extension, ce que lit le modèle, arbre de départ, README. **Tout texte affiché ou lu par un modèle passe par un dictionnaire** : `src/core/messages.ts` (cœur), `src/messages.ts` (CLI, install), `src/mcp/messages.ts` (serveur), des `Record<Lang, …>` dans `render.ts` (bloc injecté, consignes), `vscode.l10n.t` + `extension/l10n/bundle.l10n.fr.json` et `package.nls*.json` dans l'extension. Le français donne la forme, l'anglais la remplit : une clé oubliée casse le typecheck. Dans l'extension, la clé est le **texte anglais** (convention `vscode.l10n`), et un test vérifie que chaque clé a sa traduction. **Restent en français** : la doc de ce dépôt (`.contextree/`), les commentaires, les commits, le tableau Trello, le prompt du routeur (`ROUTER_SYSTEM` — le traduire invaliderait `npm run eval`), et les messages du backend (`remote.ts`, `sync.ts`, P7 pas en service). **Restent en anglais dans les deux langues** : identifiants, noms d'outils MCP, clés de frontmatter, noms de commandes, `## Rules` / `## Context`. Traduire une consigne pour un modèle, c'est garder son **moment** (« before you finish your answer »), pas seulement son sens. Les tests posent `CONTEXTREE_LANG=fr` en tête de fichier.
-- **Commits** : `type(scope): sujet` en français — `feat`, `fix`, `docs`, `test`, `chore`. Le sujet dit ce qui change pour l'utilisateur, pas le fichier touché (voir `git log`). Le corps explique le pourquoi quand il n'est pas évident.
-- **Tests** : `node:test` sur le build, dans `tests/core.test.js` (`npm test` builde d'abord). Un test par comportement, nommé « module : ce qui doit être vrai ». Un test qui a besoin du réseau ou d'un moteur de routage n'entre pas dans `npm test` : il est opt-in (`test:sql`, `route --eval`).
-- **Commentaires** : le *pourquoi* et ce que ça coûte, pas le quoi. Un choix qui a été tranché se lit dans le code à l'endroit où il s'applique, avec la date s'il renverse un choix précédent.
-- **Pas de fichier `.md` à la racine** hors `README.md` (anglais) et `README.fr.md` (français) — la seconde exception date du 14 septembre 2026 : une procédure pour un humain se lit dans sa langue. Ce sont toujours des procédures, jamais des consignes : toute la documentation vit dans `.contextree/`, une branche, un `load_when`, et rien en double ailleurs.
-- **Le cœur ne connaît ni MCP ni la CLI ni l'extension** : `src/core/` ne dépend que de Node et du disque. Les trois surfaces sont des adaptateurs au-dessus du même moteur ; si l'une diverge de l'autre, c'est un bug.
+- **Le cœur ne connaît ni MCP, ni la CLI, ni l'extension** : `src/core/` ne dépend que de Node et du disque.
+- **Commits** : `type(scope): sujet` en français — `feat`, `fix`, `docs`, `test`, `chore`. Le sujet dit ce qui change pour l'utilisateur ; le corps, le pourquoi s'il n'est pas évident.
+- **Tests** : `node:test` sur le build, `tests/core.test.js`, un test par comportement nommé « module : ce qui doit être vrai ». Réseau ou moteur de routage ⇒ opt-in (`test:sql`, `eval`), jamais dans `npm test`. Les tests posent `CONTEXTREE_LANG=fr`.
+- **Commentaires** : le pourquoi et ce que ça coûte, pas le quoi.
+- **Pas de `.md` à la racine** hors `README.md` (anglais) et `README.fr.md` : des procédures pour un humain. Toute la doc vit dans `.contextree/`.
+
+## Langues
+
+**L'outil est bilingue fr + en. Tout texte affiché ou lu par un modèle passe par un dictionnaire** :
+- `src/core/messages.ts` (cœur), `src/messages.ts` (CLI, install), `src/mcp/messages.ts` (serveur), des `Record<Lang, …>` dans `render.ts` et `lint.ts` ;
+- extension : `vscode.l10n.t` + `l10n/bundle.l10n.fr.json`, `package.nls*.json`, `CANVAS_STRINGS` pour la toile. La clé est le **texte anglais** ; un test vérifie chaque traduction.
+
+Le français donne la forme, l'anglais la remplit : une clé oubliée casse le typecheck.
+
+**Restent en français** : `.contextree/`, commentaires, commits, Trello, `ROUTER_SYSTEM` (le traduire invaliderait l'eval), messages du backend. **En anglais dans les deux langues** : identifiants, noms d'outils MCP, clés de frontmatter, commandes, `## Rules` / `## Context`.
+
+Le mécanisme de résolution est dans *Langue de l'outil*.

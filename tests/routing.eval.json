@@ -14,7 +14,7 @@
   {
     "prompt": "test hook latency",
     "expect": [
-      "architecture/routage"
+      "architecture/routage/differe"
     ]
   },
   {
@@ -57,26 +57,26 @@
   {
     "prompt": "comment câbler contextree à Codex, il n'a pas de hook ?",
     "expect": [
-      "architecture/surfaces-injection"
+      "architecture/surfaces-injection/install"
     ]
   },
   {
     "prompt": "le bouton « ajouter contextree à cette IA » écrit quoi exactement ?",
     "expect": [
-      "architecture/surfaces-injection"
+      "architecture/surfaces-injection/install"
     ]
   },
   {
     "prompt": "comment marche le pull depuis Supabase, et que se passe-t-il en cas de conflit ?",
     "expect": [
-      "architecture/arbres-distants"
+      "architecture/arbres-distants/pack-et-sync"
     ]
   },
   {
     "prompt": "un membre d'une équipe fille doit-il voir les arbres de l'entreprise ?",
     "expect": [
       "identite",
-      "architecture/arbres-distants"
+      "architecture/arbres-distants/plan"
     ]
   },
   {
@@ -141,6 +141,19 @@
     "prompt": "pourquoi cet outil existe, et en quoi c'est différent d'un CLAUDE.md ?",
     "expect": [
       "pourquoi"
+    ]
+  },
+  {
+    "prompt": "je réécris la description de l'outil get_context, comment la formuler pour que Copilot l'appelle vraiment ?",
+    "expect": [
+      "consignes-modele",
+      "architecture/surfaces-injection/mcp"
+    ]
+  },
+  {
+    "prompt": "quel moteur de routage est choisi sur un poste sans clé API ?",
+    "expect": [
+      "architecture/routage/moteurs"
     ]
   }
 ]

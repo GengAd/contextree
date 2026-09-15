@@ -27,7 +27,7 @@ Le tableau Trello **contextree** (id `6a9ebc7ca1b58d53d9cce21e`) est la file de 
 9. Bloqué pour de bon (identifiants, compte, question qu'on ne peut pas trancher) : remettre le dépôt propre (`git stash` ou revert), commenter, déplacer dans *Bloqué — humain*, prendre la carte suivante.
 10. *A faire* vide, ou plus que des cartes bloquées : le dire clairement et s'arrêter.
 
-## Branches git : une par palier (décidé le 9 septembre 2026)
+## Branches git : une par palier
 
 Les cartes sont préfixées par leur palier (`P1 ·`, `P2 ·`…). Chaque palier vit sur **sa** branche, créée depuis `main` à la première carte du palier, et mergée dans `main` (`git merge --no-ff`) à la dernière — cette dernière carte est explicite dans le plan (« Pn · Merger … dans main »). `main` ne reçoit que des merges de palier.
 
@@ -43,7 +43,7 @@ Les cartes sont préfixées par leur palier (`P1 ·`, `P2 ·`…). Chaque palier
 | P8 visibilité | `p8-visibilite` |
 | P9 entreprise | `p9-entreprise` |
 
-La carte dit toujours sa branche. Si elle n'existe pas encore : `git checkout main && git pull --ff-only && git checkout -b <branche>`. La branche `phase-2-contexte-commun` a été mergée dans `main` le 9 septembre 2026 et n'existe plus en local.
+La carte dit toujours sa branche. Si elle n'existe pas encore : `git checkout main && git pull --ff-only && git checkout -b <branche>`.
 
 ## Definition of done
 
