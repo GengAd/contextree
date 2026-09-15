@@ -11,4 +11,4 @@ load_when: quand on lance ou modifie npm run eval, le jeu tests/routing.eval.jso
 - **Déplacer ou découper une branche, ou corriger un `load_when`, invalide les cas qui reposaient dessus.** Relire le jeu avant de croire un score qui bouge.
 - `ROUTER_SYSTEM` reste en français : le traduire invaliderait la mesure.
 
-Repère : 57 % de précision et 75 % de rappel au premier passage (CLI `claude`, haiku, 20 cas), 93 % de rappel après avoir donné une vraie condition à la branche d'identité d'alors — un `load_when` « toujours pertinent » est un vœu que le routeur honore une fois sur trois. Ce qui doit être toujours là va dans la racine.
+Repère : 57 % de précision et 75 % de rappel au premier passage (CLI `claude`, haiku, 20 cas), 93 % de rappel après avoir donné une vraie condition à `identite` — un `load_when` « toujours pertinent » est un vœu que le routeur honore une fois sur trois : même une branche qui sert presque toujours a besoin d'une vraie condition.

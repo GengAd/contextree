@@ -7,7 +7,7 @@ load_when: quand la demande touche au code, aux fichiers, aux dépendances, à u
 - **Le hook ne bloque jamais un prompt.** Toute erreur dans `cmdHook` sort en code 0 et en silence.
 - **Le routage ne bloque jamais l'appel principal.** Erreur ou timeout ⇒ fallback ; le routeur ne rend jamais un ensemble vide. Un moteur lent se lance en tâche de fond.
 - **Un agent n'est jamais laissé sans racine ni moyen d'atteindre une branche** — le catalogue avec les chemins, faute de mieux.
-- **Aucun type de branche n'est privilégié** : c'est le `load_when` qui décide.
+- **Aucun type de branche n'est privilégié** : c'est le `load_when` qui décide. L'identité reste une branche à part même quand elle sert presque toujours : c'est un type, pas un morceau de racine.
 - **Les fichiers markdown sont la source de vérité** : `.contextree/` reste lisible et éditable à la main.
 - **Pas de dépendance ajoutée sans discussion.** Trois : `@anthropic-ai/sdk`, `@modelcontextprotocol/sdk`, `zod`. Frontmatter, compression, presse-papier, TOML, API Supabase sont faits main sur Node.
 - `npm test` passe avant de valider.
