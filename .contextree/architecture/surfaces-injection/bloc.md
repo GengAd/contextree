@@ -11,7 +11,7 @@ Encadré par `<contextree>…</contextree>`, dans cet ordre :
 2. `## Rules` — les branches `identity` et `rule` retenues : des contraintes, à lire avant la doc ;
 3. `## Context` — le reste ;
 4. `## Catalogue — branches non chargées` — titre, type, `load_when`, et la consigne de rappeler `get_context` dès que la tâche se précise ;
-5. **le rappel d'écrire** : « avant de terminer ta réponse, dis ce que cette tâche t'a appris… ».
+5. **le rappel d'écrire** (`CAPITALIZE`) : « avant de terminer ta réponse », ce que la tâche a appris **et que l'arbre ne dit pas encore** ; une question de lecture n'est pas une branche (un `load_when` qui recopie la question qu'on vient de poser) ; écrire dans la branche qui couvre le sujet, puis la racine si ça vaut pour tout le projet, et seulement ensuite une nouvelle branche ; sinon « rien à retenir ». La description d'`upsert_branch` dit la même borne.
 
 Le rappel vit **dans le bloc et nulle part ailleurs** : les `instructions` du serveur sont lues une fois à la connexion, avant toute tâche ; le bloc arrive avec chaque tour, sur les deux surfaces. Un seul rendu de catalogue est partagé par le hook et le serveur.
 

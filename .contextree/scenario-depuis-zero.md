@@ -30,6 +30,4 @@ Le test qui compte : **quelqu'un part d'un projet qui n'a jamais entendu parler 
 
 `claude -p "…"` puis `claude -p -c "oui"` déroulent les étapes 3-4. Puis `contextree list`, `git status` (ou sommes de contrôle) dans le clone, et le journal sous `stateDir()/journal/`.
 
-## Où on en est
-
-Claude Code : déroulé en français et en anglais, étapes 3, 4, 6 et 7 ; forme de l'arbre vérifiée sur deux dépôts témoins « composants ». **Jamais joués** : l'étape 5 à la main, et tout le scénario sous Copilot (voir *Matrice des agents*).
+Ce qui a été déroulé, agent par agent, est dans *Matrice des agents*. L'étape 5 n'a jamais été jouée à la main.

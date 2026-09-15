@@ -29,8 +29,4 @@ P4 et P5 ont été mergés sans leur porte : ce qui manque est une observation o
 - **Pas de com, pas de télémétrie, pas de site** : publier sert à ce que des collègues installent.
 - Ce que l'IA ne peut pas faire va dans *Bloqué — humain (Adrien)*.
 
-## Hors plan
-
-L'arbre de conversation (Lacis), les agents et l'exécution d'outils ; une webview éditeur de texte ; une génération d'arbre par contextree lui-même ; un serveur maison.
-
-Le détail technique de P7 à P9 est dans *Montages, visibilité et hiérarchie*.
+Ce qui n'entre dans aucun palier est dans *Périmètre*. Le détail technique de P7 à P9 est dans *Montages, visibilité et hiérarchie*.

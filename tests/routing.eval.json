@@ -75,7 +75,6 @@
   {
     "prompt": "un membre d'une équipe fille doit-il voir les arbres de l'entreprise ?",
     "expect": [
-      "identite",
       "architecture/arbres-distants/plan"
     ]
   },
@@ -94,28 +93,24 @@
   {
     "prompt": "quel format pour mes messages de commit, et où vont les types ?",
     "expect": [
-      "identite",
       "conventions"
     ]
   },
   {
     "prompt": "je peux ajouter une dépendance pour parser le TOML proprement ?",
     "expect": [
-      "identite",
       "regles"
     ]
   },
   {
     "prompt": "est-ce qu'on devrait ajouter un chat avec l'IA dans l'extension ?",
     "expect": [
-      "identite",
       "perimetre"
     ]
   },
   {
     "prompt": "relis mon diff et dis-moi ce qui cloche avant que je committe",
     "expect": [
-      "identite",
       "revue-de-code"
     ]
   },

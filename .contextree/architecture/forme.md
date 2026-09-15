@@ -16,6 +16,7 @@ load_when: quand on touche à lint.ts, aux avertissements de forme (arbre plat, 
 | `load-when` | vide, en « toujours », ou recopié du titre |
 | `heavy-parent` | parent plus long que tous ses enfants réunis — **à partir de deux enfants** (avec un seul, rien ne se multiplie) |
 | `long` | corps de plus de 6 000 caractères : injecté en entier dès qu'une question le touche |
+| `overlap` | au moins 60 % des mots (≥ 5 lettres) d'une branche se retrouvent dans la racine ou dans une autre branche — typiquement la réponse à « de quoi parle le projet ? » écrite en branche. Lexical, pas sémantique ; ignoré sous 12 mots distincts. Seuil calibré sur l'arbre de ce dépôt, dont les paires les plus proches plafonnent à 44 % |
 
 Chaque message dit **quoi faire**, en fr et en en : il est lu par un modèle dans la réponse d'un outil.
 

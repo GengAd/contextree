@@ -14,4 +14,4 @@ Les principes mesurés sur ce projet. Ils valent pour tout texte destiné à un 
 - **Resserrer ce qui marche rend l'outil insistant pour rien.** On corrige le défaut observé, pas la politesse autour.
 - **Traduire une consigne, c'est garder son moment**, pas seulement son sens.
 - **Un scénario réparé en le déroulant ne prouve rien** : seul le passage sans reprise parle, et un critère qui tient à quelques secondes près est en sursis.
-- **Un garde-fou qui marche peut faire rater une démonstration** (« rien à retenir, c'est déjà écrit ») : c'est un succès, choisir une autre scène.
+- **Borner ce qu'on demande d'écrire.** « Écris ce que tu as appris » sans borne a produit, sur « de quoi parle le projet ? », une branche éponyme qui redisait la racine. Le rappel dit maintenant : seulement ce que l'arbre ne dit pas encore ; pas une question de lecture ; dans la branche existante ou la racine avant une nouvelle branche.
