@@ -98,20 +98,32 @@ const PULL: Record<Lang, string> = {
  *
  * Il demande aussi de **dire quand on n'écrit pas** : un refus visible se
  * discute, un silence ne se corrige pas.
+ *
+ * Et il borne ce qui mérite d'être écrit. Sans ça, « de quoi parle le projet ? »
+ * produisait une branche éponyme : la réponse à une question de lecture, écrite
+ * comme un fait appris, avec la question pour `load_when`. Ce qui vaut pour tout
+ * le projet va dans la racine, ce qui prolonge une branche va dans cette branche.
  */
 const CAPITALIZE: Record<Lang, string> = {
   fr:
-  '**Avant de terminer ta réponse**, dis en une ligne ce que cette tâche t\'a appris sur ce ' +
-  'projet et qui restera vrai demain — une convention, une contrainte, un chemin qui compte. ' +
-  'Si c\'est le cas, écris-le dans l\'arbre avec `upsert_branch` **avant** de répondre, sans ' +
-  "demander la permission ; sinon dis « rien à retenir » et passe. Ne termine pas sans l'un " +
-  'ou l\'autre.',
+    '**Avant de terminer ta réponse**, dis en une ligne ce que cette tâche t\'a appris sur ce ' +
+    'projet, qui restera vrai demain et que **l\'arbre ne dit pas encore** — une convention, une ' +
+    'contrainte, un chemin qui compte. Une question de lecture (« de quoi parle le projet ? ») ' +
+    "n'apprend rien à l'arbre : si le seul `load_when` possible recopie la question qu'on vient " +
+    "de te poser, ce n'est pas une branche. Si c'est le cas, écris-le **avant** de répondre, sans " +
+    'demander la permission : dans la branche qui couvre déjà le sujet (`upsert_branch`, même ' +
+    "chemin), dans la racine (`write_root`) si ça vaut pour tout le projet, sinon dans une " +
+    "nouvelle branche. Sinon dis « rien à retenir » et passe. Ne termine pas sans l'un ou l'autre.",
   en:
     '**Before you finish your answer**, say in one line what this task taught you about this ' +
-    'project that will still be true tomorrow — a convention, a constraint, a path that matters. ' +
-    'If there is something, write it into the tree with `upsert_branch` **before** answering, ' +
-    'without asking for permission; otherwise say "nothing to keep" and move on. Do not finish ' +
-    'without one or the other.',
+    'project that will still be true tomorrow and that **the tree does not say yet** — a ' +
+    'convention, a constraint, a path that matters. A reading question ("what is this project ' +
+    'about?") teaches the tree nothing: if the only possible `load_when` repeats the question you ' +
+    'were just asked, it is not a branch. If there is something, write it **before** answering, ' +
+    'without asking for permission: into the branch that already covers the topic ' +
+    '(`upsert_branch`, same path), into the root (`write_root`) if it applies to the whole ' +
+    'project, otherwise into a new branch. Otherwise say "nothing to keep" and move on. Do not ' +
+    'finish without one or the other.',
 };
 
 function section(b: { title: string; content: string }): string {

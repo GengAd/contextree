@@ -16,8 +16,8 @@ contexte de domaine, références et skills, sous forme de petites branches typ�
 
 Avant de travailler sur une tâche non triviale, appelle \`get_context\` avec la demande de
 l'utilisateur : tu récupères uniquement les branches pertinentes. Quand tu découvres un fait
-durable sur ce projet (une convention, une contrainte, un chemin qui compte), écris-le avec
-\`upsert_branch\` — directement, sans demander la permission. L'arbre est fait pour être enrichi
+durable sur ce projet (une convention, une contrainte, un chemin qui compte) que l'arbre ne dit
+pas encore, écris-le avec \`upsert_branch\` — directement, sans demander la permission. L'arbre est fait pour être enrichi
 à l'usage. Sur un arbre neuf, commence par \`write_root\` : c'est le seul contenu toujours
 injecté, et aucune branche ne le remplace. Si le projet a déjà un \`CLAUDE.md\`, des règles
 Cursor ou un README nourri, le prompt \`bootstrap\` donne la consigne pour en tirer l'arbre.
@@ -97,7 +97,11 @@ un rattrapage exceptionnel : un prompt de départ ne contient presque jamais la 
     "(« quand on touche à X », « si la demande parle de Y »), pas comme un résumé. " +
     "**Un `/` dans le chemin crée un enfant** (`composants/date`) : le parent est chargé avec " +
     "chacun de ses enfants, il porte donc ce qui vaut pour tous, en court. Une famille — composants, " +
-    'écrans, endpoints, modules — se range sous un parent, un enfant par élément.',
+    'écrans, endpoints, modules — se range sous un parent, un enfant par élément. ' +
+    "**Avant de créer une branche**, regarde le catalogue : si une branche couvre déjà le sujet, " +
+    "mets-la à jour (même chemin) ; ce qui vaut pour tout le projet va dans la racine (`write_root`). " +
+    "Une branche sert des demandes futures : un `load_when` qui recopie la question qu'on vient de " +
+    "te poser n'en est pas une.",
   upsertTitleParam: 'Titre lisible de la branche.',
   upsertTypeParam:
     "identity = qui est l'IA · rule = contrainte dure · context = connaissance de domaine · reference = API, chemins, commandes · skill = savoir-faire activable (feuille).",
@@ -179,8 +183,8 @@ domain context, references and skills, as small typed branches.
 
 Before working on a non-trivial task, call \`get_context\` with the user's request: you get
 only the relevant branches. When you discover a durable fact about this project (a convention,
-a constraint, a path that matters), write it with \`upsert_branch\` — directly, without asking
-for permission. The tree is meant to grow with use. On a new tree, start with \`write_root\`:
+a constraint, a path that matters) that the tree does not say yet, write it with
+\`upsert_branch\` — directly, without asking for permission. The tree is meant to grow with use. On a new tree, start with \`write_root\`:
 it is the only content that is always injected, and no branch replaces it. If the project
 already has a \`CLAUDE.md\`, Cursor rules or a substantial README, the \`bootstrap\` prompt
 gives the instructions to build the tree from them.
@@ -258,7 +262,10 @@ prompt almost never contains the whole task.`,
     '("when touching X", "if the request is about Y"), not as a summary. ' +
     '**A `/` in the path creates a child** (`components/date`): the parent is loaded with each of ' +
     'its children, so it holds what applies to all of them, briefly. A family — components, screens, ' +
-    'endpoints, modules — goes under a parent, one child per item.',
+    'endpoints, modules — goes under a parent, one child per item. ' +
+    '**Before creating a branch**, check the catalogue: if a branch already covers the topic, update ' +
+    'it (same path); what applies to the whole project goes into the root (`write_root`). A branch ' +
+    'serves future requests: a `load_when` that repeats the question you were just asked is not one.',
   upsertTitleParam: 'Readable title of the branch.',
   upsertTypeParam:
     'identity = who the AI is · rule = hard constraint · context = domain knowledge · reference = APIs, paths, commands · skill = activatable know-how (leaf).',

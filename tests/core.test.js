@@ -776,6 +776,11 @@ test("render : le rappel d'écrire arrive avec la tâche, et à un seul endroit"
   // Rattaché à un moment précis — la fin de la réponse. Une consigne sans
   // moment est une consigne qu'on remet à plus tard (mesuré le 10 sept. 2026).
   assert.match(tout, /Avant de terminer ta réponse/);
+  // Et il borne ce qui s'écrit : une question de lecture n'est pas une branche,
+  // ce qui vaut pour tout le projet va dans la racine.
+  assert.match(tout, /que \*\*l'arbre ne dit pas encore\*\*/);
+  assert.match(tout, /recopie la question/);
+  assert.match(tout, /`write_root`\) si ça vaut pour tout le projet/);
   // En tout dernier : c'est une consigne pour la suite du tour, pas une
   // information sur ce qu'on vient de recevoir.
   assert.ok(tout.indexOf('upsert_branch') > tout.indexOf('contenu a'));
@@ -2763,6 +2768,31 @@ test("forme : une branche au-delà de 6000 caractères est signalée", async () 
   const long = lintTree(tree).filter(w => w.code === 'long');
   assert.deepEqual(long.map(w => w.paths), [['a']]);
   assert.match(long[0].message, /`a` fait 6001 caractères/);
+});
+
+test("forme : une branche qui redit la racine ou une autre branche", async () => {
+  const racine = "contextree maintient un arbre de contexte partageable, routé par intelligence artificielle, injecté à chaque appel via un serveur MCP et un hook. Dépôt TypeScript privé, mainteneur unique, paquet publié sous gengad.";
+  const tree = await treeOf(racine, [
+    // La réponse à « de quoi parle le projet ? », écrite en branche.
+    { path: 'projet', title: 'De quoi parle le projet', loadWhen: 'quand on demande de quoi parle le projet',
+      content: "Le projet contextree maintient un arbre de contexte partageable, routé par intelligence artificielle et injecté à chaque appel grâce à un serveur MCP." },
+    { path: 'routage', title: 'Routage', content: "Le routeur envoie le catalogue des branches au modèle, qui renvoie des indices entiers ; les parents remontent ensuite avec withAncestors, et un repli garde toujours quelque chose." },
+    { path: 'routeur', title: 'Routeur', content: "Le routeur envoie le catalogue des branches au modèle, qui renvoie des indices entiers ; les parents remontent ensuite avec withAncestors." },
+    { path: 'build', title: 'build' },
+  ]);
+  const overlap = lintTree(tree).filter(w => w.code === 'overlap');
+  assert.deepEqual(overlap.map(w => w.paths), [['projet'], ['routeur', 'routage']]);
+  assert.match(overlap[0].message, /`projet` redit la racine/);
+  assert.match(overlap[1].message, /`routeur` redit `routage`/);
+
+  // Des branches voisines qui partagent un lexique de domaine ne sont pas des doublons.
+  const voisines = await treeOf(racine, [
+    { path: 'hook', title: 'hook', content: "Le hook de Claude Code sort toujours en code zéro, écrit le contexte sur stdout et la trace sur stderr, et lance le routage en tâche de fond quand le moteur est lent." },
+    { path: 'serveur', title: 'serveur', content: "Le serveur MCP expose dix outils, relit l'arbre à chaque appel, et rend le catalogue avec les chemins quand aucune sélection routée n'est disponible pour la demande." },
+    { path: 'c', title: 'c' },
+    { path: 'd', title: 'd' },
+  ]);
+  assert.deepEqual(lintTree(voisines), []);
 });
 
 test("forme : les avertissements parlent la langue de l'utilisateur", async () => {

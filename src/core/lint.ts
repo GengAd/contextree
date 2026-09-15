@@ -15,7 +15,7 @@ import type { Branch, ContextTree } from './types.js';
  * des exemples de la consigne `bootstrap`. On ne signale que ce qui se voit à
  * la structure.
  */
-export type ShapeCode = 'no-root' | 'too-few' | 'crowded' | 'flat' | 'family' | 'load-when' | 'heavy-parent' | 'long';
+export type ShapeCode = 'no-root' | 'too-few' | 'crowded' | 'flat' | 'family' | 'load-when' | 'heavy-parent' | 'long' | 'overlap';
 
 export type ShapeWarning = {
   code: ShapeCode;
@@ -33,6 +33,13 @@ const FLAT_FROM = 6;
 /** Au-delà (en caractères de corps), une branche n'est plus une fraction : elle
  *  est injectée en entier pour la moindre question qui la touche. */
 const MAX_CHARS = 6000;
+/** Part du vocabulaire d'une branche déjà présente ailleurs à partir de laquelle
+ *  elle redit une autre branche ou la racine. Calibré sur l'arbre de ce dépôt,
+ *  sain, dont les paires les plus proches plafonnent à 44 %. */
+const OVERLAP = 0.6;
+/** En dessous de ce nombre de mots distincts, une branche est trop courte pour
+ *  qu'un recouvrement dise quelque chose. */
+const OVERLAP_MIN_WORDS = 12;
 
 export function lintTree(tree: ContextTree): ShapeWarning[] {
   const t = LINT[currentLang()];
@@ -103,7 +110,45 @@ export function lintTree(tree: ContextTree): ShapeWarning[] {
     if (n > MAX_CHARS) out.push({ code: 'long', paths: [b.path], message: t.long(b.path, n) });
   }
 
+  // Une branche qui redit la racine ou une autre branche. Typiquement la réponse
+  // à « de quoi parle le projet ? » écrite en branche : la racine le disait déjà.
+  // Du lexique, pas du sens — les mots de cinq lettres et plus, en commun — :
+  // c'est ce qui se voit sans modèle, et un doublon franc ne passe pas dessous.
+  const vocab = new Map<string, Set<string>>([[ROOT, wordsOf(tree.rootContent)]]);
+  for (const b of branches) vocab.set(b.path, wordsOf(b.content));
+  // Chaque branche garde sa plus proche voisine ; d'une paire qui se redit dans
+  // les deux sens, on signale le côté le plus contenu dans l'autre.
+  const found = new Map<string, { path: string; other: string; ratio: number }>();
+  for (const b of branches) {
+    const mine = vocab.get(b.path)!;
+    if (mine.size < OVERLAP_MIN_WORDS) continue;
+    for (const [other, theirs] of vocab) {
+      if (other === b.path) continue;
+      let shared = 0;
+      for (const w of mine) if (theirs.has(w)) shared++;
+      const ratio = shared / mine.size;
+      const key = [b.path, other].sort().join('|');
+      if (ratio >= OVERLAP && ratio > (found.get(key)?.ratio ?? 0)) found.set(key, { path: b.path, other, ratio });
+    }
+  }
+  for (const b of branches) {
+    const best = [...found.values()].filter(f => f.path === b.path).sort((x, y) => y.ratio - x.ratio)[0];
+    if (!best) continue;
+    out.push({
+      code: 'overlap',
+      paths: best.other === ROOT ? [b.path] : [b.path, best.other],
+      message: t.overlap(b.path, best.other, Math.round(best.ratio * 100)),
+    });
+  }
+
   return out;
+}
+
+const ROOT = ':root';
+
+/** Les mots d'au moins cinq lettres, sans accents ni casse. */
+function wordsOf(text: string): Set<string> {
+  return new Set(normalize(text).split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 5));
 }
 
 /** Les avertissements en un bloc lisible, ou `''` s'il n'y en a pas. */
@@ -161,6 +206,7 @@ const LINT: Record<
     loadWhen: (path: string, why: LoadWhenProblem) => string;
     heavyParent: (path: string) => string;
     long: (path: string, n: number) => string;
+    overlap: (path: string, other: string, percent: number) => string;
   }
 > = {
   fr: {
@@ -181,6 +227,10 @@ const LINT: Record<
       `\`${path}\` est plus long que tous ses enfants réunis, et il est injecté avec chacun d'eux : garde-lui ce qui vaut pour tous, en court.`,
     long: (path, n) =>
       `\`${path}\` fait ${n} caractères (au-delà de ${MAX_CHARS}) : elle est injectée en entier dès qu'une question la touche. Découpe-la en enfants, un par sujet, et retire l'historique — ce qui a été décidé, pas comment on y est arrivé.`,
+    overlap: (path, other, percent) =>
+      other === ROOT
+        ? `\`${path}\` redit la racine (${percent} % de son vocabulaire y est déjà) : ce qui vaut pour tout le projet vit dans la racine, toujours injectée. Supprime la branche, ou garde-lui seulement ce que la racine ne dit pas.`
+        : `\`${path}\` redit \`${other}\` (${percent} % de son vocabulaire y est déjà) : un fait vit à un seul endroit. Fusionne-les, ou garde à chacune ce que l'autre ne dit pas.`,
   },
   en: {
     header: '⚠ Tree shape (warnings, nothing is refused):',
@@ -200,5 +250,9 @@ const LINT: Record<
       `\`${path}\` is longer than all its children together, and it is injected with each of them: keep only what applies to all, briefly.`,
     long: (path, n) =>
       `\`${path}\` is ${n} characters long (past ${MAX_CHARS}): it is injected whole as soon as a question touches it. Split it into children, one per topic, and drop the history — what was decided, not how it got there.`,
+    overlap: (path, other, percent) =>
+      other === ROOT
+        ? `\`${path}\` repeats the root (${percent}% of its vocabulary is already there): what applies to the whole project lives in the root, always injected. Delete the branch, or keep only what the root does not say.`
+        : `\`${path}\` repeats \`${other}\` (${percent}% of its vocabulary is already there): a fact lives in one place. Merge them, or keep in each only what the other does not say.`,
   },
 };
