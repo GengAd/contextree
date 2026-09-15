@@ -3,9 +3,13 @@
 (function () {
   const vscode = acquireVsCodeApi();
 
-  const NODE_W = 220;
+  const NODE_W = 340;
   const NODE_W_ACTIVE = 540;
   const NODE_H = 92;
+  // Le corps entier est dans la carte, mais la carte a un plafond : au-delà,
+  // le corps défile. Sans lui, trois branches longues font un arbre illisible.
+  const NODE_MAX_H = 300;
+  const NODE_MAX_H_ACTIVE = 560;
   const GAP_X = 28;
   const GAP_Y = 56;
   const ROOT_ID = ':root';
@@ -139,14 +143,17 @@
     return n.id === selected ? NODE_W_ACTIVE : NODE_W;
   }
 
+  /** En écriture, la carte prend une taille fixe et généreuse : elle ne doit
+   *  pas grandir sous les doigts au fil de la frappe. */
+  function editorHeight(n) {
+    return n.id === ROOT_ID ? 400 : 470;
+  }
+
+  // Chaque carte porte tout son texte : sa hauteur est celle que le navigateur
+  // lui donne sous le plafond, mesurée par `render`, pas une estimation.
   function heightOf(n) {
-    if (n.id !== selected) return NODE_H;
-    // En écriture, la carte prend une taille fixe et généreuse : elle ne doit
-    // pas grandir sous les doigts au fil de la frappe.
-    if (editing === n.id) return n.id === ROOT_ID ? 400 : 470;
-    const body = (n.content || '').trim();
-    const lines = body ? Math.max(body.split('\n').length, Math.ceil(body.length / 62)) : 0;
-    return Math.max(210, Math.min(560, 172 + lines * 19));
+    if (editing === n.id) return editorHeight(n);
+    return n.measured || NODE_H;
   }
 
   function rowWidth(children) {
@@ -493,10 +500,9 @@
     el.className = `node${n.id === selected ? ' selected' : ''}${
       lu && o.reason === 'fallback' ? ' fallback' : ''
     }`;
-    el.style.left = `${n.x}px`;
-    el.style.top = `${n.y}px`;
-    el.style.width = `${n.w}px`;
-    el.style.height = `${n.h}px`;
+    el.style.width = `${widthOf(n)}px`;
+    if (editing === n.id) el.style.height = `${editorHeight(n)}px`;
+    else el.style.maxHeight = `${n.id === selected ? NODE_MAX_H_ACTIVE : NODE_MAX_H}px`;
     el.style.setProperty('--ribbon', COLORS[n.type] || COLORS.root);
 
     const ribbon = document.createElement('div');
@@ -601,18 +607,25 @@
 
     if (n.id === selected && editing === n.id) {
       body.append(editor(n, draft));
-    } else if (n.id === selected) {
+    } else {
+      // Le corps entier, sur toutes les cartes : l'arbre se lit sur la toile
+      // sans ouvrir les branches une à une. Sélectionner ajoute la largeur,
+      // l'édition et les actions.
       const content = document.createElement('div');
       content.className = 'content';
+      content.dataset.id = n.id;
       const md = n.content.trim();
       if (md) markdown(content, md);
       else content.textContent = tr('(empty)');
-      content.title = tr('double-click to edit');
-      content.addEventListener('dblclick', e => {
-        e.stopPropagation();
-        beginEdit(n, 'content');
-      });
-      body.append(content, actions(n));
+      body.append(content);
+      if (n.id === selected) {
+        content.title = tr('double-click to edit');
+        content.addEventListener('dblclick', e => {
+          e.stopPropagation();
+          beginEdit(n, 'content');
+        });
+        body.append(actions(n));
+      }
     }
 
     el.append(ribbon, body);
@@ -624,13 +637,36 @@
   }
 
   function render() {
-    layout();
+    // La toile se reconstruit au moindre `.md` touché : un corps qu'on était en
+    // train de faire défiler ne doit pas remonter tout seul.
+    const scrolled = new Map();
+    for (const c of layerNodes.querySelectorAll('.content')) {
+      if (c.scrollTop) scrolled.set(c.dataset.id, c.scrollTop);
+    }
     layerNodes.textContent = '';
     layerEdges.textContent = '';
+
+    // Deux passes : les cartes posées à leur largeur donnent leur hauteur, puis
+    // la mise en page place l'arbre avec ces hauteurs réelles.
+    const cards = new Map();
+    for (const n of all) {
+      const el = card(n);
+      cards.set(n, el);
+      layerNodes.append(el);
+    }
+    for (const [n, el] of cards) {
+      n.measured = el.offsetHeight;
+      const top = scrolled.get(n.id);
+      if (top) el.querySelector('.content').scrollTop = top;
+    }
+    layout();
 
     let maxX = 0;
     let maxY = 0;
     for (const n of all) {
+      const el = cards.get(n);
+      el.style.left = `${n.x}px`;
+      el.style.top = `${n.y}px`;
       maxX = Math.max(maxX, n.x + n.w);
       maxY = Math.max(maxY, n.y + n.h);
       for (const c of n.children) {
@@ -642,7 +678,6 @@
         }
         layerEdges.append(path);
       }
-      layerNodes.append(card(n));
     }
     layerEdges.setAttribute('width', String(maxX + 40));
     layerEdges.setAttribute('height', String(maxY + 40));
@@ -670,12 +705,14 @@
     // Une carte qui porte un brouillon se rouvre en écriture : c'est là qu'on
     // l'avait laissée.
     editing = id && drafts.has(id) ? id : null;
-    layout();
+    // Les hauteurs ne se connaissent qu'une fois les cartes rendues : on rend,
+    // puis on compense.
+    render();
     if (before && node) {
       view.x += (before.x - (node.x + node.w / 2)) * view.k;
       view.y += (before.y - node.y) * view.k;
+      apply();
     }
-    render();
   }
 
   function bounds() {
@@ -705,6 +742,16 @@
   }
 
   viewport.addEventListener('wheel', e => {
+    // Sur un corps qui défile, la molette le fait défiler ; elle ne zoome
+    // qu'arrivée en butée, ou ailleurs sur la toile.
+    const content = e.target.closest && e.target.closest('.content');
+    if (content && e.deltaY) {
+      const down = e.deltaY > 0;
+      const room = down
+        ? content.scrollTop + content.clientHeight < content.scrollHeight - 1
+        : content.scrollTop > 0;
+      if (room) return;
+    }
     e.preventDefault();
     const factor = Math.exp(-e.deltaY * 0.0015);
     const k = Math.min(2.5, Math.max(0.15, view.k * factor));
@@ -718,6 +765,9 @@
   let panning = null;
   viewport.addEventListener('mousedown', e => {
     if (e.button !== 0) return;
+    // Saisir la barre de défilement d'un corps le fait défiler, pas la toile.
+    const content = e.target.closest && e.target.closest('.content');
+    if (content && e.offsetX >= content.clientWidth) return;
     panning = { x: e.clientX - view.x, y: e.clientY - view.y };
     viewport.classList.add('panning');
   });
