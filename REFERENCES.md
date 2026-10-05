@@ -9,7 +9,7 @@ Stack, format, mécanique, pièges. À lire quand on touche au code.
 | Runtime | Node ≥ 20, ESM, TypeScript strict (`NodeNext`) |
 | Dépendances | `@anthropic-ai/sdk` (routeur), `@modelcontextprotocol/sdk` (serveur MCP), `zod` (schémas des outils MCP) |
 | Tests | `node:test` sur le build (`tests/*.test.js` → `dist/`) |
-| Distribution | pas encore sur npm : `npm install -g github:GengAd/contextree` (le script `prepare` compile), puis le binaire `contextree` — c'est lui que câble `install`, pas `npx`, qui renverrait 404 |
+| Distribution | pas encore sur npm : clone de `GengAd/contextree`, `npm install` (le script `prepare` compile), puis `npm link` → le binaire `contextree`. C'est lui que câble `install`, pas `npx`, qui renverrait 404. `npm install -g github:…` échoue : npm passe `--global` à l'install de préparation et les devDependencies n'arrivent pas dans le clone |
 
 Le frontmatter, la compression des packs et le cache de session sont faits main sur des modules Node (`zlib`, `crypto`, `os`) : trois dépendances, c'est le budget.
 
