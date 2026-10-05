@@ -50,7 +50,7 @@ const PULL =
   "Dès que la tâche se précise — une carte ou un ticket que tu viens de lire, une trace " +
   "d'erreur, un fichier que tu ouvres —, charge la branche qui va avec au lieu d'attendre le " +
   'tour suivant : outil MCP `get_context` avec ce que tu sais maintenant, ou ' +
-  '`npx -y @gengad/contextree route "<la demande>"`.';
+  '`contextree route "<la demande>"`.';
 
 function section(b: { title: string; content: string }): string {
   return `### ${b.title}\n${b.content}`.trim();
@@ -90,7 +90,7 @@ export function renderAgentsBlock(tree: ContextTree): string {
     "Le reste du contexte vit dans `.contextree/`, en petites branches typées. " +
       "**N'ouvre pas tout** : appelle l'outil MCP `get_context` avec la demande de " +
       "l'utilisateur, tu récupères uniquement les branches pertinentes. Sans MCP : " +
-      '`npx -y @gengad/contextree route "<la demande>"`.',
+      '`contextree route "<la demande>"`.',
   );
 
   const branches = allBranches(tree);

@@ -21,6 +21,7 @@
   },
   "scripts": {
     "build": "tsc -b",
+    "prepare": "npm run build",
     "build:ext": "npm run build && npm --prefix extension install --silent && npm --prefix extension run build && npm run bundle:core",
     "typecheck": "tsc -b --noEmit",
     "test": "npm run build && node --test \"tests/*.test.js\"",

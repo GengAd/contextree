@@ -28,4 +28,4 @@ Le push est donc une **avance**, pas un remplacement du pull. `renderContext` te
 
 **Ce qui vit hors du projet n'est câblé que si l'agent est détecté**, ou nommé par `--agent` : écrire dans le `~` de quelqu'un qui n'utilise pas l'outil serait une surprise, pas un service.
 
-**Détection d'un hook déjà posé** : on cherche `contextree` dans la commande, ce que `install` écrit toujours (`npx -y @gengad/contextree hook`). Un câblage à la main avec un chemin local (`node dist/cli.js hook`, comme dans ce dépôt) n'est donc pas reconnu — c'est le cas du développeur, pas celui d'un utilisateur.
+**Détection d'un hook déjà posé** : on cherche `contextree` dans la commande, ce que `install` écrit toujours (`contextree hook`, derrière un `command -v` qui le rend muet si le binaire manque). Un câblage à la main avec un chemin local (`node dist/cli.js hook`, comme dans ce dépôt) n'est donc pas reconnu — c'est le cas du développeur, pas celui d'un utilisateur.

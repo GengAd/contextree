@@ -217,7 +217,7 @@ test('codex : la table MCP est ajoutée à la fin, jamais réécrite', async () 
     // Ce qui était là est intact, et la nouvelle table est bien à la fin :
     // aucune table précédente ne peut l'avaler.
     assert.match(body, /\[projects\."\/x"\]\ntrust_level = "trusted"/);
-    assert.match(body, /\[mcp_servers\.contextree\]\ncommand = "npx"/);
+    assert.match(body, /\[mcp_servers\.contextree\]\ncommand = "contextree"/);
     assert.ok(body.indexOf('[mcp_servers.contextree]') > body.indexOf('[projects."/x"]'));
 
     await installCodexMcp(report);
@@ -242,7 +242,7 @@ test("install : l'état d'un agent se lit sans rien écrire, et le câblage est 
   const report = await installAgent('cursor', projectDir);
   assert.equal(report[0].action, 'created');
   const written = JSON.parse(await fs.readFile(path.join(projectDir, '.cursor', 'mcp.json'), 'utf8'));
-  assert.equal(written.mcpServers.contextree.command, 'npx');
+  assert.equal(written.mcpServers.contextree.command, 'contextree');
 
   const after = await agentStatus(projectDir);
   assert.equal(after.find(a => a.id === 'cursor').wired, true);

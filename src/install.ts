@@ -26,8 +26,11 @@ export type InstallReport = { file: string; action: 'created' | 'updated' | 'unc
 /** Les agents qu'on sait câbler. */
 export type AgentId = 'claude-code' | 'cursor' | 'codex' | 'windsurf' | 'claude-desktop';
 
-const HOOK_COMMAND = 'npx -y @gengad/contextree hook';
-const MCP_COMMAND = { command: 'npx', args: ['-y', '@gengad/contextree', 'mcp'] };
+// Le binaire installé, pas `npx` : tant que le paquet n'est pas publié, `npx`
+// interroge le registre et renvoie 404, même avec contextree installé en global.
+// Le hook reste muet si `contextree` est absent — il ne bloque jamais un prompt.
+const HOOK_COMMAND = 'command -v contextree >/dev/null 2>&1 && contextree hook || true';
+const MCP_COMMAND = { command: 'contextree', args: ['mcp'] };
 
 /** Les bornes du bloc synchronisé dans un fichier de consignes. Ce qui est
  *  dehors appartient à l'utilisateur et n'est jamais touché. */
