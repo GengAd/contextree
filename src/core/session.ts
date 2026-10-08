@@ -84,6 +84,10 @@ export async function writeSelection(
   opts: { at?: number; routed?: boolean } = {},
 ): Promise<void> {
   const entry: Cached = { at: opts.at ?? Date.now(), selected: [...selection] };
+  // « Aucune branche » (une question sur l'outil, un « reprends ») ne s'hérite
+  // pas : lu au tour suivant, un cache vide vaut « rien en cache », donc
+  // l'arbre entier. Le tour garde ce que la conversation avait retenu avant.
+  if (!entry.selected.length) return;
   await writeCache(sessionFile(treeDir, sessionId), entry);
   if (opts.routed) await writeCache(lastFile(treeDir), entry);
 }

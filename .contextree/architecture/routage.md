@@ -15,7 +15,7 @@ Un appel IA léger reçoit le catalogue (index **0-based**, type, titre, `load_w
 2. la dernière sélection **routée** de l'arbre, toutes sessions confondues (`<clé>-last.json` sous `stateDir()/selection/`) — sans elle, chaque conversation neuve sous moteur CLI coûtait l'arbre entier ;
 3. l'arbre entier — **sauf côté serveur MCP, où c'est le catalogue** (voir *Routage différé et budgets*).
 
-Un **repli n'alimente pas** le niveau 2 : il y figerait l'arbre entier.
+Un **repli n'alimente pas** le niveau 2 : il y figerait l'arbre entier. **Une sélection vide ne s'écrit pas** (`writeSelection`) : un routage qui ne retient rien laisse la sélection précédente, sinon le tour suivant lisait un cache vide et héritait de l'arbre entier.
 
 **Le cache s'écrit tmp + rename** et porte l'horodatage du **prompt** (`at`) : une sélection plus ancienne n'écrase jamais une plus récente, et deux `route-bg` qui se chevauchent ne laissent pas de JSON tronqué (lu comme « rien en cache », donc l'arbre entier).
 

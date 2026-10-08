@@ -915,6 +915,15 @@ test("session : une session neuve hérite de la dernière sélection routée", a
   assert.deepEqual(await readSelection(dir, 'session-neuve'), ['identite', 'regles']);
 });
 
+test("session : un routage qui ne retient rien n'efface pas la sélection héritée", async () => {
+  const dir = await scratch();
+  await writeSelection(dir, 's', ['trello'], { at: 1000, routed: true });
+  // Sans ça, le tour suivant lisait un cache vide et injectait l'arbre entier.
+  await writeSelection(dir, 's', [], { at: 2000, routed: true });
+  assert.deepEqual(await readSelection(dir, 's'), ['trello']);
+  assert.deepEqual(await readSelection(dir, 'autre'), ['trello']);
+});
+
 test("session : une sélection plus ancienne n'écrase pas une plus récente", async () => {
   const dir = await scratch();
   // Le routage de fond finit après le tour suivant : sans horodatage du prompt,
