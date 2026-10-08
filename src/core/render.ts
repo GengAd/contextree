@@ -1,5 +1,5 @@
 import { allBranches } from './tree.js';
-import type { ContextTree } from './types.js';
+import type { Branch, ContextTree } from './types.js';
 import type { RouteReason } from './router.js';
 import { currentLang, type Lang } from './i18n.js';
 
@@ -22,19 +22,84 @@ import { currentLang, type Lang } from './i18n.js';
  * contexte parce que ce sont des contraintes : le modèle doit les avoir en tête
  * avant de lire la doc de domaine. Le catalogue passe en dernier — on le lit
  * une fois qu'on sait ce qu'on a reçu.
+ *
+ * `maxChars` borne le bloc (voir `HOOK_MAX_CHARS`). Sans lui, ou quand tout
+ * tient, le bloc est rendu en entier. Sinon, dans cet ordre de sacrifice :
+ * les lignes du catalogue perdent leur `load_when`, puis le catalogue se
+ * réduit à une phrase, et les branches retenues qui ne tiennent pas sont
+ * listées par leur chemin, à lire avant de répondre. On garde la variante qui
+ * livre le plus de branches entières : une branche que le routage a choisie
+ * vaut mieux que la description de celles qu'il a écartées.
  */
-export function renderContext(tree: ContextTree, selected: Set<string>): string {
+export function renderContext(
+  tree: ContextTree,
+  selected: Set<string>,
+  opts: { maxChars?: number } = {},
+): string {
+  const branches = allBranches(tree);
+  const chosen = branches.filter(b => selected.has(b.path));
+  const others = branches.filter(b => !selected.has(b.path));
+  const whole = assemble(tree, chosen, [], others, 'full');
+  const max = opts.maxChars;
+  if (max === undefined || whole.length <= max) return whole;
+
+  // Les règles d'abord : ce sont des contraintes, la doc vient après. Une
+  // branche trop grosse est sautée, pas la suivante — un glouton qui
+  // s'arrêtait au premier refus perdait les petites branches derrière.
+  const ranked = [...chosen.filter(isRule), ...chosen.filter(b => !isRule(b))];
+  let best: { out: string; kept: number } | undefined;
+  for (const mode of ['full', 'compact', 'pointer'] as const) {
+    const kept: Branch[] = [];
+    const render = (k: Branch[]) => assemble(tree, k, ranked.filter(b => !k.includes(b)), others, mode);
+    for (const b of ranked) if (render([...kept, b]).length <= max) kept.push(b);
+    const out = render(kept);
+    if (out.length <= max && (!best || kept.length > best.kept)) best = { out, kept: kept.length };
+  }
+  // Rien ne tient — une racine plus longue que le budget : on rend le plus
+  // court, et c'est le contrôle de forme qui doit faire maigrir la racine.
+  return best?.out ?? assemble(tree, [], ranked, others, 'pointer');
+}
+
+/**
+ * Ce que Claude Code laisse passer d'un hook. Au-delà de 10 000 caractères, il
+ * range la sortie dans un fichier et ne montre au modèle que ses 2 premiers Ko
+ * — le début de la racine. Mesuré sur un arbre de 60 branches : 464 tours
+ * coupés en trois jours, le catalogue seul pesait 18 000 caractères, et le
+ * modèle ne lisait jamais le fichier. 500 de marge pour l'avertissement d'arbre
+ * égaré et l'enveloppe.
+ */
+export const HOOK_MAX_CHARS = 9_500;
+
+type CatalogueMode = 'full' | 'compact' | 'pointer';
+
+function isRule(b: Branch): boolean {
+  return b.type === 'identity' || b.type === 'rule';
+}
+
+function assemble(
+  tree: ContextTree,
+  loaded: Branch[],
+  skipped: Branch[],
+  others: Branch[],
+  mode: CatalogueMode,
+): string {
   const parts: string[] = [];
   const root = tree.rootContent.trim();
   if (root) parts.push(root);
 
-  const branches = allBranches(tree);
-  const chosen = branches.filter(b => selected.has(b.path));
-  const rules = chosen.filter(b => b.type === 'identity' || b.type === 'rule');
-  const rest = chosen.filter(b => b.type !== 'identity' && b.type !== 'rule');
+  const rules = loaded.filter(isRule);
+  const rest = loaded.filter(b => !isRule(b));
 
   if (rules.length) parts.push(`## Rules\n\n${rules.map(section).join('\n\n')}`);
   if (rest.length) parts.push(`## Context\n\n${rest.map(section).join('\n\n')}`);
+
+  const lang = currentLang();
+  // Retenues mais coupées : le chemin, pour que le modèle sache **qu'elles
+  // existent et qu'elles le concernent**. Sans cette liste, il croyait avoir
+  // tout reçu et ne tirait rien.
+  if (skipped.length) {
+    parts.push(`${SKIPPED[lang]}\n\n${mode === 'full' ? catalogue(skipped, true) : compactCatalogue(skipped)}`);
+  }
 
   // Ce qui n'a pas été chargé, une ligne par branche.
   //
@@ -48,9 +113,11 @@ export function renderContext(tree: ContextTree, selected: Set<string>): string 
   // C'est aussi ce qui aligne cette surface sur `renderAgentsBlock`, qui donne
   // le catalogue depuis toujours. Les trois surfaces sont des adaptateurs au-
   // dessus du même moteur ; celle-ci en divergeait.
-  const others = branches.filter(b => !selected.has(b.path));
-  const lang = currentLang();
-  if (others.length) parts.push(`${CATALOGUE_HEADER[lang]}\n\n${PULL[lang]}\n\n${catalogue(others)}`);
+  if (others.length) {
+    const lines =
+      mode === 'full' ? catalogue(others) : mode === 'compact' ? compactCatalogue(others) : CATALOGUE_POINTER[lang](others.length);
+    parts.push(`${CATALOGUE_HEADER[lang]}\n\n${PULL[lang]}\n\n${lines}`);
+  }
 
   if (!parts.length) return '';
   // Le rappel d'écrire passe en tout dernier : c'est une consigne pour la suite
@@ -63,6 +130,26 @@ export function renderContext(tree: ContextTree, selected: Set<string>): string 
 const CATALOGUE_HEADER: Record<Lang, string> = {
   fr: '## Catalogue — branches non chargées',
   en: '## Catalogue — branches not loaded',
+};
+
+/** Les branches retenues que le budget du hook n'a pas laissées entrer. */
+const SKIPPED: Record<Lang, string> = {
+  fr:
+    '## Retenues, mais trop longues pour ce bloc\n\n' +
+    'Ces branches ont été retenues pour ce tour mais ne tiennent pas dans la limite de taille ' +
+    'du hook. **Avant de répondre**, lis celles qui concernent la tâche : outil `read_branch` ' +
+    'avec le chemin entre accents graves, ou le fichier `.contextree/<chemin>.md`.',
+  en:
+    '## Selected, but too long for this block\n\n' +
+    "These branches were selected for this turn but do not fit in the hook's size limit. " +
+    '**Before answering**, read the ones that concern the task: the `read_branch` tool with ' +
+    'the path in backticks, or the file `.contextree/<path>.md`.',
+};
+
+/** Le catalogue réduit à une phrase, quand même ses lignes courtes ne tiennent pas. */
+const CATALOGUE_POINTER: Record<Lang, (n: number) => string> = {
+  fr: n => `${n} autres branches, non listées faute de place : \`list_branches\` les donne toutes.`,
+  en: n => `${n} other branches, not listed for lack of space: \`list_branches\` gives them all.`,
 };
 
 const PULL: Record<Lang, string> = {
@@ -146,6 +233,13 @@ function catalogue(
 ): string {
   return branches
     .map(b => `- **${b.title}** (${b.type})${withPaths ? ` \`${b.path}\`` : ''} — ${LOAD_WHEN_LABEL[currentLang()]} ${b.loadWhen}`)
+    .join('\n');
+}
+
+/** Le titre et le chemin, sans le `load_when` : le tiers d'une ligne complète. */
+function compactCatalogue(branches: { path: string; title: string }[]): string {
+  return branches
+    .map(b => `- **${b.title}** \`${b.path}\``)
     .join('\n');
 }
 

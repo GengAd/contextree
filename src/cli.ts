@@ -8,7 +8,7 @@ import { DIR_NAME, findTreeDir, findStrayHomeTree, rescueStrayTree, loadTree, sl
 import { coreText } from './core/messages.js';
 import { lintTree, renderShapeWarnings } from './core/lint.js';
 import { allBranches, formatTree } from './core/tree.js';
-import { renderContext, renderTrace, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite } from './core/render.js';
+import { renderContext, renderTrace, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite, HOOK_MAX_CHARS } from './core/render.js';
 import { route, pickEngine, isCliEngine, engineBin, withoutRouting, routeInBackground } from './core/router.js';
 import { encodePack, extractPack, applyPack } from './core/pack.js';
 import { readSelection, writeSelection, claimBootstrapInvite, claimStrayWarning } from './core/session.js';
@@ -811,7 +811,10 @@ async function cmdHook(agent: string): Promise<number> {
       ...(engine ? { engine } : {}),
     });
 
-    write(renderContext(tree, selected));
+    // Borné : au-delà, Claude Code coupe le bloc et le modèle n'en voit que le
+    // début de la racine. L'avertissement d'arbre égaré passe dans le même budget.
+    const budget = HOOK_MAX_CHARS - (warning ? warning.length + 2 : 0);
+    write(renderContext(tree, selected, { maxChars: budget }));
     // La trace part sur stderr, pour les trois : l'inverser polluerait le
     // contexte du modèle, et casserait le JSON de Gemini.
     process.stderr.write(`${renderTrace(tree, selected, reason)}\n`);

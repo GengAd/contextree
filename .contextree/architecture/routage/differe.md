@@ -28,6 +28,6 @@ load_when: quand on touche au routage en tâche de fond (route-bg, deferred), au
 
 Quand `get_context` rendrait l'arbre complet faute de routage (à froid, aucun moteur, repli sans sélection antérieure), il rend **la racine et le catalogue avec les chemins** (`renderCatalogueOnly`) et une consigne : « **avant de répondre**, lis avec `read_branch` les branches dont la condition correspond ». L'agent devient son propre routeur. Journal : `reason: 'catalogue'`, `selected: []`.
 
-Restent servies : une sélection héritée partielle, un arbre sous le seuil de routage. Un catalogue n'écrit rien dans le cache. **Le hook garde l'arbre entier en repli.** `CONTEXTREE_MCP_FALLBACK=full` rend l'ancien comportement.
+Restent servies : une sélection héritée partielle, un arbre sous le seuil de routage. Un catalogue n'écrit rien dans le cache. **Le hook garde l'arbre entier en repli**, sous son budget de taille (voir *Le bloc injecté et les fichiers de consignes*) : ce qui ne tient pas y est listé par chemin. `CONTEXTREE_MCP_FALLBACK=full` rend l'ancien comportement.
 
 Le catalogue ne sert que si `get_context` est appelé — ce sont les consignes qui le décident. `read_branch` garde **un chemin par appel**.

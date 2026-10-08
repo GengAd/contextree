@@ -22,7 +22,7 @@ import { withAncestors, allBranches } from '../dist/core/tree.js';
 import { lintTree, renderShapeWarnings } from '../dist/core/lint.js';
 import { route, pickEngine, isCliEngine, parseIndices, timeoutFor, findBinIn, cmdLine } from '../dist/core/router.js';
 import { evaluateRouting, parseEvalCases } from '../dist/core/eval.js';
-import { renderContext, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite, renderCatalogueOnly } from '../dist/core/render.js';
+import { renderContext, renderAgentsBlock, renderBootstrapPrompt, renderBootstrapInvite, renderCatalogueOnly, HOOK_MAX_CHARS } from '../dist/core/render.js';
 import { syncAgentsFile, installCodexMcp, agentStatus, installAgent, selfCommand, AGENTS, NoCliError, syncInstructionFiles, instructionsState } from '../dist/install.js';
 import { extractPack, applyPack, encodePack, decodePack } from '../dist/core/pack.js';
 import { stateDir, appendTurn, readJournal, journalFile, appendAiWrite, readAiWrites, turnLabelKey, treeKey, recordRead, READ_WINDOW_MS } from '../dist/core/journal.js';
@@ -795,6 +795,51 @@ test("render : le rappel d'écrire arrive avec la tâche, et à un seul endroit"
   assert.equal(renderContext(await loadTree(vide), new Set()), '');
 });
 
+test("render : sous un budget, le bloc tient, les règles d'abord, et ce qui ne tient pas est nommé par son chemin", async () => {
+  const dir = await scratch();
+  await writeRoot(dir, 'RACINE');
+  await writeBranch(dir, { path: 'r', type: 'rule', title: 'R', loadWhen: 'quand r', content: 'REGLE' });
+  await writeBranch(dir, { path: 'gros', type: 'context', title: 'Gros', loadWhen: 'quand gros', content: 'G'.repeat(3000) });
+  await writeBranch(dir, { path: 'petit', type: 'context', title: 'Petit', loadWhen: 'quand petit', content: 'PETIT' });
+  for (let i = 0; i < 40; i++) {
+    await writeBranch(dir, {
+      path: `autre-${i}`, type: 'context', title: `Autre ${i}`,
+      loadWhen: `quand on touche à la partie ${i} du projet, avec une condition longue comme les vraies`,
+      content: `contenu ${i}`,
+    });
+  }
+  const tree = await loadTree(dir);
+  const selected = new Set(['r', 'gros', 'petit']);
+
+  // Sans budget, rien ne change : le CLI et le serveur MCP rendent tout.
+  const entier = renderContext(tree, selected);
+  assert.ok(entier.includes('G'.repeat(3000)));
+  assert.match(entier, /charger quand : quand on touche à la partie 39/);
+
+  const max = 3000;
+  const out = renderContext(tree, selected, { maxChars: max });
+  assert.ok(out.length <= max, `${out.length} > ${max}`);
+  // La racine, la règle, et la petite branche **derrière** la grosse : une
+  // branche trop longue est sautée, elle n'arrête pas les suivantes.
+  assert.match(out, /RACINE/);
+  assert.match(out, /REGLE/);
+  assert.match(out, /PETIT/);
+  // La grosse est nommée par son chemin, avec le moment où la lire : sans ça
+  // le modèle croit avoir tout reçu.
+  assert.ok(!out.includes('G'.repeat(3000)));
+  assert.match(out, /## Retenues, mais trop longues pour ce bloc/);
+  assert.match(out, /\*\*Gros\*\* .*`gros`/);
+  assert.match(out, /\*\*Avant de répondre\*\*/);
+  // Le catalogue a perdu ses `load_when`, pas ses chemins : le reste demeure
+  // atteignable.
+  assert.ok(!out.includes('charger quand : quand on touche'));
+  assert.match(out, /\*\*Autre 39\*\* `autre-39`/);
+  assert.match(out, /get_context/);
+  // Et le rappel d'écrire ferme toujours le bloc.
+  assert.match(out, /rien à retenir/);
+  assert.ok(out.endsWith('</contextree>'));
+});
+
 test('render : arbre vide → chaîne vide (rien à injecter)', async () => {
   const dir = await scratch();
   const tree = await loadTree(dir);
@@ -1349,6 +1394,28 @@ test('hook : trois dialectes, une seule enveloppe qui change', async () => {
   const inconnu = await runHook(payload, env, ['--agent', 'nimportequoi']);
   assert.equal(inconnu.code, 0);
   assert.match(inconnu.out, /^<contextree>/);
+});
+
+test("hook : le bloc tient sous la limite de Claude Code, même avec l'arbre entier sélectionné", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'contextree-budget-state-'));
+  const dir = await scratch();
+  await writeRoot(dir, 'la racine');
+  for (let i = 0; i < 60; i++) {
+    await writeBranch(dir, {
+      path: `b-${i}`, type: i < 3 ? 'rule' : 'context', title: `Branche ${i}`,
+      loadWhen: `quand on touche à la partie ${i}, avec une condition aussi longue que les vraies conditions`,
+      content: 'x'.repeat(2000),
+    });
+  }
+  // Moteur coupé : l'arbre entier est sélectionné, le pire cas.
+  const env = { CONTEXTREE_STATE_DIR: stateDir, CONTEXTREE_ROUTER: 'off' };
+  const r = await runHook({ prompt: 'une demande', cwd: path.dirname(dir), session_id: 'b1' }, env);
+  assert.equal(r.code, 0);
+  assert.ok(r.out.length <= HOOK_MAX_CHARS, `${r.out.length} > ${HOOK_MAX_CHARS}`);
+  assert.match(r.out, /^<contextree>\nla racine/);
+  // Les règles passent avant le reste, et rien n'est perdu de vue.
+  assert.match(r.out, /### Branche 0/);
+  assert.match(r.out, /`b-59`/);
 });
 
 test('hook : un payload cassé sort en 0 et neutre, dans les trois dialectes', async () => {

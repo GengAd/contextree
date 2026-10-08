@@ -13,6 +13,8 @@ Encadré par `<contextree>…</contextree>`, dans cet ordre :
 4. `## Catalogue — branches non chargées` — titre, type, `load_when`, et la consigne de rappeler `get_context` dès que la tâche se précise ;
 5. **le rappel d'écrire** (`CAPITALIZE`) : « avant de terminer ta réponse », ce que la tâche a appris **et que l'arbre ne dit pas encore** ; une question de lecture n'est pas une branche (un `load_when` qui recopie la question qu'on vient de poser) ; écrire dans la branche qui couvre le sujet, puis la racine si ça vaut pour tout le projet, et seulement ensuite une nouvelle branche ; sinon « rien à retenir ». La description d'`upsert_branch` dit la même borne.
 
+**Sous le hook, le bloc est borné à `HOOK_MAX_CHARS` (9 500 caractères)** : au-delà de 10 000, Claude Code range la sortie dans un fichier et ne montre au modèle que ses 2 premiers Ko, soit le début de la racine. Quand tout ne tient pas, le catalogue perd ses `load_when` (titre + chemin), puis se réduit à une phrase qui renvoie à `list_branches`. Les branches retenues qui ne tiennent pas passent dans `## Retenues, mais trop longues pour ce bloc`, par leur chemin, avec « avant de répondre, lis-les ». Les règles entrent d'abord, et une branche trop longue est sautée sans arrêter les suivantes. On garde la variante qui livre le plus de branches entières. Le CLI (`route`, `render`) et `get_context` ne sont pas bornés.
+
 Le rappel vit **dans le bloc et nulle part ailleurs** : les `instructions` du serveur sont lues une fois à la connexion, avant toute tâche ; le bloc arrive avec chaque tour, sur les deux surfaces. Un seul rendu de catalogue est partagé par le hook et le serveur.
 
 ## Le bloc des fichiers de consignes (`renderAgentsBlock`)
