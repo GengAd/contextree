@@ -17,3 +17,4 @@ Chargée en touchant une skill, un sous-agent ou le texte d'un hook. Ces princip
 - **Le travail, pas le comportement** : 80 % du texte décrit le projet, 20 % au plus la manière de faire.
 - **Resserrer ce qui marche rend l'outil insistant pour rien.** On corrige le défaut observé, pas la politesse autour.
 - **Un scénario réparé en le déroulant ne prouve rien** : seul le passage sans reprise compte.
+- Dans un `SKILL.md`, Claude Code remplace `$ARGUMENTS` et `${CLAUDE_PLUGIN_ROOT}`, rien d'autre : une expansion shell (`${ARGUMENTS:+…}`) arrive vide dans Bash. Un argument optionnel s'écrit en phrase (« si un argument est donné ($ARGUMENTS), ajoute … »), la commande reste nue.

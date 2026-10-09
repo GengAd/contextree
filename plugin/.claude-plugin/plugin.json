@@ -1,7 +1,7 @@
 {
   "name": "contextree",
-  "version": "2.1.0",
-  "description": "Voir et bien remplir le contexte natif de Claude Code : /carte montre chaque fichier de contexte et quand il se charge, /retenir écrit un fait durable au bon endroit, /init-contexte pose le contexte d'un projet, /migrer-v1 convertit l'ancien contextree.",
+  "version": "2.2.0",
+  "description": "Voir et bien remplir le contexte natif de Claude Code : /carte montre chaque fichier de contexte et quand il se charge, /retenir écrit un fait durable au bon endroit, /init-contexte pose le contexte d'un projet, /jardin le relit en fin de session, /migrer-v1 convertit l'ancien contextree.",
   "author": { "name": "Adrien Buot" },
   "repository": "https://github.com/GengAd/contextree",
   "license": "MIT",

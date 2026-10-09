@@ -2,6 +2,10 @@
 
 Une version par changement visible du plugin. Pour la prendre : `claude plugin marketplace update contextree`, puis `claude plugin update contextree@contextree`.
 
+## 2.2.0 — 2026-10-09
+
+- **`/contextree:jardin`** : la revue de fin de session. Un script relève les fichiers de contexte qui citent un chemin changé dans la session et ceux sans commit depuis six semaines ; Claude y ajoute ce que la conversation a appris, et propose des diffs classés (faux, manquant, à extraire, à découper), appliqués seulement sur accord.
+
 ## 2.1.0 — 2026-10-09
 
 - **`/contextree:carte` dit juste sur de vrais projets** : le poids suit `/context` (environ 2,5 caractères par token en français), les descriptions des sous-agents comptent dans « toujours chargé », un hook qui lance un script absent par chemin absolu est signalé, et chaque avertissement dit quoi faire.

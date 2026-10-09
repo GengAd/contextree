@@ -6,7 +6,7 @@
     {
       "name": "contextree",
       "source": "./plugin",
-      "description": "Voir et bien remplir le contexte natif de Claude Code (/carte, /retenir, /init-contexte, /migrer-v1)."
+      "description": "Voir et bien remplir le contexte natif de Claude Code (/carte, /retenir, /init-contexte, /jardin, /migrer-v1)."
     }
   ]
 }
