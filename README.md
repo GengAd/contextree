@@ -6,9 +6,11 @@ Claude Code charge déjà seul le bon contexte au bon moment : `CLAUDE.md` à ch
 
 contextree est un plugin Claude Code, sans dépendance, qui fait ces deux choses.
 
-## Les deux skills
+## Les trois skills
 
 **`/contextree:carte`** — la carte du contexte : chaque fichier que Claude peut charger, groupé par moment (toujours / en touchant un fichier / quand la tâche en parle / à la main), son poids, et ce qu'il faut vérifier : règle qui ne vise aucun fichier, racine trop longue, skill sans description, lien mort, hook vers un script absent. `/contextree:carte src/api/x.ts` dit ce qui se charge pour ce fichier.
+
+**`/contextree:init-contexte`** — le premier jour d'un projet : tu expliques le projet, Claude lit le dépôt, propose un plan de fichiers (un `CLAUDE.md` court avec sa table « où aller », des règles à `paths`, des skills de domaine, un hook par interdit), écrit après ton accord, et finit par la carte sans avertissement. Ensuite il maintient tout seul avec `retenir`.
 
 **`/contextree:retenir`** — où écrire un fait durable. Claude la charge seul quand il découvre une convention, une contrainte, un piège ; une table décide du fichier (voir *La méthode*). Il écrit directement et l'annonce en une phrase.
 
