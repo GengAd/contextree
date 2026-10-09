@@ -23,7 +23,7 @@ Tableau **contextree**, id `6a9ebc7ca1b58d53d9cce21e`. Le MCP Trello a un autre 
 2. Vérifier *Dépend de* : chaque carte citée est dans *Fait*. Sinon : commenter ce qui manque ; si c'est une carte humaine, déplacer dans *Bloqué* ; prendre la suivante.
 3. `git status` propre, sur `main`. Déplacer la carte dans *En cours*.
 4. Faire le travail. Une décision que la carte ne tranche pas : **la trancher**, l'écrire en commentaire, et dans le contexte si elle est durable (skill `contextree:retenir`). Ne jamais attendre l'utilisateur.
-5. `npm test` vert ; `node plugin/skills/carte/scripts/carte.mjs` sans avertissement.
+5. `npm test` vert ; `node plugin/skills/carte/scripts/carte.mjs` sans avertissement ; si `plugin/` ou `.claude/` ont changé, délègue au sous-agent `relecteur` et corrige ce qu'il signale.
 6. Committer sur `main` avec le message proposé par la carte. Un ticket = un commit.
 7. Commenter la carte : hash, décisions prises, ce qui reste. Déplacer dans *Fait*.
 8. Bloqué pour de bon (compte, clé, choix d'Adrien) : remettre le dépôt propre, commenter, déplacer dans *Bloqué*, prendre la suivante.

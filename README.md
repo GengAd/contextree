@@ -52,4 +52,4 @@ node plugin/skills/carte/scripts/carte.mjs    # la carte de ce dépôt
 claude plugin validate ./plugin
 ```
 
-Le travail est piloté par le tableau Trello « contextree » ; la skill `tache-trello` de ce dépôt dit comment.
+Le dépôt applique sa propre méthode : un `CLAUDE.md` court avec sa table « où aller », des règles à `paths` dans `.claude/rules/`, un hook qui relance la carte après chaque écriture dans le contexte, un sous-agent `relecteur` avant commit, `/livrer` pour pousser, et une décision d'architecture dans `docs/decisions/`. Le travail est piloté par le tableau Trello « contextree » ; la skill `tache-trello` dit comment.

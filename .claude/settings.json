@@ -4,6 +4,21 @@
       "Bash(npm test)",
       "Bash(node plugin/skills/carte/scripts/carte.mjs*)",
       "Bash(claude plugin validate*)"
+    ],
+    "deny": [
+      "Bash(npm install *)",
+      "Bash(npm i *)",
+      "Bash(npm add *)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/forme.mjs\"", "timeout": 10 }
+        ]
+      }
     ]
   }
 }
