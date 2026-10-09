@@ -1,0 +1,59 @@
+{
+  "name": "contextree",
+  "displayName": "contextree",
+  "description": "La carte du contexte Claude Code en barre latérale : ce qui se charge, quand, et ce qu'il faut vérifier.",
+  "version": "2.0.0",
+  "publisher": "gengad",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "workspaceContains:CLAUDE.md",
+    "workspaceContains:AGENTS.md",
+    "workspaceContains:.claude/**"
+  ],
+  "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "id": "contextree",
+          "name": "contextree",
+          "when": "contextree.actif"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "contextree.rafraichir",
+        "title": "Rafraîchir la carte",
+        "category": "contextree",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "contextree.rafraichir",
+          "when": "view == contextree",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "contextree",
+      "properties": {
+        "contextree.plugin": {
+          "type": "string",
+          "default": "",
+          "description": "Dossier du plugin contextree (celui qui contient skills/carte). Vide : le clone de contextree s'il est ouvert, sinon le plugin installé dans Claude Code."
+        }
+      }
+    }
+  }
+}

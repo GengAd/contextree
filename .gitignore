@@ -1,5 +1,6 @@
 node_modules/
 .DS_Store
+extension/*.vsix
 
 # Le calque personnel : à soi, jamais poussé.
 CLAUDE.local.md

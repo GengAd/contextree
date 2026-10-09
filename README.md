@@ -28,6 +28,17 @@ claude plugin install contextree@contextree
 
 Dans une session : `/contextree:carte`. Une modification du clone est prise à la session suivante, ou avec `/reload-plugins`.
 
+## La vue dans Cursor
+
+La même carte en barre latérale, dans l'explorateur : sections par moment de chargement, poids, calque perso grisé, avertissements ; un clic ouvre le fichier, une sauvegarde d'un fichier de contexte la rafraîchit.
+
+```bash
+npm run package:ext                                   # → extension/contextree.vsix
+cursor --install-extension extension/contextree.vsix  # ou palette → « Extensions: Install from VSIX… »
+```
+
+Détails dans [`extension/README.md`](extension/README.md).
+
 ## Tu viens de l'ancien contextree
 
 La v1 (arbre `.contextree/`, routeur, serveur MCP, extension) est remplacée, pas maintenue. Sur ta machine, une fois :

@@ -5,7 +5,8 @@
   "description": "Voir et bien remplir le contexte natif de Claude Code — un plugin, sans dépendance.",
   "type": "module",
   "scripts": {
-    "test": "node --test tests/carte.test.mjs tests/forme.test.mjs"
+    "test": "node --test tests/carte.test.mjs tests/forme.test.mjs tests/extension.test.mjs",
+    "package:ext": "node extension/empaqueter.mjs"
   },
   "engines": {
     "node": ">=20"

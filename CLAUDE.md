@@ -11,6 +11,7 @@ plugin/skills/retenir/    la table « où écrire un fait » — c'est la métho
 plugin/skills/init-contexte/  le premier jour d'un projet : comprendre, proposer un plan, écrire, vérifier
 plugin/skills/migrer-v1/  l'ancien arbre .contextree vers le natif, scripts/migrer-v1.mjs sans dépendance
 plugin/hooks/             le rappel de fin de tour
+extension/                la vue en barre latérale (Cursor, VS Code) : affiche carte --json, JS sans build
 tests/                    node --test ; fixture/ un faux projet, fixture-home/ un faux ~/.claude
 docs/decisions/           les décisions d'architecture, une par fichier
 .claude/                  ce qui ne sert qu'à travailler sur ce repo : règles, skills, agent, hook
@@ -22,6 +23,7 @@ docs/decisions/           les décisions d'architecture, une par fichier
 | Tâche | Va voir | Se charge |
 |---|---|---|
 | modifier la carte ou ses avertissements | `plugin/skills/carte/` | règle `carte.md`, en touchant |
+| modifier la vue dans Cursor | `extension/` | règle `extension.md`, en touchant |
 | écrire une skill, un agent, un hook | `.claude/rules/consignes.md` | en touchant un `SKILL.md` |
 | ajouter un test ou un défaut à la fixture | `tests/` | règle `tests.md`, en touchant |
 | prendre ou finir une carte Trello | skill `tache-trello` | quand on en parle |
@@ -31,7 +33,8 @@ docs/decisions/           les décisions d'architecture, une par fichier
 ## Commandes
 
 ```bash
-npm test                                      # la carte et le hook de forme, sur tests/fixture
+npm test                                      # la carte, le hook de forme et la vue, sur tests/fixture
+npm run package:ext                           # extension/contextree.vsix, à installer dans Cursor
 node plugin/skills/carte/scripts/carte.mjs --sans-perso   # la carte de ce repo : doit rester sans avertissement
 claude plugin validate ./plugin && claude plugin validate .
 ```
