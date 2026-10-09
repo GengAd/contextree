@@ -9,7 +9,7 @@ plugin/                   ce qui s'installe (.claude-plugin/plugin.json)
 plugin/skills/carte/      la carte : SKILL.md + scripts/carte.mjs, sans dépendance
 plugin/skills/retenir/    la table « où écrire un fait » — c'est la méthode
 plugin/hooks/             le rappel de fin de tour
-tests/                    node --test ; fixture/ est un faux projet pour la carte
+tests/                    node --test ; fixture/ un faux projet, fixture-home/ un faux ~/.claude
 docs/decisions/           les décisions d'architecture, une par fichier
 .claude/                  ce qui ne sert qu'à travailler sur ce repo : règles, skills, agent, hook
 .claude-plugin/           la marketplace locale qui sert plugin/
@@ -30,7 +30,7 @@ docs/decisions/           les décisions d'architecture, une par fichier
 
 ```bash
 npm test                                      # la carte et le hook de forme, sur tests/fixture
-node plugin/skills/carte/scripts/carte.mjs    # la carte de ce repo : doit rester sans avertissement
+node plugin/skills/carte/scripts/carte.mjs --sans-perso   # la carte de ce repo : doit rester sans avertissement
 claude plugin validate ./plugin && claude plugin validate .
 ```
 

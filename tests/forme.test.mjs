@@ -4,16 +4,20 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 const ici = dirname(fileURLToPath(import.meta.url));
 const depot = join(ici, '..');
 const hook = join(depot, '.claude', 'hooks', 'forme.mjs');
 const fixture = join(ici, 'fixture');
-const lancer = (projet, file_path) =>
+// un calque perso vide : le hook ne dépend pas de la machine qui lance les tests
+const vide = mkdtempSync(join(tmpdir(), 'forme-home-'));
+const lancer = (projet, file_path, perso = vide) =>
   spawnSync('node', [hook], {
     input: JSON.stringify({ cwd: projet, tool_input: { file_path } }),
     encoding: 'utf8',
-    env: { ...process.env, CLAUDE_PROJECT_DIR: projet },
+    env: { ...process.env, CLAUDE_PROJECT_DIR: projet, CLAUDE_CONFIG_DIR: perso },
   });
 
 test('une écriture hors du contexte ne relance rien', () => {
@@ -33,6 +37,11 @@ test('une écriture dans le contexte d’un projet à défauts rend les avertiss
 test('sur ce dépôt, le hook se tait', () => {
   const r = lancer(depot, 'CLAUDE.md');
   assert.equal(r.status, 0);
+});
+
+test('un défaut du calque perso ne bloque pas : il n’est pas dans le dépôt', () => {
+  const r = lancer(depot, 'CLAUDE.md', join(ici, 'fixture-home'));
+  assert.equal(r.status, 0, r.stderr);
 });
 
 test('une entrée illisible ne bloque jamais', () => {

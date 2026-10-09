@@ -15,6 +15,8 @@ node "${CLAUDE_PLUGIN_ROOT}/skills/carte/scripts/carte.mjs"
 
 Si un fichier est donné ($ARGUMENTS), ajoute `--fichier $ARGUMENTS` : la carte dit alors ce qui se charge **en plus** quand on touche ce fichier. `--json` rend la même chose pour un outil.
 
+La carte compte aussi le calque **perso**, hors git : `~/.claude` (ou `CLAUDE_CONFIG_DIR`), `CLAUDE.local.md`, `.claude/settings.local.json` et la mémoire automatique du projet. Il s'affiche à part dans chaque section. `--sans-perso` montre le projet seul, tel que git le partage.
+
 Rends la sortie telle quelle, puis, s'il y a des avertissements, propose pour chacun la correction en une ligne. Ne corrige pas sans accord : la carte sert à voir, pas à décider.
 
 Ce que la carte ne peut pas dire : si Claude **va** charger une skill — seul le modèle décide, sur la description. Pour ce qui est **réellement** chargé dans la session en cours, la commande intégrée `/context` le montre.

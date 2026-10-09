@@ -1,6 +1,7 @@
 // PostToolUse (Edit|Write) : après une écriture dans un fichier de contexte, la carte
 // doit rester sans avertissement. Code 2 = Claude lit stderr et corrige. Toute erreur
-// du hook lui-même sort en 0 : un hook cassé ne bloque jamais le travail.
+// du hook lui-même sort en 0 : un hook cassé ne bloque jamais le travail. Le calque perso
+// (~/.claude) n'est pas dans le dépôt : un défaut là-bas ne bloque pas le travail ici.
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +19,7 @@ try {
 
   const carte = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'plugin', 'skills', 'carte', 'scripts', 'carte.mjs');
   const { avertissements } = JSON.parse(
-    execFileSync('node', [carte, '--json', '--racine', projet], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }),
+    execFileSync('node', [carte, '--json', '--sans-perso', '--racine', projet], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }),
   );
   if (!avertissements.length) process.exit(0);
 

@@ -18,6 +18,6 @@ Les lignes `!` ci-dessous s'exécutent **avant** que tu lises : tu reçois l'ét
 
 1. Pas sur `main`, ou des fichiers non commités : **arrête-toi** et dis lesquels.
 2. En retard sur origin : `git pull --ff-only` ; si ça échoue, arrête-toi.
-3. `npm test`, puis `node plugin/skills/carte/scripts/carte.mjs` (zéro avertissement), puis `claude plugin validate ./plugin && claude plugin validate .`. Un échec arrête tout.
+3. `npm test`, puis `node plugin/skills/carte/scripts/carte.mjs --sans-perso` (zéro avertissement), puis `claude plugin validate ./plugin && claude plugin validate .`. Un échec arrête tout.
 4. `git push origin main --tags`.
 5. Rends trois lignes : ce qui est parti (hashes), ce que `/reload-plugins` changera dans les sessions, ce qui reste en haut de *A faire* dans Trello.

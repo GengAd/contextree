@@ -1,18 +1,27 @@
-// La carte, exercée sur tests/fixture : un faux projet avec un défaut de chaque sorte.
+// La carte, exercée sur tests/fixture : un faux projet avec un défaut de chaque sorte,
+// et sur tests/fixture-home : un faux calque utilisateur (~/.claude).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 const ici = dirname(fileURLToPath(import.meta.url));
 const depot = join(ici, '..');
 const script = join(depot, 'plugin', 'skills', 'carte', 'scripts', 'carte.mjs');
 const fixture = join(ici, 'fixture');
-const carte = (racine, ...args) =>
-  JSON.parse(execFileSync('node', [script, '--json', '--racine', racine, ...args], { encoding: 'utf8' }));
+const fixtureHome = join(ici, 'fixture-home');
+// par défaut, un calque perso vide : la carte ne dépend pas de la machine qui lance les tests
+const vide = mkdtempSync(join(tmpdir(), 'carte-home-'));
+const lancer = (racine, args, perso = vide) =>
+  execFileSync('node', [script, '--racine', racine, ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: vide, CLAUDE_CONFIG_DIR: perso, NO_COLOR: '1' },
+  });
+const carte = (racine, ...args) => JSON.parse(lancer(racine, ['--json', ...args]));
+const cartePerso = (racine, ...args) => JSON.parse(lancer(racine, ['--json', ...args], fixtureHome));
 const avertissement = (c, ou, mot) =>
   c.avertissements.some((a) => a.ou === ou && a.quoi.includes(mot));
 
@@ -64,8 +73,8 @@ test('le poids toujours chargé compte ce que /context compte : instructions, de
 });
 
 test('sur un projet sans skill, QUAND LA TÂCHE EN PARLE dit « rien » plutôt qu’un titre seul', () => {
-  const vide = mkdtempSync(join(tmpdir(), 'carte-'));
-  const texte = execFileSync('node', [script, '--racine', vide], { encoding: 'utf8', env: { ...process.env, NO_COLOR: '1' } });
+  const projet = mkdtempSync(join(tmpdir(), 'carte-'));
+  const texte = lancer(projet, []);
   const section = texte.split('QUAND LA TÂCHE EN PARLE')[1].split('\n\n')[0];
   assert.match(section, /\(rien\)/);
 });
@@ -80,4 +89,55 @@ test('--fichier dit ce qui se charge en plus pour ce fichier', () => {
 test('la carte de ce dépôt est sans avertissement', () => {
   const c = carte(depot);
   assert.deepEqual(c.avertissements, []);
+});
+
+test('le calque perso apparaît à part, marqué perso, et compte dans le poids toujours chargé', () => {
+  const c = cartePerso(fixture);
+  const claude = c.toujours.find((n) => n.chemin === join(fixtureHome, 'CLAUDE.md'));
+  assert.equal(claude.perso, true);
+  assert.equal(c.toujours.find((n) => n.chemin === 'CLAUDE.md').perso, false);
+  const ton = c.regles.find((r) => r.chemin === join(fixtureHome, 'rules', 'ton.md'));
+  assert.deepEqual([ton.perso, ton.paths], [true, []]);
+  assert.equal(c.regles.find((r) => r.chemin === '.claude/rules/style.md').perso, false);
+  assert.equal(c.skills.find((s) => s.nom === 'brouillon').perso, true);
+  assert.ok(c.gardeFous.some((g) => g.perso && g.quoi === 'Bash(rm -rf *)'));
+  const seul = carte(fixture);
+  assert.equal(c.poidsToujours.total, seul.poidsToujours.total + c.poidsToujours.perso);
+  assert.ok(c.poidsToujours.perso > 0);
+  const texte = lancer(fixture, [], fixtureHome);
+  const toujours = texte.split('TOUJOURS CHARGÉ')[1].split('\n\n')[0];
+  assert.match(toujours, /dont ~\d+ perso/);
+  assert.ok(toujours.indexOf('perso —') < toujours.indexOf('fixture-home/CLAUDE.md'), 'le perso vient après, sous sa marque');
+});
+
+test('--sans-perso montre le projet seul', () => {
+  const c = cartePerso(fixture, '--sans-perso');
+  assert.equal(c.racinePerso, null);
+  assert.deepEqual(c, { ...carte(fixture), racinePerso: null });
+});
+
+test('une règle perso à paths vise les fichiers du projet ; si elle ne vise rien ici, elle sert ailleurs', () => {
+  const c = cartePerso(fixture, '--fichier', join(fixture, 'src', 'api', 'commandes.ts'));
+  assert.deepEqual(c.pourFichier.regles, ['.claude/rules/api.md', join(fixtureHome, 'rules', 'api-perso.md')]);
+  const python = c.regles.find((r) => r.chemin.endsWith('python.md'));
+  assert.deepEqual(python.cibles, []);
+  assert.ok(!c.avertissements.some((a) => a.ou.endsWith('python.md')));
+});
+
+test('un défaut du calque perso est signalé avec son chemin complet', () => {
+  const c = cartePerso(fixture);
+  assert.ok(avertissement(c, join(fixtureHome, 'agents', 'sans-description.md'), 'sans `description`'));
+  assert.equal(c.avertissements.length, 6, JSON.stringify(c.avertissements));
+});
+
+test('la mémoire automatique du projet compte, ses 200 premières lignes seulement', () => {
+  const perso = mkdtempSync(join(tmpdir(), 'carte-memoire-'));
+  const dossier = join(perso, 'projects', fixture.replace(/[^a-zA-Z0-9]/g, '-'), 'memory');
+  mkdirSync(dossier, { recursive: true });
+  writeFileSync(join(dossier, 'MEMORY.md'), Array.from({ length: 250 }, (_, i) => `- fait ${i}`).join('\n'));
+  const c = JSON.parse(lancer(fixture, ['--json'], perso));
+  const memoire = c.toujours.find((n) => n.memoire);
+  assert.deepEqual([memoire.perso, memoire.lignes], [true, 200]);
+  writeFileSync(join(perso, 'settings.json'), '{ "autoMemoryEnabled": false }');
+  assert.ok(!JSON.parse(lancer(fixture, ['--json'], perso)).toujours.some((n) => n.memoire));
 });
