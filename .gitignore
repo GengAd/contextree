@@ -1,13 +1,6 @@
 node_modules/
-dist/
-*.tsbuildinfo
 .DS_Store
-.env
-.contextree/.cache/
 
-# Le calque personnel : à moi, jamais poussé (ROADMAP.md § Phase 2).
-.contextree.local/
-
-# Le paquet de l'extension : un produit de build, jamais versionné.
-*.vsix
-extension/out/core/
+# Le calque personnel : à soi, jamais poussé.
+CLAUDE.local.md
+.claude/settings.local.json

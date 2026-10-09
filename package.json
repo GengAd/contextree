@@ -1,42 +1,13 @@
 {
-  "name": "@gengad/contextree",
-  "version": "0.1.0",
-  "description": "Un arbre de contexte partageable, routé par IA, injecté à chaque appel — via MCP et hook Claude Code.",
+  "name": "contextree",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Voir et bien remplir le contexte natif de Claude Code — un plugin, sans dépendance.",
   "type": "module",
-  "bin": {
-    "contextree": "./dist/cli.js"
+  "scripts": {
+    "test": "node --test tests/carte.test.mjs"
   },
-  "main": "./dist/index.js",
-  "exports": {
-    ".": "./dist/index.js",
-    "./view": "./dist/view.js"
-  },
-  "types": "./dist/index.d.ts",
-  "files": [
-    "dist",
-    "README.md"
-  ],
   "engines": {
     "node": ">=20"
-  },
-  "scripts": {
-    "build": "tsc -b",
-    "build:ext": "npm run build && npm --prefix extension install --silent && npm --prefix extension run build && npm run bundle:core",
-    "typecheck": "tsc -b --noEmit",
-    "test": "npm run build && node --test \"tests/*.test.js\"",
-    "eval": "npm run build && node dist/cli.js route --eval",
-    "dev": "tsc -b --watch",
-    "test:sql": "bash supabase/run-tests.sh",
-    "bundle:core": "rm -rf extension/out/core && mkdir -p extension/out/core && cp -R dist/ extension/out/core/ && node -e \"require('fs').writeFileSync('extension/out/core/package.json','{\\\"type\\\":\\\"module\\\"}\\n')\"",
-    "package:ext": "npm run build:ext && cd extension && npx -y @vscode/vsce package --skip-license"
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "^0.124.0",
-    "@modelcontextprotocol/sdk": "^1.30.0",
-    "zod": "^3.25.0"
-  },
-  "devDependencies": {
-    "@types/node": "^22.10.0",
-    "typescript": "^5.7.0"
   }
 }

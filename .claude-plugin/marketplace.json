@@ -1,0 +1,12 @@
+{
+  "name": "contextree",
+  "description": "Le plugin contextree, servi depuis ce dépôt.",
+  "owner": { "name": "Adrien Buot" },
+  "plugins": [
+    {
+      "name": "contextree",
+      "source": "./plugin",
+      "description": "Voir et bien remplir le contexte natif de Claude Code (/carte, /retenir)."
+    }
+  ]
+}

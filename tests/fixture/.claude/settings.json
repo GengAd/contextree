@@ -1,0 +1,8 @@
+{
+  "permissions": { "deny": ["Read(./.env)"] },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Edit|Write", "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/absent.mjs\"" } ] }
+    ]
+  }
+}

@@ -1,89 +1,55 @@
 # contextree
 
-Un **arbre de contexte** pour travailler avec une IA : de petites branches typées — identité, règles, contexte, références, savoir-faire — dont seules les pertinentes sont injectées à chaque appel.
+Voir et bien remplir le contexte d'un projet pour Claude Code.
 
-Comme un `CLAUDE.md`, mais **routé** : à chaque prompt, un appel IA léger lit la condition de chargement de chaque branche (`load_when` : « charge-moi quand… ») et ne retient que ce qui sert. Et **partageable** : la source de vérité est du markdown dans `.contextree/`, que git suffit à mettre en commun.
+Claude Code charge déjà seul le bon contexte au bon moment : `CLAUDE.md` à chaque session, une règle de `.claude/rules/` quand on touche un fichier qu'elle vise, une skill quand la tâche correspond à sa description, un hook quand l'événement arrive. Ce qui manque, c'est de **voir** l'ensemble et de **l'entretenir** : un fichier de contexte périmé est pire qu'absent, il est lu avec autorité.
 
-## Démarrer
+contextree est un plugin Claude Code, sans dépendance, qui fait ces deux choses.
 
-Le paquet n'est pas encore publié sur npm. Depuis le dépôt :
+## Les deux skills
 
-```bash
-npm install
-npm run build
-npm i -g .          # ou npm link
-```
+**`/contextree:carte`** — la carte du contexte : chaque fichier que Claude peut charger, groupé par moment (toujours / en touchant un fichier / quand la tâche en parle / à la main), son poids, et ce qu'il faut vérifier : règle qui ne vise aucun fichier, racine trop longue, skill sans description, lien mort, hook vers un script absent. `/contextree:carte src/api/x.ts` dit ce qui se charge pour ce fichier.
 
-Puis, dans le projet à équiper :
+**`/contextree:retenir`** — où écrire un fait durable. Claude la charge seul quand il découvre une convention, une contrainte, un piège ; une table décide du fichier (voir *La méthode*). Il écrit directement et l'annonce en une phrase.
 
-```bash
-contextree init      # crée .contextree/ avec un arbre de départ
-# édite les branches, surtout leur load_when
-contextree install   # câble les agents détectés
-```
+Et un hook qui, à chaque tour, demande à Claude **avant de terminer sa réponse** ce que la tâche lui a appris que le contexte ne dit pas encore. C'est ce moment précis qui fait que l'entretien arrive : mesuré sur ce projet, « au bon moment, sans insister » donne 4 écritures sur 6, « avant de terminer ta réponse » 6 sur 6.
 
-Relance ton agent. **Aucune clé API n'est nécessaire** : si un CLI d'agent (`claude`, `codex`, `gemini`) est installé, c'est ton abonnement qui route. Une clé (`ANTHROPIC_API_KEY`, ou `OPENAI_API_KEY` avec au besoin `OPENAI_BASE_URL`) est utilisée si elle est là — c'est juste plus rapide.
-
-`contextree install` inscrit **la commande qui tourne** : chemins absolus vers le binaire local tant que le paquet n'est pas publié, forme `npx` ensuite. `contextree install --status` l'affiche sans rien écrire.
-
-## Commandes
+## Installer
 
 ```bash
-contextree list                      # l'arbre
-contextree route "<prompt>"          # ce que le routeur chargerait, et pourquoi
-contextree render                    # tout l'arbre, sans routage
-contextree add --title "…" --type rule --load-when "…"
-contextree rm <chemin>
-contextree export --token            # un jeton à coller dans un chat
-contextree import <jeton|fichier> [--prefix equipe]
-contextree install --status          # câblé / à câbler / non détecté
+git clone git@github.com:GengAd/contextree.git
+claude plugin marketplace add ./contextree
+claude plugin install contextree@contextree
 ```
 
-Ajoute `--copy` à `render` ou `route` pour coller le bloc dans un chat qui n'a ni hook ni MCP.
+Dans une session : `/contextree:carte`. Une modification du clone est prise à la session suivante, ou avec `/reload-plugins`.
 
-## L'extension
+## La méthode
+
+Trois couches, de Jake Van Clief : une **carte** lue en premier, des **pièces** chargées quand on y entre, des **outils** câblés où ils servent. Chez Claude Code, une question décide où va un fait :
+
+| Le fait vaut… | Il va dans | Chargé |
+|---|---|---|
+| partout | `CLAUDE.md`, moins de 80 lignes avec ses imports | toujours |
+| pour des fichiers précis | `.claude/rules/<sujet>.md` avec `paths:` | en touchant ces fichiers |
+| pour un dossier | `<dossier>/CLAUDE.md` | en touchant ce dossier |
+| pour un sujet | une skill `user-invocable: false` ; sa description dit quand | quand la tâche en parle |
+| comme une procédure | une skill, avec ses arguments | sur demande ou quand Claude juge |
+| comme un interdit | un hook ou un `deny` dans `.claude/settings.json` | appliqué, pas conseillé |
+| pour toi seul | `CLAUDE.local.md`, `~/.claude/CLAUDE.md` | toujours, pour toi |
+
+Et quatre règles : 80 % du texte sur le travail, 20 % sur le comportement ; le présent, pas l'histoire ; un fait à un seul endroit ; on commence petit et on laisse l'usage grossir les fichiers.
+
+## Ce que contextree ne fait pas, exprès
+
+Pas de format à lui, pas de routeur, pas de serveur : Claude Code charge, contextree regarde et aide à remplir. Pas d'heuristique qui devine où va un fait : c'est Claude, le projet sous les yeux, qui écrit, et vous qui relisez.
+
+## Développer
 
 ```bash
-npm run package:ext    # produit extension/contextree-vscode-0.1.0.vsix
-code   --install-extension extension/contextree-vscode-0.1.0.vsix
-cursor --install-extension extension/contextree-vscode-0.1.0.vsix
+npm test                                      # la carte sur tests/fixture
+node plugin/skills/carte/scripts/carte.mjs    # la carte de ce dépôt
+claude plugin validate ./plugin
 ```
 
-Elle montre l'arbre dans la barre latérale, surligne les branches réellement lues au dernier tour, et ouvre une toile 2D où l'on édite une branche et où l'on essaie un prompt sans lancer de conversation.
-
-## Partager un arbre avec son équipe (git)
-
-Une équipe qui a déjà un dépôt commun n'a besoin de rien d'autre : versionne
-`.contextree/` avec le projet, ou monte-le en submodule si plusieurs dépôts
-partagent le même contexte.
-
-```bash
-git submodule add <url-de-l-arbre> .contextree   # au choix : ou simplement le dossier du repo
-```
-
-Pull, push, conflits, historique et revue sont ceux de git. `.contextree.local/`
-— ton calque personnel — est **gitignoré dès la création de l'arbre** : ce que tu
-y surcharges ne part jamais au groupe.
-
-Deux choses à savoir avant le premier merge : un conflit non résolu dans le corps
-d'une branche **part au modèle** tel quel, et un conflit dans le frontmatter
-**ne se voit pas** — le `load_when` affiché est alors l'un des deux, au hasard.
-Après un merge qui touche `.contextree/`, relis les `load_when` concernés.
-
-Le détail (`contextree list`, puis la branche « Partager un arbre par git »).
-
-## La documentation de ce projet est son arbre
-
-Il n'y a pas d'autre `.md` à la racine : tout vit dans `.contextree/`, une branche par sujet, chargée quand elle sert.
-
-```bash
-contextree list                        # les sujets et leurs conditions
-contextree route "<une question>"      # ce qu'une IA en recevrait
-contextree render                      # tout, d'un coup
-```
-
-C'est aussi le seul test honnête de l'outil : si une réponse ne s'y trouve pas, c'est un `load_when` à corriger, pas un fichier à recréer.
-
-## Origine
-
-Extrait de [Lacis](../ai-tree) (repo `ai-tree`), dont l'arbre de contexte était la vraie valeur mais restait enterré sous une extension VS Code complète. Ici on ne garde que le cœur.
+Le travail est piloté par le tableau Trello « contextree » ; la skill `tache-trello` de ce dépôt dit comment.
