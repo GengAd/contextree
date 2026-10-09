@@ -5,7 +5,7 @@
   "version": "2.0.0",
   "publisher": "gengad",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"
   },

@@ -1,6 +1,6 @@
 {
   "name": "contextree",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "description": "Voir et bien remplir le contexte natif de Claude Code — un plugin, sans dépendance.",
   "type": "module",

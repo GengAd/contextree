@@ -18,15 +18,25 @@ contextree est un plugin Claude Code, sans dépendance, qui fait ces deux choses
 
 Et un hook qui, à chaque tour, demande à Claude **avant de terminer sa réponse** ce que la tâche lui a appris que le contexte ne dit pas encore. C'est ce moment précis qui fait que l'entretien arrive : mesuré sur ce projet, « au bon moment, sans insister » donne 4 écritures sur 6, « avant de terminer ta réponse » 6 sur 6.
 
-## Installer
+## Installer chez toi
+
+Il ne faut que Claude Code :
 
 ```bash
-git clone git@github.com:GengAd/contextree.git
-claude plugin marketplace add ./contextree
+claude plugin marketplace add GengAd/contextree
 claude plugin install contextree@contextree
 ```
 
-Dans une session : `/contextree:carte`. Une modification du clone est prise à la session suivante, ou avec `/reload-plugins`.
+Ou depuis une session : `/plugin marketplace add GengAd/contextree`, puis `/plugin install contextree@contextree`. Ensuite, dans n'importe quel projet : `/contextree:carte`.
+
+Mettre à jour, quand le [CHANGELOG](CHANGELOG.md) annonce une version :
+
+```bash
+claude plugin marketplace update contextree
+claude plugin update contextree@contextree
+```
+
+puis une nouvelle session, ou `/reload-plugins` dans celle en cours.
 
 ## La vue dans Cursor
 
@@ -73,10 +83,22 @@ Pas de format à lui, pas de routeur, pas de serveur : Claude Code charge, conte
 
 ## Développer
 
+Depuis un clone, le plugin se sert du dossier lui-même : une modification est prise à la session suivante, ou avec `/reload-plugins`.
+
 ```bash
-npm test                                      # la carte sur tests/fixture
-node plugin/skills/carte/scripts/carte.mjs    # la carte de ce dépôt
-claude plugin validate ./plugin
+git clone git@github.com:GengAd/contextree.git
+claude plugin marketplace add ./contextree
+claude plugin install contextree@contextree
+
+npm test                                                  # la carte, le hook de forme et la vue
+node plugin/skills/carte/scripts/carte.mjs --sans-perso   # la carte de ce dépôt
+claude plugin validate ./plugin && claude plugin validate .
 ```
 
+Un changement visible du plugin monte la `version` de `plugin/.claude-plugin/plugin.json` et ajoute une entrée au [CHANGELOG](CHANGELOG.md) : c'est la version qui déclenche la mise à jour chez ceux qui l'ont installé.
+
 Le dépôt applique sa propre méthode : un `CLAUDE.md` court avec sa table « où aller », des règles à `paths` dans `.claude/rules/`, un hook qui relance la carte après chaque écriture dans le contexte, un sous-agent `relecteur` avant commit, `/livrer` pour pousser, et une décision d'architecture dans `docs/decisions/`. Le travail est piloté par le tableau Trello « contextree » ; la skill `tache-trello` dit comment.
+
+## Licence
+
+MIT — voir [LICENSE](LICENSE).
