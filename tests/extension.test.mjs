@@ -15,7 +15,7 @@ const depot = join(ici, '..');
 const script = join(depot, 'plugin', 'skills', 'carte', 'scripts', 'carte.mjs');
 const fixture = join(ici, 'fixture');
 const fixtureHome = join(ici, 'fixture-home');
-const { arbre, absolu, aRafraichir } = createRequire(import.meta.url)(join(depot, 'extension', 'arbre.js'));
+const { arbre, absolu, aRafraichir, problemes } = createRequire(import.meta.url)(join(depot, 'extension', 'arbre.js'));
 
 const vide = mkdtempSync(join(tmpdir(), 'vue-home-'));
 const lancer = (racine, args) =>
@@ -67,7 +67,47 @@ test('la carte d’un plugin installé plus ancien s’affiche quand même, et d
   delete carte.racinePerso;
   const sections = arbre(carte, vide);
   assert.match(sections[0].description, /mettre à jour le plugin/);
+  const pour = arbre({ ...carte, pourFichier: { fichier: 'x.ts' } }, vide)[0];
+  assert.deepEqual([pour.label, pour.enfants[0].label], ['POUR CE FICHIER', 'rien de plus']);
   assert.equal(sections.at(-1).enfants.length, carte.avertissements.length);
+});
+
+test('POUR CE FICHIER vient en tête et dit ce que la carte texte ajoute pour le fichier actif', () => {
+  const fichier = join(fixture, 'src', 'api', 'commandes.ts');
+  const sections = arbre(JSON.parse(lancer(fixture, ['--json', '--fichier', fichier])), vide);
+  const pour = sections[0];
+  assert.deepEqual([pour.label, pour.description], ['POUR CE FICHIER', 'src/api/commandes.ts']);
+  assert.equal(pour.enfants[0].label, '.claude/rules/api.md');
+  const perso = pour.enfants.find((n) => n.label === 'perso — hors git');
+  assert.deepEqual(perso.enfants.map((n) => n.fichier), [join(fixtureHome, 'rules', 'api-perso.md')]);
+  const texte = lancer(fixture, ['--fichier', fichier]).split('EN TOUCHANT src/api/commandes.ts')[1];
+  for (const n of tous(pour.enfants).filter((n) => n.icone !== 'account')) assert.ok(texte.includes(`+ ${n.label}`), n.label);
+
+  const web = arbre(JSON.parse(lancer(fixture, ['--json', '--fichier', join(fixture, 'web', 'Panier.tsx')])), vide)[0];
+  assert.deepEqual(web.enfants.map((n) => [n.label, n.fichier]), [['instructions de web/', join(fixture, 'web', 'CLAUDE.md')]]);
+  assert.ok(!vue().some((s) => s.label === 'POUR CE FICHIER'), 'sans fichier actif, pas de section');
+});
+
+test('chaque avertissement va dans Problèmes, sur un fichier qui existe, avec sa correction', () => {
+  const carte = JSON.parse(lancer(fixture, ['--json']));
+  const liste = problemes(carte, vide);
+  assert.equal(liste.length, carte.avertissements.length);
+  for (const p of liste) {
+    assert.ok(existsSync(p.fichier), p.fichier);
+    assert.match(p.message, / — \S/);
+  }
+});
+
+test('« Demander à Claude » a un prompt prêt pour chaque avertissement et chaque fichier', () => {
+  const noeuds = tous(vue());
+  const avertissements = noeuds.filter((n) => n.icone === 'warning' && n.fichier);
+  assert.ok(avertissements.length);
+  for (const n of avertissements) assert.equal(n.invite, `Corrige cet avertissement de /contextree:carte : ${n.label} — ${n.description}`);
+  const regle = noeuds.find((n) => n.label === '.claude/rules/api.md');
+  assert.match(regle.invite, /^Relis le fichier de contexte \.claude\/rules\/api\.md : /);
+  const perso = noeuds.find((n) => n.fichier === join(fixtureHome, 'CLAUDE.md'));
+  assert.ok(perso.invite.includes(join(fixtureHome, 'CLAUDE.md')), 'un fichier hors du projet garde son chemin complet');
+  assert.ok(noeuds.filter((n) => n.fichier).every((n) => n.invite));
 });
 
 test('les chemins de la carte deviennent absolus : projet, ~/ ou déjà complets', () => {

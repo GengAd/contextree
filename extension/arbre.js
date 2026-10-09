@@ -12,6 +12,7 @@ const { join, isAbsolute, relative, sep } = require('node:path');
  * @property {string} [fichier]  chemin absolu ouvert au clic
  * @property {string} [icone]    nom d'une ThemeIcon
  * @property {boolean} [perso]   hors git : affiché grisé
+ * @property {string} [invite]   le prompt que « Demander à Claude » copie
  * @property {Noeud[]} enfants
  */
 
@@ -33,6 +34,19 @@ function aRafraichir(fichier, racine, home, racinePerso) {
   if (rel === null) return false;
   // plugin/ : dans le clone de contextree, la carte elle-même change — comme pour le hook de forme
   return /^(\.claude|plugin)\//.test(rel) || /(^|\/)(CLAUDE(\.local)?|AGENTS)\.md$/.test(rel);
+}
+
+/** Le prompt d'un avertissement : ce que Claude doit corriger, avec la correction proposée par la carte. */
+const inviteAvertissement = (a) => `Corrige cet avertissement de /contextree:carte : ${a.ou} — ${a.quoi}`;
+
+/** Le prompt d'un fichier de contexte : le relire contre le code, et le corriger au bon endroit. */
+const inviteFichier = (chemin) =>
+  `Relis le fichier de contexte ${chemin} : dit-il encore vrai sur le code d'aujourd'hui, et est-il au bon endroit ? ` +
+  'Corrige ce qui est faux, déplace ce qui est mal placé (skill /contextree:retenir), puis relance /contextree:carte.';
+
+/** Les avertissements pour le panneau Problèmes : un par fichier concerné, la correction dans le message. */
+function problemes(carte, home) {
+  return carte.avertissements.map((a) => ({ fichier: absolu(a.ou, carte.racine, home), message: a.quoi, invite: inviteAvertissement(a) }));
 }
 
 /** @param {any} carte  la sortie de `carte.mjs --json` */
@@ -158,7 +172,7 @@ function arbre(carte, home) {
 
   // À VÉRIFIER
   const verifier = carte.avertissements.map((a) =>
-    feuille(a.ou, { description: a.quoi, tooltip: `${a.ou} — ${a.quoi}`, fichier: ouvrir(a.ou), icone: 'warning' }),
+    feuille(a.ou, { description: a.quoi, tooltip: `${a.ou} — ${a.quoi}`, fichier: ouvrir(a.ou), icone: 'warning', invite: inviteAvertissement(a) }),
   );
   section(
     'À VÉRIFIER',
@@ -167,7 +181,48 @@ function arbre(carte, home) {
     verifier.length ? 'warning' : 'pass',
   );
 
+  // POUR CE FICHIER — en tête : ce qui s'ajoute quand on touche le fichier de l'éditeur actif
+  const pf = carte.pourFichier;
+  if (pf) {
+    const pour = [
+      ...(pf.dossiers ?? []).map((d) => {
+        const dossier = carte.dossiers.find((x) => x.dossier === d);
+        return feuille(`instructions de ${d}`, {
+          description: dossier?.fichiers.map((f) => f.chemin).join(', '),
+          fichier: dossier?.fichiers?.[0] && ouvrir(dossier.fichiers[0].chemin),
+          icone: 'folder',
+        });
+      }),
+      ...rendre(
+        (pf.regles ?? []).map((c) => carte.regles.find((r) => r.chemin === c) ?? { chemin: c }),
+        (r) => feuille(r.chemin, { description: r.lignes && `${r.lignes} lignes`, fichier: ouvrir(r.chemin), icone: 'law' }),
+      ),
+      ...(pf.skills ?? []).map((nom) => {
+        const s = carte.skills.find((k) => k.nom === nom);
+        return feuille(`skill ${nom} (disponible)`, { fichier: s && ouvrir(s.chemin), icone: 'tools' });
+      }),
+    ];
+    sections.unshift({
+      label: 'POUR CE FICHIER',
+      description: pf.fichier,
+      icone: 'target',
+      enfants: pour.length ? pour : [feuille('rien de plus', { description: 'que ce qui est toujours chargé' })],
+    });
+  }
+
+  // tout fichier se relit avec Claude ; un avertissement a déjà son prompt
+  const relu = (n) => {
+    if (n.fichier && !n.invite) n.invite = inviteFichier(montre(n.fichier, carte.racine));
+    n.enfants.forEach(relu);
+  };
+  sections.forEach(relu);
   return sections;
 }
 
-module.exports = { arbre, absolu, aRafraichir };
+/** Un chemin absolu, tel qu'on le montre à Claude : relatif au projet s'il y est. */
+function montre(fichier, racine) {
+  const rel = relative(racine, fichier);
+  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel.split(sep).join('/') : fichier;
+}
+
+module.exports = { arbre, absolu, aRafraichir, problemes };

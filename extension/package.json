@@ -34,14 +34,49 @@
         "title": "Rafraîchir la carte",
         "category": "contextree",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "contextree.ouvrirCarte",
+        "title": "Carte en texte",
+        "category": "contextree",
+        "icon": "$(book)"
+      },
+      {
+        "command": "contextree.demander",
+        "title": "Demander à Claude",
+        "category": "contextree",
+        "icon": "$(comment-discussion)"
       }
     ],
     "menus": {
       "view/title": [
         {
+          "command": "contextree.ouvrirCarte",
+          "when": "view == contextree",
+          "group": "navigation@1"
+        },
+        {
           "command": "contextree.rafraichir",
           "when": "view == contextree",
-          "group": "navigation"
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "contextree.demander",
+          "when": "view == contextree && viewItem == demandable",
+          "group": "inline"
+        },
+        {
+          "command": "contextree.demander",
+          "when": "view == contextree && viewItem == demandable",
+          "group": "contextree"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "contextree.demander",
+          "when": "false"
         }
       ]
     },
