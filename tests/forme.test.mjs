@@ -25,7 +25,7 @@ test('une écriture hors du contexte ne relance rien', () => {
 test('une écriture dans le contexte d’un projet à défauts rend les avertissements à Claude', () => {
   const r = lancer(fixture, '.claude/rules/morte.md');
   assert.equal(r.status, 2);
-  assert.match(r.stderr, /4 avertissement/);
+  assert.match(r.stderr, /5 avertissement/);
   assert.match(r.stderr, /morte\.md — aucun fichier ne correspond/);
   assert.match(r.stderr, /Corrige avant de continuer/);
 });

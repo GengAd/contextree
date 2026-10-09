@@ -3,6 +3,9 @@
   "hooks": {
     "PreToolUse": [
       { "matcher": "Edit|Write", "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/absent.mjs\"" } ] }
+    ],
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "\"/usr/bin/env\" bash /nexiste/plus/demarrage.sh" } ] }
     ]
   }
 }

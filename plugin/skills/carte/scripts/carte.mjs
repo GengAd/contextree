@@ -22,6 +22,7 @@ const JSON_SORTIE = args.includes('--json');
 const LIMITE_RACINE = 80; // lignes conseillées pour CLAUDE.md avec ses imports
 const LIMITE_SKILL = 500; // lignes conseillées pour SKILL.md
 const LIMITE_DESCRIPTION = 1536; // caractères au-delà desquels la description est tronquée
+const CARACTERES_PAR_TOKEN = 2.5; // mesuré contre /context sur des fichiers en français ; l'anglais tourne autour de 3
 const IGNORES = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.next', 'coverage']);
 
 // --- lecture -----------------------------------------------------------------
@@ -29,7 +30,7 @@ const IGNORES = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.next'
 const posixRel = (abs) => relative(RACINE, abs).split(sep).join('/');
 const lire = (abs) => readFileSync(abs, 'utf8');
 const lignes = (texte) => texte.split('\n').length;
-const tokens = (texte) => Math.round(texte.length / 4);
+const tokens = (texte) => Math.round(texte.length / CARACTERES_PAR_TOKEN);
 
 function fichiersDu(dir, acc = []) {
   for (const nom of readdirSync(dir)) {
@@ -132,7 +133,7 @@ const racineFichiers = racineClaude.length
 const vus = new Set();
 const toujours = racineFichiers.map((f) => instruction(join(RACINE, f), 0, vus));
 if (racineClaude.length && existsSync(join(RACINE, 'AGENTS.md')) && !vus.has(join(RACINE, 'AGENTS.md')))
-  avertir('AGENTS.md', "ignoré par Claude Code : un CLAUDE.md existe et ne l'importe pas (`@AGENTS.md`)");
+  avertir('AGENTS.md', "ignoré par Claude Code : un CLAUDE.md existe et ne l'importe pas — ajouter `@AGENTS.md` dans CLAUDE.md");
 for (const n of toujours)
   if (lignesTotales(n) > LIMITE_RACINE)
     avertir(n.chemin, `${lignesTotales(n)} lignes avec ses imports (conseillé : < ${LIMITE_RACINE}) — déplacer vers une règle à paths ou une skill`);
@@ -145,7 +146,7 @@ const regles = TOUS.filter((f) => f.startsWith('.claude/rules/') && f.endsWith('
   const paths = liste(meta.paths);
   const cibles = paths.length ? TOUS.filter((x) => !x.startsWith('.claude/') && correspond(paths, x)) : [];
   if (paths.length && cibles.length === 0)
-    avertir(f, `aucun fichier ne correspond à ${paths.join(', ')} : cette règle ne se chargera jamais`);
+    avertir(f, `aucun fichier ne correspond à ${paths.join(', ')} : cette règle ne se chargera jamais — corriger le glob ou retirer \`paths\``);
   return { chemin: f, paths, cibles, lignes: lignes(texte), tokens: tokens(texte) };
 });
 
@@ -181,13 +182,16 @@ for (const f of TOUS) {
   const dossier = posix.dirname(f);
   const annexes = skillDir ? TOUS.filter((x) => x.startsWith(dossier + '/') && x !== f).map((x) => x.slice(dossier.length + 1)) : [];
 
-  if (!description && !manuel) avertir(f, 'sans description : Claude ne sait pas quand la charger');
+  if (!description && !manuel)
+    avertir(f, 'sans description : Claude ne sait pas quand la charger — ajouter `description:` (quoi, et quand)');
   if (description.length > LIMITE_DESCRIPTION)
-    avertir(f, `description de ${description.length} caractères, tronquée à ${LIMITE_DESCRIPTION}`);
+    avertir(f, `description de ${description.length} caractères, tronquée à ${LIMITE_DESCRIPTION} — la raccourcir, le détail va dans le corps`);
   if (lignes(corps) > LIMITE_SKILL) avertir(f, `${lignes(corps)} lignes (conseillé : < ${LIMITE_SKILL}) — déplacer le détail dans des fichiers voisins`);
-  if (manuel && cache) avertir(f, 'ni Claude ni toi ne pouvez la lancer (disable-model-invocation + user-invocable: false)');
+  if (manuel && cache)
+    avertir(f, 'ni Claude ni toi ne pouvez la lancer (disable-model-invocation + user-invocable: false) — retirer l\'un des deux');
   for (const [, lien] of corps.matchAll(/\]\(([^)#\s]+)\)/g))
-    if (!/^[a-z]+:/.test(lien) && !existsSync(join(RACINE, dossier, lien))) avertir(f, `lien mort : ${lien}`);
+    if (!/^[a-z]+:/.test(lien) && !existsSync(join(RACINE, dossier, lien)))
+      avertir(f, `lien mort : ${lien} — corriger le chemin ou créer le fichier`);
 
   skills.push({
     chemin: f,
@@ -205,9 +209,10 @@ for (const f of TOUS) {
 
 const agents = TOUS.filter((f) => /^\.claude\/agents\/.+\.md$/.test(f)).map((f) => {
   const { meta } = frontmatter(lire(join(RACINE, f)));
-  if (!meta.name) avertir(f, 'sous-agent sans `name`');
-  if (!meta.description) avertir(f, 'sous-agent sans `description` : Claude ne sait pas quand déléguer');
-  return { chemin: f, nom: meta.name ?? posix.basename(f, '.md'), description: meta.description ?? '', outils: meta.tools ?? 'tous', modele: meta.model ?? 'inherit' };
+  if (!meta.name) avertir(f, 'sous-agent sans `name` — ajouter `name:` dans le frontmatter');
+  if (!meta.description) avertir(f, 'sous-agent sans `description` : Claude ne sait pas quand déléguer — ajouter `description:`');
+  const description = meta.description ?? '';
+  return { chemin: f, nom: meta.name ?? posix.basename(f, '.md'), description, outils: meta.tools ?? 'tous', modele: meta.model ?? 'inherit', tokens: tokens(description) };
 });
 
 // --- 6. garde-fous (settings) --------------------------------------------------------------
@@ -230,10 +235,20 @@ for (const f of ['.claude/settings.json', '.claude/settings.local.json']) {
   for (const d of s.permissions?.deny ?? []) gardeFous.push({ source: f, genre: 'refus', quoi: d });
   for (const a of s.permissions?.ask ?? []) gardeFous.push({ source: f, genre: 'demande', quoi: a });
   // un hook qui pointe vers un script absent ne fait rien — sans prévenir
-  for (const g of gardeFous.filter((x) => x.genre === 'hook' && x.source === f)) {
-    const script = String(g.detail).match(/\$\{?CLAUDE_PROJECT_DIR\}?\/([^"'\s]+)/);
-    if (script && !existsSync(join(RACINE, script[1]))) avertir(f, `hook ${g.quoi} : ${script[1]} n'existe pas`);
-  }
+  for (const g of gardeFous.filter((x) => x.genre === 'hook' && x.source === f))
+    for (const script of scriptsDu(String(g.detail)))
+      if (!existsSync(script.abs)) avertir(f, `hook ${g.quoi} : ${script.vu} n'existe pas — corriger le chemin ou retirer le hook`);
+}
+
+/** Les scripts qu'une commande de hook lance : sous $CLAUDE_PROJECT_DIR, ou par chemin absolu. */
+function scriptsDu(commande) {
+  const scripts = [];
+  for (const [, rel] of commande.matchAll(/\$\{?CLAUDE_PROJECT_DIR\}?\/([^"'\s]+)/g))
+    scripts.push({ vu: rel, abs: join(RACINE, rel) });
+  const home = process.env.HOME ?? '~';
+  for (const [, chemin] of commande.matchAll(/(?:^|[\s"'=])((?:~|\$\{?HOME\}?)?\/[^"'\s]*\.(?:m?js|cjs|ts|sh|py|rb))(?=$|[\s"'])/g))
+    scripts.push({ vu: chemin, abs: chemin.replace(/^(?:~|\$\{?HOME\}?)(?=\/)/, home) });
+  return scripts;
 }
 
 // --- 7. pour un fichier donné ---------------------------------------------------------------
@@ -251,7 +266,17 @@ if (FICHIER) {
 
 // --- sortie ----------------------------------------------------------------------------------
 
-const carte = { racine: RACINE, toujours, regles, dossiers, skills, agents, gardeFous, pourFichier, avertissements };
+// ce que /context range sous Memory files, Skills et Custom agents, pour ce projet
+const regleToujours = regles.filter((r) => !r.paths.length);
+const skillsVisibles = skills.filter((s) => s.mode !== 'manuel');
+const poidsToujours = {
+  instructions: toujours.reduce((s, n) => s + poids(n), 0) + regleToujours.reduce((s, r) => s + r.tokens, 0),
+  skills: skillsVisibles.reduce((s, k) => s + tokens(k.description), 0),
+  agents: agents.reduce((s, a) => s + a.tokens, 0),
+};
+poidsToujours.total = poidsToujours.instructions + poidsToujours.skills + poidsToujours.agents;
+
+const carte = { racine: RACINE, toujours, regles, dossiers, skills, agents, gardeFous, pourFichier, avertissements, poidsToujours };
 if (JSON_SORTIE) {
   console.log(JSON.stringify(carte, null, 2));
   process.exit(0);
@@ -264,22 +289,17 @@ const court = (s, n = 90) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 const out = [];
 const titre = (t, sous) => out.push('', gras(t) + (sous ? pale('  ' + sous) : ''));
 
-out.push(gras(`Carte du contexte — ${posix.basename(RACINE)}`) + pale('   (1 token ≈ 4 caractères, estimation)'));
+out.push(gras(`Carte du contexte — ${posix.basename(RACINE)}`) + pale(`   (1 token ≈ ${String(CARACTERES_PAR_TOKEN).replace('.', ',')} caractères, estimation)`));
 
-const regleToujours = regles.filter((r) => !r.paths.length);
-const skillsVisibles = skills.filter((s) => s.mode !== 'manuel');
-const coutDescriptions = skillsVisibles.reduce((s, k) => s + tokens(k.description), 0);
-const coutToujours =
-  toujours.reduce((s, n) => s + poids(n), 0) + regleToujours.reduce((s, r) => s + r.tokens, 0) + coutDescriptions;
-
-titre('TOUJOURS CHARGÉ', `~${coutToujours} tokens à chaque session`);
+titre('TOUJOURS CHARGÉ', `~${poidsToujours.total} tokens à chaque session`);
 const arbre = (n, niveau = 0) => {
   out.push(`  ${'   '.repeat(niveau)}${niveau ? '└─ @' : ''}${n.chemin}  ${pale(`${n.lignes} lignes`)}`);
   n.imports.forEach((i) => arbre(i, niveau + 1));
 };
 toujours.forEach((n) => arbre(n));
 regleToujours.forEach((r) => out.push(`  ${r.chemin}  ${pale(`${r.lignes} lignes, règle sans paths`)}`));
-if (skillsVisibles.length) out.push(`  ${pale(`+ les descriptions de ${skillsVisibles.length} skill(s), ~${coutDescriptions} tokens`)}`);
+if (skillsVisibles.length) out.push(`  ${pale(`+ les descriptions de ${skillsVisibles.length} skill(s), ~${poidsToujours.skills} tokens`)}`);
+if (agents.length) out.push(`  ${pale(`+ les descriptions de ${agents.length} sous-agent(s), ~${poidsToujours.agents} tokens`)}`);
 if (!toujours.length) out.push(`  ${jaune('aucun CLAUDE.md ni AGENTS.md')}`);
 
 titre('EN TOUCHANT UN FICHIER', 'lecture ou écriture qui correspond');
@@ -292,7 +312,8 @@ for (const s of skills.filter((s) => s.paths.length))
 if (!dossiers.length && !regles.some((r) => r.paths.length)) out.push(pale('  (rien)'));
 
 titre('QUAND LA TÂCHE EN PARLE', 'Claude lit la description et décide');
-for (const s of skills.filter((s) => s.mode !== 'manuel')) {
+if (!skillsVisibles.length) out.push(pale('  (rien)'));
+for (const s of skillsVisibles) {
   const qui = s.mode === 'claude' ? 'Claude seul' : `Claude ou /${s.nom}`;
   const extra = [`corps ${s.corpsLignes} lignes`, s.annexes.length && `+ ${s.annexes.join(', ')}`, s.contexte].filter(Boolean).join(', ');
   out.push(`  ${gras(s.nom)} ${pale(`(${qui} ; ${extra})`)}`, `    « ${court(s.description)} »`);
