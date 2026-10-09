@@ -1,0 +1,1 @@
+Avant de terminer ta réponse, dis en une ligne ce que cette tâche t'a appris sur ce projet qui sera encore vrai demain et qu'aucun fichier de contexte ne dit encore. S'il y a quelque chose, écris-le avant de répondre avec la skill `contextree:retenir`, et annonce-le en une phrase. Sinon, dis « rien à retenir ». Une question de lecture n'apprend rien au projet.

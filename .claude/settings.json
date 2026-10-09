@@ -1,11 +1,9 @@
 {
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          { "type": "command", "command": "node dist/cli.js hook", "timeout": 15 }
-        ]
-      }
+  "permissions": {
+    "allow": [
+      "Bash(npm test)",
+      "Bash(node plugin/skills/carte/scripts/carte.mjs*)",
+      "Bash(claude plugin validate*)"
     ]
   }
 }
