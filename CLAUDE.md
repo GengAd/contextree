@@ -1,6 +1,6 @@
 # contextree
 
-Un plugin Claude Code pour **voir** et **bien remplir** le contexte natif d'un projet (`CLAUDE.md`, règles, skills, sous-agents, hooks). Trois skills : `/contextree:init-contexte` construit le contexte d'un projet (plan validé avant d'écrire), `/contextree:carte` montre chaque fichier et quand il se charge, `/contextree:retenir` écrit un fait durable au bon endroit ; un hook rappelle à chaque tour de le faire. Repo privé `GengAd/contextree`, mainteneur solo (Adrien Buot), tout en français.
+Un plugin Claude Code pour **voir** et **bien remplir** le contexte natif d'un projet (`CLAUDE.md`, règles, skills, sous-agents, hooks). Quatre skills : `/contextree:init-contexte` construit le contexte d'un projet (plan validé avant d'écrire), `/contextree:carte` montre chaque fichier et quand il se charge, `/contextree:retenir` écrit un fait durable au bon endroit, `/contextree:migrer-v1` convertit un projet de l'ancien contextree ; un hook rappelle à chaque tour de retenir. Repo privé `GengAd/contextree`, mainteneur solo (Adrien Buot), tout en français.
 
 ## Carte du dépôt
 
@@ -9,6 +9,7 @@ plugin/                   ce qui s'installe (.claude-plugin/plugin.json)
 plugin/skills/carte/      la carte : SKILL.md + scripts/carte.mjs, sans dépendance
 plugin/skills/retenir/    la table « où écrire un fait » — c'est la méthode
 plugin/skills/init-contexte/  le premier jour d'un projet : comprendre, proposer un plan, écrire, vérifier
+plugin/skills/migrer-v1/  l'ancien arbre .contextree vers le natif, scripts/migrer-v1.mjs sans dépendance
 plugin/hooks/             le rappel de fin de tour
 tests/                    node --test ; fixture/ un faux projet, fixture-home/ un faux ~/.claude
 docs/decisions/           les décisions d'architecture, une par fichier

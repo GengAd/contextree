@@ -6,11 +6,13 @@ Claude Code charge déjà seul le bon contexte au bon moment : `CLAUDE.md` à ch
 
 contextree est un plugin Claude Code, sans dépendance, qui fait ces deux choses.
 
-## Les trois skills
+## Les quatre skills
 
 **`/contextree:carte`** — la carte du contexte : chaque fichier que Claude peut charger, groupé par moment (toujours / en touchant un fichier / quand la tâche en parle / à la main), son poids, et ce qu'il faut vérifier : règle qui ne vise aucun fichier, racine trop longue, skill sans description, lien mort, hook vers un script absent. `/contextree:carte src/api/x.ts` dit ce qui se charge pour ce fichier.
 
 **`/contextree:init-contexte`** — le premier jour d'un projet : tu expliques le projet, Claude lit le dépôt, propose un plan de fichiers (un `CLAUDE.md` court avec sa table « où aller », des règles à `paths`, des skills de domaine, un hook par interdit), écrit après ton accord, et finit par la carte sans avertissement. Ensuite il maintient tout seul avec `retenir`.
+
+**`/contextree:migrer-v1`** — pour un projet encore sur l'ancien contextree (voir plus bas).
 
 **`/contextree:retenir`** — où écrire un fait durable. Claude la charge seul quand il découvre une convention, une contrainte, un piège ; une table décide du fichier (voir *La méthode*). Il écrit directement et l'annonce en une phrase.
 
@@ -25,6 +27,18 @@ claude plugin install contextree@contextree
 ```
 
 Dans une session : `/contextree:carte`. Une modification du clone est prise à la session suivante, ou avec `/reload-plugins`.
+
+## Tu viens de l'ancien contextree
+
+La v1 (arbre `.contextree/`, routeur, serveur MCP, extension) est remplacée, pas maintenue. Sur ta machine, une fois :
+
+```bash
+npm uninstall -g @gengad/contextree ; npm unlink @gengad/contextree 2>/dev/null   # le binaire global
+rm -rf ~/.contextree                                                               # l'état du routeur
+cursor --uninstall-extension gengad.contextree-vscode                              # ou code --uninstall-extension
+```
+
+Puis, dans chaque projet qui a un `.contextree/` : `/contextree:migrer-v1`. Claude convertit l'arbre en fichiers natifs, retire le hook et le serveur MCP du projet, relit ce qui parlait encore de « branches », et finit par la carte sans avertissement.
 
 ## La méthode
 
