@@ -85,7 +85,7 @@ Pas de format à lui, pas de routeur, pas de serveur : Claude Code charge, conte
 
 ## Développer
 
-Le plugin installé est une **copie figée à sa version** (`~/.claude/plugins/cache/contextree/contextree/<version>`), même installé depuis un clone : une modification du clone ne sort pas de ce dépôt. Pour l'essayer dans un autre projet, monter la version, puis `claude plugin marketplace update contextree` et `claude plugin update contextree@contextree`, et ouvrir une nouvelle session.
+Installé depuis un clone, le plugin est lu dans son dossier : une modification est prise à la session suivante, dans tous tes projets, ou avec `/reload-plugins`. Ceux qui l'ont installé depuis GitHub, eux, ne reçoivent qu'une nouvelle version.
 
 ```bash
 git clone git@github.com:GengAd/contextree.git
