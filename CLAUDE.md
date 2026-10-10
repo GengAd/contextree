@@ -46,5 +46,5 @@ claude plugin validate ./plugin && claude plugin validate .
 - **On ne refait pas ce que Claude Code fait** : pas de format à nous, pas de routeur, pas de serveur (`docs/decisions/0001`).
 - **On n'outille qu'un agacement vécu.** Une feature sans porte d'usage réel va dans *Plus tard* du Trello, sa porte écrite.
 - **Un fait sur ce projet** va ici s'il vaut partout, sinon dans une règle ou une skill — la table est dans `plugin/skills/retenir/SKILL.md`. Le hook de forme relance la carte après chaque écriture dans le contexte.
-- **Le plugin est public** (`claude plugin marketplace add GengAd/contextree`) : un changement visible de `plugin/` monte la `version` de `plugin/.claude-plugin/plugin.json` et ajoute une entrée à `CHANGELOG.md` — sans nouvelle version, ceux qui l'ont installé ne reçoivent rien.
+- **Le plugin est public** (`claude plugin marketplace add GengAd/contextree`) : un changement visible de `plugin/` monte la `version` de `plugin/.claude-plugin/plugin.json` et ajoute une entrée à `CHANGELOG.md` — sans nouvelle version, ceux qui l'ont installé ne reçoivent rien, Adrien compris : ses autres projets tournent sur la copie installée (`~/.claude/plugins/cache/…`), pas sur ce clone.
 - `npm test` vert, carte propre, et le sous-agent `relecteur` passé avant tout commit qui touche `plugin/` ou `.claude/`. Les commits vont sur `main`.

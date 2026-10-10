@@ -110,6 +110,18 @@ test('« Demander à Claude » a un prompt prêt pour chaque avertissement et ch
   assert.ok(noeuds.filter((n) => n.fichier).every((n) => n.invite));
 });
 
+test('extension.js tourne avec un faux vscode : la vue, Problèmes et « Demander à Claude » sur la fixture', () => {
+  const sortie = execFileSync('node', [join(depot, 'extension', 'fumee.cjs'), fixture, join(fixture, 'src', 'api', 'commandes.ts')], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: vide, CLAUDE_CONFIG_DIR: fixtureHome },
+  });
+  assert.match(sortie, /^POUR CE FICHIER {2}· {2}src\/api\/commandes\.ts\n {2}\.claude\/rules\/api\.md/);
+  const problemes = sortie.split('PROBLÈMES\n')[1].split('\n\n')[0].split('\n');
+  assert.equal(problemes.length, 6, sortie);
+  assert.ok(problemes.some((l) => l.startsWith('  .claude/rules/morte.md — aucun fichier ne correspond')));
+  assert.match(sortie, /DEMANDER À CLAUDE\n {2}Corrige cet avertissement de \/contextree:carte : \.claude\/rules\/morte\.md — /);
+});
+
 test('les chemins de la carte deviennent absolus : projet, ~/ ou déjà complets', () => {
   assert.equal(absolu('CLAUDE.md', '/p', '/h'), join('/p', 'CLAUDE.md'));
   assert.equal(absolu('~/.claude/CLAUDE.md', '/p', '/h'), join('/h', '.claude', 'CLAUDE.md'));
