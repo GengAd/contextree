@@ -13,8 +13,39 @@ const { join, isAbsolute, relative, sep } = require('node:path');
  * @property {string} [icone]    nom d'une ThemeIcon
  * @property {boolean} [perso]   hors git : affiché grisé
  * @property {string} [invite]   le prompt que « Demander à Claude » copie
+ * @property {boolean} [frais]   chargé par Claude il y a moins de FRAIS_MS : teinté
  * @property {Noeud[]} enfants
  */
+
+// le tour qu'on vient de vivre, pas la session d'hier
+const FRAIS_MS = 15 * 60 * 1000;
+
+/** Le journal de chargement que tient le hook du plugin : quand il bouge, la vue se rafraîchit. */
+const journal = (racine) => join(racine, '.claude', 'contextree', 'journal.jsonl');
+
+/** Comme la carte texte : « à l'instant », « il y a 3 min », « hier »… */
+function ilYa(iso, maintenant) {
+  const min = Math.floor((maintenant - Date.parse(iso)) / 60000);
+  if (min < 1) return "à l'instant";
+  if (min < 60) return `il y a ${min} min`;
+  if (min < 24 * 60) return `il y a ${Math.floor(min / 60)} h`;
+  const jours = Math.floor(min / (24 * 60));
+  return jours === 1 ? 'hier' : `il y a ${jours} jours`;
+}
+
+/**
+ * Ce que dit le journal d'un élément, `charges` de la carte : rien sans journal (ou avec un plugin
+ * plus ancien que la vue), « jamais chargé », ou « chargé 3 fois, dernier hier ».
+ */
+function vu(c, maintenant, quoi = '') {
+  if (!c) return '';
+  if (!c.fois) return 'jamais chargé';
+  return `chargé ${c.fois} fois${quoi}, ${c.fois > 1 ? 'dernier ' : ''}${ilYa(c.dernier, maintenant)}`;
+}
+const estFrais = (c, maintenant) => Boolean(c?.dernier) && maintenant - Date.parse(c.dernier) < FRAIS_MS;
+/** Les fichiers d'un même dossier se chargent ensemble : le plus vu dit pour tous. */
+const plusVu = (cs) => cs.filter(Boolean).sort((a, b) => b.fois - a.fois)[0];
+const avec = (...morceaux) => morceaux.filter(Boolean).join(', ');
 
 /** Le chemin d'une ligne de la carte, rendu absolu : relatif au projet, ~/… ou déjà complet. */
 function absolu(chemin, racine, home) {
@@ -49,10 +80,20 @@ function problemes(carte, home) {
   return carte.avertissements.map((a) => ({ fichier: absolu(a.ou, carte.racine, home), message: a.quoi, invite: inviteAvertissement(a) }));
 }
 
-/** @param {any} carte  la sortie de `carte.mjs --json` */
-function arbre(carte, home) {
+/**
+ * @param {any} carte  la sortie de `carte.mjs --json`
+ * @param {number} [maintenant]  l'heure de référence des « il y a » et de la fraîcheur
+ */
+function arbre(carte, home, maintenant = Date.now()) {
   const ouvrir = (chemin) => absolu(chemin, carte.racine, home);
-  const feuille = (label, extra = {}) => ({ label, enfants: [], ...extra });
+  /** La fraîcheur d'un nœud vient de son `charges` : la teinte ne se pose que là. */
+  const feuille = (label, extra = {}, charges = undefined) => ({
+    label,
+    enfants: [],
+    ...extra,
+    ...(estFrais(charges, maintenant) && { frais: true }),
+  });
+  const note = (c) => vu(c, maintenant);
   const info = (label) => feuille(label, { icone: 'info' });
 
   /** Le partagé par git d'abord, puis le perso dans un sous-groupe, comme la carte texte. */
@@ -72,12 +113,16 @@ function arbre(carte, home) {
   const griser = (n) => ({ ...n, perso: true, enfants: n.enfants.map(griser) });
 
   const instruction = (n, niveau = 0) =>
-    feuille((niveau ? '@' : '') + n.chemin, {
-      description: n.memoire ? `${n.lignes} lignes, mémoire automatique` : `${n.lignes} lignes`,
-      fichier: ouvrir(n.chemin),
-      icone: n.memoire ? 'database' : 'file',
-      enfants: n.imports.map((i) => instruction(i, niveau + 1)),
-    });
+    feuille(
+      (niveau ? '@' : '') + n.chemin,
+      {
+        description: avec(`${n.lignes} lignes`, n.memoire && 'mémoire automatique', note(n.charges)),
+        fichier: ouvrir(n.chemin),
+        icone: n.memoire ? 'database' : 'file',
+        enfants: n.imports.map((i) => instruction(i, niveau + 1)),
+      },
+      n.charges,
+    );
 
   const sections = [];
   const section = (label, description, enfants, icone) => sections.push({ label, description, icone, enfants });
@@ -87,7 +132,9 @@ function arbre(carte, home) {
   const regleToujours = carte.regles.filter((r) => !r.paths.length);
   const skillsVisibles = carte.skills.filter((s) => s.mode !== 'manuel');
   const toujours = rendre([...carte.toujours, ...regleToujours.map((r) => ({ ...r, regle: true }))], (x) =>
-    x.regle ? feuille(x.chemin, { description: `${x.lignes} lignes, règle sans paths`, fichier: ouvrir(x.chemin), icone: 'law' }) : instruction(x),
+    x.regle
+      ? feuille(x.chemin, { description: avec(`${x.lignes} lignes`, 'règle sans paths', note(x.charges)), fichier: ouvrir(x.chemin), icone: 'law' }, x.charges)
+      : instruction(x),
   );
   if (skillsVisibles.length) toujours.push(info(`+ les descriptions de ${skillsVisibles.length} skill(s), ~${p.skills} tokens`));
   if (carte.agents.length) toujours.push(info(`+ les descriptions de ${carte.agents.length} sous-agent(s), ~${p.agents} tokens`));
@@ -102,26 +149,39 @@ function arbre(carte, home) {
   );
 
   // EN TOUCHANT UN FICHIER
-  const touchant = carte.dossiers.map((d) =>
-    feuille(d.dossier, {
-      description: `→ ${d.fichiers.map((f) => f.chemin).join(', ')}  ${d.fichiers.reduce((s, f) => s + f.lignes, 0)} lignes`,
-      icone: 'folder',
-      fichier: ouvrir(d.fichiers[0].chemin),
-      enfants: d.fichiers.map((f) => instruction(f)),
-    }),
-  );
+  const touchant = carte.dossiers.map((d) => {
+    const c = plusVu(d.fichiers.map((f) => f.charges));
+    return feuille(
+      d.dossier,
+      {
+        description: `→ ${d.fichiers.map((f) => f.chemin).join(', ')}  ${avec(`${d.fichiers.reduce((s, f) => s + f.lignes, 0)} lignes`, note(c))}`,
+        icone: 'folder',
+        fichier: ouvrir(d.fichiers[0].chemin),
+        enfants: d.fichiers.map((f) => instruction(f)),
+      },
+      c,
+    );
+  });
   touchant.push(
     ...rendre(
       [...carte.regles.filter((r) => r.paths.length), ...carte.skills.filter((s) => s.paths.length).map((s) => ({ ...s, skill: true }))],
       (x) =>
         x.skill
-          ? feuille(`skill ${x.nom}`, { description: `${x.paths.join(', ')} → devient disponible`, fichier: ouvrir(x.chemin), icone: 'tools' })
-          : feuille(x.chemin, {
-              description: `${x.paths.join(', ')} · ${x.lignes} lignes, ${x.cibles.length} fichier(s) visé(s)`,
-              tooltip: x.cibles.length ? x.cibles.join('\n') : 'aucun fichier visé',
-              fichier: ouvrir(x.chemin),
-              icone: 'law',
-            }),
+          ? feuille(
+              `skill ${x.nom}`,
+              { description: avec(`${x.paths.join(', ')} → devient disponible`, note(x.charges)), fichier: ouvrir(x.chemin), icone: 'tools' },
+              x.charges,
+            )
+          : feuille(
+              x.chemin,
+              {
+                description: `${x.paths.join(', ')} · ${avec(`${x.lignes} lignes`, `${x.cibles.length} fichier(s) visé(s)`, note(x.charges))}`,
+                tooltip: x.cibles.length ? x.cibles.join('\n') : 'aucun fichier visé',
+                fichier: ouvrir(x.chemin),
+                icone: 'law',
+              },
+              x.charges,
+            ),
     ),
   );
   if (!touchant.length) touchant.push(feuille('(rien)'));
@@ -130,8 +190,8 @@ function arbre(carte, home) {
   // QUAND LA TÂCHE EN PARLE
   const quand = rendre(skillsVisibles, (s) => {
     const qui = s.mode === 'claude' ? 'Claude seul' : `Claude ou /${s.nom}`;
-    const extra = [`corps ${s.corpsLignes} lignes`, s.annexes.length && `+ ${s.annexes.join(', ')}`, s.contexte].filter(Boolean).join(', ');
-    return feuille(s.nom, { description: `(${qui} ; ${extra})`, tooltip: s.description, fichier: ouvrir(s.chemin), icone: 'tools' });
+    const extra = avec(`corps ${s.corpsLignes} lignes`, s.annexes.length && `+ ${s.annexes.join(', ')}`, s.contexte, note(s.charges));
+    return feuille(s.nom, { description: `(${qui} ; ${extra})`, tooltip: s.description, fichier: ouvrir(s.chemin), icone: 'tools' }, s.charges);
   });
   if (!quand.length) quand.push(feuille('(rien)'));
   section('QUAND LA TÂCHE EN PARLE', 'Claude lit la description et décide', quand, 'comment-discussion');
@@ -142,7 +202,13 @@ function arbre(carte, home) {
     section(
       'À LA MAIN',
       'seulement si tu tapes la commande',
-      rendre(manuels, (s) => feuille(`/${s.nom}`, { description: s.description, tooltip: s.description, fichier: ouvrir(s.chemin), icone: 'terminal' })),
+      rendre(manuels, (s) =>
+        feuille(
+          `/${s.nom}`,
+          { description: [note(s.charges), s.description].filter(Boolean).join(' · '), tooltip: s.description, fichier: ouvrir(s.chemin), icone: 'terminal' },
+          s.charges,
+        ),
+      ),
       'keyboard',
     );
 
@@ -184,18 +250,31 @@ function arbre(carte, home) {
   // POUR CE FICHIER — en tête : ce qui s'ajoute quand on touche le fichier de l'éditeur actif
   const pf = carte.pourFichier;
   if (pf) {
+    // avec un journal : ce qui s'est vraiment chargé pour ce fichier ; le reste « se chargerait »
+    const ici = (chemins) => (pf.charges ? plusVu(chemins.map((c) => pf.charges[c])) : undefined);
+    const dit = (c) => (!pf.charges ? '' : c ? vu(c, maintenant, ' pour ce fichier') : 'se chargerait');
     const pour = [
       ...(pf.dossiers ?? []).map((d) => {
         const dossier = carte.dossiers.find((x) => x.dossier === d);
-        return feuille(`instructions de ${d}`, {
-          description: dossier?.fichiers.map((f) => f.chemin).join(', '),
-          fichier: dossier?.fichiers?.[0] && ouvrir(dossier.fichiers[0].chemin),
-          icone: 'folder',
-        });
+        const c = ici(dossier?.fichiers.map((f) => f.chemin) ?? []);
+        return feuille(
+          `instructions de ${d}`,
+          {
+            description: avec(dossier?.fichiers.map((f) => f.chemin).join(', '), dit(c)),
+            fichier: dossier?.fichiers?.[0] && ouvrir(dossier.fichiers[0].chemin),
+            icone: 'folder',
+          },
+          c,
+        );
       }),
       ...rendre(
         (pf.regles ?? []).map((c) => carte.regles.find((r) => r.chemin === c) ?? { chemin: c }),
-        (r) => feuille(r.chemin, { description: r.lignes && `${r.lignes} lignes`, fichier: ouvrir(r.chemin), icone: 'law' }),
+        (r) =>
+          feuille(
+            r.chemin,
+            { description: avec(r.lignes && `${r.lignes} lignes`, dit(ici([r.chemin]))), fichier: ouvrir(r.chemin), icone: 'law' },
+            ici([r.chemin]),
+          ),
       ),
       ...(pf.skills ?? []).map((nom) => {
         const s = carte.skills.find((k) => k.nom === nom);
@@ -225,4 +304,14 @@ function montre(fichier, racine) {
   return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel.split(sep).join('/') : fichier;
 }
 
-module.exports = { arbre, absolu, aRafraichir, problemes };
+/** Les fichiers chargés il y a moins de FRAIS_MS : ce que la vue teinte, dans l'explorateur et sur les onglets aussi. */
+function fraisDe(noeuds) {
+  const tous = (ns) => ns.flatMap((n) => [n, ...tous(n.enfants)]);
+  return new Set(tous(noeuds).filter((n) => n.frais && n.fichier).map((n) => /** @type {string} */ (n.fichier)));
+}
+
+/** Les fichiers dont la teinte change d'un rendu à l'autre : ceux à redécorer, allumés ou éteints. */
+const bouges = (/** @type {Set<string>} */ avant, /** @type {Set<string>} */ apres) =>
+  [...new Set([...avant, ...apres])].filter((f) => avant.has(f) !== apres.has(f));
+
+module.exports = { arbre, absolu, aRafraichir, problemes, journal, fraisDe, bouges, FRAIS_MS };

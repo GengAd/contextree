@@ -42,7 +42,7 @@ puis une nouvelle session, ou `/reload-plugins` dans celle en cours.
 
 ## La vue dans Cursor
 
-La même carte en barre latérale, dans l'explorateur : sections par moment de chargement, poids, calque perso grisé, avertissements ; un clic ouvre le fichier, une sauvegarde d'un fichier de contexte la rafraîchit.
+La même carte en barre latérale, dans l'explorateur : sections par moment de chargement, poids, calque perso grisé, avertissements ; un clic ouvre le fichier, une sauvegarde d'un fichier de contexte la rafraîchit. Avec le journal de chargement, ce que Claude vient de charger y est teinté, dans l'explorateur et sur l'onglet aussi.
 
 ```bash
 npm run package:ext                                   # → extension/contextree.vsix

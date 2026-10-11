@@ -105,6 +105,20 @@ test('avec un journal, chaque fichier dit combien de fois il a vraiment été ch
   assert.ok(!('charges' in seul.regles[0]));
 });
 
+test('avec --fichier, pourFichier.charges ne compte que ce que ce fichier a déclenché', () => {
+  const projet = avecJournal(20, 5);
+  const quand = new Date().toISOString();
+  const ligne = (fichier, declencheur) => JSON.stringify({ quand, session: 'z', fichier, genre: 'instruction', raison: 'path_glob_match', declencheur });
+  const journal = join(projet, '.claude', 'contextree', 'journal.jsonl');
+  writeFileSync(journal, readFileSync(journal, 'utf8') + ligne('.claude/rules/api.md', 'src/api/commandes.ts') + '\n' + ligne('.claude/rules/api.md', 'src/api/autre.ts') + '\n');
+  const pour = carte(projet, '--fichier', join(projet, 'src', 'api', 'commandes.ts')).pourFichier;
+  assert.deepEqual(pour.charges, { '.claude/rules/api.md': { fois: 1, dernier: quand } });
+  assert.match(lancer(projet, ['--fichier', join(projet, 'web', 'Panier.tsx')]), /\+ instructions de web\/ {2}se chargerait$/m);
+  // sans journal, ou sans le perso, le champ n'existe pas : rien à dire
+  assert.ok(!('charges' in carte(fixture, '--fichier', join(fixture, 'src', 'api', 'commandes.ts')).pourFichier));
+  assert.ok(!('charges' in carte(projet, '--sans-perso', '--fichier', join(projet, 'src', 'api', 'commandes.ts')).pourFichier));
+});
+
 test('une règle à paths ou une skill jamais chargée en deux semaines et cinq sessions est signalée', () => {
   const c = carte(avecJournal(20, 5));
   assert.ok(avertissement(c, '.claude/rules/api.md', 'jamais chargée en 20 jours (6 sessions) : les `paths`'));

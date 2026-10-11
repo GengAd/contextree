@@ -2,6 +2,10 @@
 
 Une version par changement visible du plugin. Pour la prendre : `claude plugin marketplace update contextree`, puis `claude plugin update contextree@contextree`.
 
+## 2.3.1 — 2026-10-11
+
+- **`/contextree:carte --fichier`** dit, avec le journal, ce qui s'est vraiment chargé pour ce fichier (« chargé 2 fois pour ce fichier, dernier il y a 3 min ») et ce qui « se chargerait » ; en `--json`, `pourFichier.charges`. C'est ce que lit la vue dans Cursor, qui teinte désormais ce que Claude vient de charger.
+
 ## 2.3.0 — 2026-10-11
 
 - **Le journal de chargement** : le plugin note ce que Claude Code charge vraiment — chaque `CLAUDE.md`, import et règle (hook natif `InstructionsLoaded`), chaque skill lancée par Claude ou tapée — dans `.claude/contextree/journal.jsonl`, hors git, taillé à 90 jours et 5 000 lignes.

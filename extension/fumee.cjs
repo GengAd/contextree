@@ -17,6 +17,7 @@ if (!projet) {
 const plugin = join(__dirname, '..', 'plugin');
 
 /** @type {any} */ let vue;
+/** @type {any} */ let decorations;
 /** @type {Map<string, string[]>} */ const problemes = new Map();
 let presse = '';
 const evenement = () => {
@@ -41,6 +42,12 @@ const vscode = {
   TreeItemCollapsibleState: { None: 0, Expanded: 2 },
   ThemeIcon: class {},
   ThemeColor: class {},
+  FileDecoration: class {
+    constructor(badge, tooltip) {
+      Object.assign(this, { badge, tooltip });
+    }
+  },
+  RelativePattern: class {},
   Range: class {},
   DiagnosticSeverity: { Warning: 1 },
   Diagnostic: class {
@@ -63,11 +70,13 @@ const vscode = {
     onDidSaveTextDocument: evenement(),
     onDidChangeConfiguration: evenement(),
     registerTextDocumentContentProvider: () => ({ dispose() {} }),
+    createFileSystemWatcher: () => ({ onDidCreate: evenement(), onDidChange: evenement(), onDidDelete: evenement(), dispose() {} }),
     openTextDocument: async () => ({}),
   },
   window: {
     activeTextEditor: actif ? { document: { uri: { scheme: 'file', fsPath: actif } } } : undefined,
     registerTreeDataProvider: (_id, p) => ((vue = p), { dispose() {} }),
+    registerFileDecorationProvider: (p) => ((decorations = p), { dispose() {} }),
     onDidChangeActiveTextEditor: evenement(),
     showInformationMessage: () => {},
     showTextDocument: async () => {},
@@ -99,7 +108,10 @@ vue.onDidChangeTreeData(async () => {
   const montrer = (noeuds, niveau) =>
     noeuds.forEach((n) => {
       const item = vue.getTreeItem(n);
-      const extra = [item.description, n.perso && '(perso)', item.contextValue === 'demandable' && '💬'].filter(Boolean).join('  ');
+      const teinte = item.resourceUri && decorations.provideFileDecoration(item.resourceUri);
+      const extra = [item.description, n.perso && '(perso)', teinte && `${teinte.badge} teinté`, item.contextValue === 'demandable' && '💬']
+        .filter(Boolean)
+        .join('  ');
       lignes.push(`${'  '.repeat(niveau)}${item.label}${extra ? '  ·  ' + extra : ''}`);
       montrer(vue.getChildren(n), niveau + 1);
     });

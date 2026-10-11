@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { inflateRawSync } from 'node:zlib';
 import { tmpdir } from 'node:os';
 
@@ -15,7 +15,7 @@ const depot = join(ici, '..');
 const script = join(depot, 'plugin', 'skills', 'carte', 'scripts', 'carte.mjs');
 const fixture = join(ici, 'fixture');
 const fixtureHome = join(ici, 'fixture-home');
-const { arbre, absolu, aRafraichir, problemes } = createRequire(import.meta.url)(join(depot, 'extension', 'arbre.js'));
+const { arbre, absolu, aRafraichir, problemes, journal, fraisDe, bouges } = createRequire(import.meta.url)(join(depot, 'extension', 'arbre.js'));
 
 const vide = mkdtempSync(join(tmpdir(), 'vue-home-'));
 const lancer = (racine, args) =>
@@ -122,6 +122,91 @@ test('extension.js tourne avec un faux vscode : la vue, Problèmes et « Demande
   assert.match(sortie, /DEMANDER À CLAUDE\n {2}Corrige cet avertissement de \/contextree:carte : \.claude\/rules\/morte\.md — /);
 });
 
+/** Une copie de la fixture avec un journal : chaque ligne est [il y a N minutes, session, fichier, déclencheur]. */
+function avecJournal(lignes) {
+  const projet = mkdtempSync(join(tmpdir(), 'vue-journal-'));
+  cpSync(fixture, projet, { recursive: true });
+  const vieux = new Date(Date.now() - 60 * 24 * 3600 * 1000); // règles et skills écrites bien avant le journal
+  for (const f of ['rules/api.md', 'rules/style.md', 'skills/domaine-commandes/SKILL.md']) utimesSync(join(projet, '.claude', f), vieux, vieux);
+  mkdirSync(join(projet, '.claude', 'contextree'));
+  const texte = lignes.map(([minutes, session, fichier, declencheur = null]) =>
+    JSON.stringify({ quand: new Date(Date.now() - minutes * 60_000).toISOString(), session, fichier, genre: 'instruction', declencheur }),
+  );
+  writeFileSync(journal(projet), texte.join('\n') + '\n');
+  return projet;
+}
+
+test('un nœud que Claude a chargé dit combien de fois et quand ; moins de 15 min, il est frais', () => {
+  const projet = avecJournal([
+    [3 * 24 * 60, 'a', 'CLAUDE.md'],
+    [2, 'b', 'CLAUDE.md'],
+    [20, 'b', '.claude/rules/api.md', 'src/api/commandes.ts'],
+  ]);
+  const carte = JSON.parse(lancer(projet, ['--json', '--fichier', join(projet, 'src', 'api', 'commandes.ts')]));
+  const noeuds = tous(arbre(carte, vide));
+  const claude = noeuds.find((n) => n.label === 'CLAUDE.md');
+  assert.match(claude.description, /^\d+ lignes, chargé 2 fois, dernier il y a 2 min$/);
+  assert.equal(claude.frais, true);
+  const api = noeuds.find((n) => n.label === '.claude/rules/api.md' && n.description.includes('fichier(s) visé(s)'));
+  assert.match(api.description, /chargé 1 fois, il y a 20 min$/);
+  assert.ok(!api.frais, 'chargée il y a 20 min : plus fraîche');
+  assert.match(noeuds.find((n) => n.label === '.claude/rules/morte.md').description, /jamais chargé$/);
+  assert.deepEqual(fraisDe(arbre(carte, vide)), new Set([join(projet, 'CLAUDE.md')]));
+  // un quart d'heure plus tard, plus rien n'est frais, sans relancer la carte
+  assert.deepEqual(fraisDe(arbre(carte, vide, Date.now() + 15 * 60_000)), new Set());
+  assert.match(tous(arbre(carte, vide, Date.now() + 15 * 60_000)).find((n) => n.label === 'CLAUDE.md').description, /il y a 17 min$/);
+});
+
+test('POUR CE FICHIER marque ce qui s’est vraiment chargé pour lui ; le reste « se chargerait »', () => {
+  const projet = avecJournal([[0, 'a', '.claude/rules/api.md', 'src/api/commandes.ts']]);
+  const pour = (fichier) => arbre(JSON.parse(lancer(projet, ['--json', '--fichier', join(projet, fichier)])), vide)[0];
+  const api = pour('src/api/commandes.ts').enfants[0];
+  assert.deepEqual([api.label, api.description, api.frais], ['.claude/rules/api.md', "7 lignes, chargé 1 fois pour ce fichier, à l'instant", true]);
+  const web = pour('web/Panier.tsx').enfants[0];
+  assert.match(web.description, /se chargerait$/);
+  assert.ok(!web.frais);
+  const texte = lancer(projet, ['--fichier', join(projet, 'src', 'api', 'commandes.ts')]);
+  assert.match(texte, /\+ \.claude\/rules\/api\.md {2}chargé 1 fois pour ce fichier, à l'instant/);
+});
+
+test('un plugin 2.3.0 a le journal mais pas pourFichier.charges : la vue ne dit ni « se chargerait » ni « pour ce fichier »', () => {
+  const projet = avecJournal([[0, 'a', '.claude/rules/api.md', 'src/api/commandes.ts']]);
+  const carte = JSON.parse(lancer(projet, ['--json', '--fichier', join(projet, 'src', 'api', 'commandes.ts')]));
+  delete carte.pourFichier.charges;
+  const pour = arbre(carte, vide)[0];
+  assert.equal(pour.enfants[0].description, '7 lignes');
+  assert.ok(!tous([pour]).some((n) => /se chargerait|pour ce fichier/.test(n.description ?? '') || n.frais));
+});
+
+test('la teinte se rallume et s’éteint fichier par fichier : seuls ceux qui changent sont redécorés', () => {
+  assert.deepEqual(bouges(new Set(['/a', '/b']), new Set(['/b', '/c'])), ['/a', '/c']);
+  assert.deepEqual(bouges(new Set(['/a']), new Set(['/a'])), []);
+});
+
+test('sans journal, la vue ne dit rien de plus qu’avant : ni « jamais chargé », ni « se chargerait »', () => {
+  const fichier = join(fixture, 'src', 'api', 'commandes.ts');
+  const noeuds = tous(arbre(JSON.parse(lancer(fixture, ['--json', '--fichier', fichier])), vide));
+  assert.ok(!noeuds.some((n) => /chargé|se chargerait/.test(n.description ?? '') || n.frais));
+});
+
+test('« jamais chargée » est un avertissement comme les autres : sous À VÉRIFIER et dans Problèmes', () => {
+  const lignes = Array.from({ length: 6 }, (_, i) => [(20 - i * 3) * 24 * 60, `s${i}`, 'CLAUDE.md']);
+  const carte = JSON.parse(lancer(avecJournal(lignes), ['--json']));
+  const verifier = arbre(carte, vide).find((s) => s.label === 'À VÉRIFIER');
+  assert.ok(verifier.enfants.some((n) => n.label === '.claude/rules/api.md' && n.description.startsWith('jamais chargée')));
+  assert.ok(problemes(carte, vide).some((p) => p.fichier.endsWith(join('rules', 'api.md')) && p.message.startsWith('jamais chargée')));
+});
+
+test('la vue sous un faux vscode teinte ce que Claude vient de charger, comme dans l’explorateur', () => {
+  const projet = avecJournal([[0, 'a', '.claude/rules/api.md', 'src/api/commandes.ts']]);
+  const sortie = execFileSync('node', [join(depot, 'extension', 'fumee.cjs'), projet, join(projet, 'src', 'api', 'commandes.ts')], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: vide, CLAUDE_CONFIG_DIR: fixtureHome },
+  });
+  assert.match(sortie, /^ {2}\.claude\/rules\/api\.md {2}· {2}7 lignes, chargé 1 fois pour ce fichier, à l'instant {2}• teinté/m);
+  assert.ok(!/CLAUDE\.md .*teinté/.test(sortie), 'ce qui n’a pas été chargé reste gris');
+});
+
 test('les chemins de la carte deviennent absolus : projet, ~/ ou déjà complets', () => {
   assert.equal(absolu('CLAUDE.md', '/p', '/h'), join('/p', 'CLAUDE.md'));
   assert.equal(absolu('~/.claude/CLAUDE.md', '/p', '/h'), join('/h', '.claude', 'CLAUDE.md'));
@@ -138,6 +223,7 @@ test('une sauvegarde rafraîchit la vue seulement si elle touche le contexte', (
   assert.ok(!r('/p/src/api/commandes.ts'));
   assert.ok(!r('/autre/CLAUDE.md'));
   assert.ok(aRafraichir('/conf/rules/x.md', '/p', '/h', '/conf'));
+  assert.ok(r(journal('/p')), 'le journal du hook : Claude vient de charger quelque chose');
 });
 
 test('le .vsix est un zip qui contient le manifeste et les fichiers de l’extension', () => {

@@ -5,12 +5,14 @@
 const vscode = require('vscode');
 const { execFile } = require('node:child_process');
 const { existsSync, readFileSync } = require('node:fs');
-const { join, relative, isAbsolute } = require('node:path');
+const { join, relative, isAbsolute, sep } = require('node:path');
 const { homedir } = require('node:os');
-const { arbre, aRafraichir, problemes } = require('./arbre.js');
+const { arbre, aRafraichir, problemes, journal, fraisDe, bouges, FRAIS_MS } = require('./arbre.js');
 
 const CARTE = join('skills', 'carte', 'scripts', 'carte.mjs');
 const TEXTE = vscode.Uri.parse('contextree:/carte.txt');
+/** La teinte d'un fichier que Claude vient de charger : celle des correspondances de recherche, jamais celle d'une erreur. */
+const CHARGE = new vscode.ThemeColor('list.highlightForeground');
 
 /** Où trouver carte.mjs : le réglage, sinon le clone ouvert, sinon le plugin installé dans Claude Code. */
 function carteMjs(racine) {
@@ -30,11 +32,44 @@ function carteMjs(racine) {
   return candidats.find((c) => existsSync(c));
 }
 
+/**
+ * Les fichiers que Claude vient de charger, marqués là où on regarde déjà : dans la vue, mais aussi
+ * dans l'explorateur et sur l'onglet du fichier — la décoration vaut pour l'URI, partout.
+ * Elle ne teinte que le libellé et la pastille ; la vue teinte l'icône elle-même.
+ * @implements {vscode.FileDecorationProvider}
+ */
+class Frais {
+  constructor() {
+    /** @type {Set<string>} */
+    this.fichiers = new Set();
+    this.change = new vscode.EventEmitter();
+    this.onDidChangeFileDecorations = this.change.event;
+  }
+
+  /** @param {Set<string>} fichiers */
+  poser(fichiers) {
+    // le fsPath d'une Uri, comme celui que l'explorateur demande : sous Windows, la lettre du disque en minuscule
+    const apres = new Set([...fichiers].map((f) => vscode.Uri.file(f).fsPath));
+    const changes = bouges(this.fichiers, apres);
+    this.fichiers = apres;
+    if (changes.length) this.change.fire(changes.map((f) => vscode.Uri.file(f)));
+  }
+
+  /** @param {vscode.Uri} uri */
+  provideFileDecoration(uri) {
+    if (uri.scheme !== 'file' || !this.fichiers.has(uri.fsPath)) return undefined;
+    return new vscode.FileDecoration('•', `contextree : chargé par Claude il y a moins de ${FRAIS_MS / 60_000} min`, CHARGE);
+  }
+}
+
 /** @implements {vscode.TreeDataProvider<import('./arbre.js').Noeud>} */
 class Vue {
-  /** @param {vscode.DiagnosticCollection} diagnostics */
-  constructor(diagnostics) {
+  /** @param {vscode.DiagnosticCollection} diagnostics @param {Frais} frais */
+  constructor(diagnostics, frais) {
     this.diagnostics = diagnostics;
+    this.frais = frais;
+    /** @type {any} la dernière carte : les « il y a » et la fraîcheur se recalculent sans la relancer */
+    this.carte = undefined;
     this.change = new vscode.EventEmitter();
     this.onDidChangeTreeData = this.change.event;
     /** @type {import('./arbre.js').Noeud[]} */
@@ -95,23 +130,32 @@ class Vue {
   async lancer() {
     if (!this.racine) return;
     const generation = ++this.generation;
-    let noeuds;
     try {
       const carte = JSON.parse(await this.executer(true));
       if (generation !== this.generation) return; // une carte plus récente est en route
       this.racinePerso = carte.racinePerso;
-      noeuds = arbre(carte, homedir());
+      this.carte = carte;
       this.signaler(problemes(carte, homedir()));
+      this.afficher();
     } catch (e) {
       if (generation !== this.generation) return;
       this.diagnostics.clear(); // pas d'avertissement d'une carte d'avant
+      this.carte = undefined;
+      this.frais.poser(new Set());
       const message = String(e.message);
       const label = e.introuvable ? 'carte.mjs introuvable' : 'la carte a échoué';
-      noeuds = [{ label, description: message.split('\n')[0], tooltip: message, icone: 'error', enfants: [] }];
+      this.noeuds = [{ label, description: message.split('\n')[0], tooltip: message, icone: 'error', enfants: [] }];
+      this.change.fire(undefined);
     }
-    this.noeuds = noeuds;
-    this.change.fire(undefined);
     this.apres?.();
+  }
+
+  /** La dernière carte, rendue à l'heure qu'il est : ce qui n'est plus frais redevient gris. */
+  afficher() {
+    if (!this.carte) return;
+    this.noeuds = arbre(this.carte, homedir());
+    this.frais.poser(fraisDe(this.noeuds));
+    this.change.fire(undefined);
   }
 
   /** Les avertissements dans le panneau Problèmes, ligne 1 du fichier concerné. */
@@ -137,11 +181,15 @@ class Vue {
     const item = new vscode.TreeItem(n.label, etat);
     item.description = n.description;
     item.tooltip = n.tooltip ?? (n.description ? `${n.label} — ${n.description}` : n.label);
-    const couleur = n.perso
-      ? new vscode.ThemeColor('disabledForeground')
-      : n.icone === 'warning'
-        ? new vscode.ThemeColor('problemsWarningIcon.foreground')
-        : undefined;
+    const couleur = n.frais
+      ? CHARGE
+      : n.perso
+        ? new vscode.ThemeColor('disabledForeground')
+        : n.icone === 'warning'
+          ? new vscode.ThemeColor('problemsWarningIcon.foreground')
+          : undefined;
+    // l'URI du fichier porte la décoration : libellé teinté et pastille, comme dans l'explorateur
+    if (n.frais && n.fichier) item.resourceUri = vscode.Uri.file(n.fichier);
     if (n.icone) item.iconPath = new vscode.ThemeIcon(n.icone, couleur);
     if (n.fichier) item.command = { command: 'vscode.open', title: 'Ouvrir', arguments: [vscode.Uri.file(n.fichier)] };
     if (n.invite) item.contextValue = 'demandable';
@@ -170,10 +218,13 @@ class Texte {
 /** @param {vscode.ExtensionContext} contexte */
 function activate(contexte) {
   const diagnostics = vscode.languages.createDiagnosticCollection('contextree');
-  const vue = new Vue(diagnostics);
+  const frais = new Frais();
+  const vue = new Vue(diagnostics, frais);
   const texte = new Texte(vue);
   vue.apres = () => texte.change.fire(TEXTE); // la carte en texte, si elle est ouverte, suit la vue
   vscode.commands.executeCommand('setContext', 'contextree.actif', true);
+  // « il y a 3 min » vieillit, et la teinte s'éteint au bout de 15 min : la vue suit l'heure sans relancer la carte
+  const minute = setInterval(() => vue.carte?.journal && vue.afficher(), 60_000);
   contexte.subscriptions.push(
     diagnostics,
     vscode.window.registerTreeDataProvider('contextree', vue),
@@ -194,7 +245,18 @@ function activate(contexte) {
       if (vue.racine && aRafraichir(doc.uri.fsPath, vue.racine, homedir(), vue.racinePerso)) vue.rafraichir();
     }),
     vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('contextree') && vue.rafraichir()),
+    vscode.window.registerFileDecorationProvider(frais),
+    { dispose: () => clearInterval(minute) },
   );
+  // Le hook du plugin écrit le journal à chaque chargement, sans rien sauvegarder dans l'éditeur.
+  // Un observateur de l'éditeur plutôt que fs.watch : le journal n'existe pas encore au premier jour,
+  // et sa taille se fait par renommage, qui perdrait un fs.watch posé sur l'ancien fichier.
+  if (vue.racine) {
+    const motif = relative(vue.racine, journal(vue.racine)).split(sep).join('/');
+    const observateur = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vue.racine, motif));
+    for (const quand of [observateur.onDidCreate, observateur.onDidChange, observateur.onDidDelete]) contexte.subscriptions.push(quand(() => vue.rafraichir()));
+    contexte.subscriptions.push(observateur);
+  }
   vue.suivre(vscode.window.activeTextEditor);
   vue.rafraichir();
 }

@@ -344,18 +344,25 @@ if (!SANS_PERSO && existsSync(fichierJournal)) {
         return [];
       }
     });
+  // un chemin du journal, tel que la carte l'affiche
+  const vers = (f) => (!f ? null : f.startsWith('~/') ? HOME && affiche(join(HOME, f.slice(2))) : affiche(resolve(RACINE, f)));
   // une instruction se reconnaît à son chemin, une skill à son nom : c'est lui que Claude appelle
-  const compte = new Map();
-  const absoluJournal = (f) => (f.startsWith('~/') ? HOME && join(HOME, f.slice(2)) : resolve(RACINE, f));
-  for (const e of entrees) {
-    const cle = e.genre === 'skill' ? e.nom && 'skill:' + e.nom : e.fichier && absoluJournal(e.fichier) && affiche(absoluJournal(e.fichier));
-    if (!cle) continue;
-    const c = compte.get(cle) ?? { fois: 0, dernier: null };
-    c.fois++;
-    if (!c.dernier || e.quand > c.dernier) c.dernier = e.quand;
-    compte.set(cle, c);
-  }
+  const compter = (garder) => {
+    const compte = new Map();
+    for (const e of entrees) {
+      const cle = garder(e) && (e.genre === 'skill' ? e.nom && 'skill:' + e.nom : vers(e.fichier));
+      if (!cle) continue;
+      const c = compte.get(cle) ?? { fois: 0, dernier: null };
+      c.fois++;
+      if (!c.dernier || e.quand > c.dernier) c.dernier = e.quand;
+      compte.set(cle, c);
+    }
+    return compte;
+  };
+  const compte = compter(() => true);
   const charges = (cle) => compte.get(cle) ?? { fois: 0, dernier: null };
+  // pour le fichier donné : ce qui s'est vraiment chargé parce qu'on l'a touché, lui
+  if (pourFichier) pourFichier.charges = Object.fromEntries(compter((e) => e.genre === 'instruction' && vers(e.declencheur) === pourFichier.fichier));
   // InstructionsLoaded ne voit ni la mémoire automatique ni un AGENTS.md lu sans import : rien plutôt qu'un faux « jamais »
   const marquer = (n, importe = false) => {
     if (!n.memoire && (importe || posix.basename(n.chemin) !== 'AGENTS.md')) n.charges = charges(n.chemin);
@@ -423,7 +430,9 @@ const ilYa = (iso) => {
   return jours === 1 ? 'hier' : `il y a ${jours} jours`;
 };
 /** Ce que dit le journal d'un élément : rien sans journal. */
-const vu = (c) => (!c ? '' : !c.fois ? 'jamais chargé' : `chargé ${c.fois} fois, ${c.fois > 1 ? 'dernier ' : ''}${ilYa(c.dernier)}`);
+const vu = (c, quoi = '') => (!c ? '' : !c.fois ? 'jamais chargé' : `chargé ${c.fois} fois${quoi}, ${c.fois > 1 ? 'dernier ' : ''}${ilYa(c.dernier)}`);
+/** Les fichiers d'un même dossier se chargent ensemble : le plus vu dit pour tous. */
+const plusVu = (cs) => cs.filter(Boolean).sort((a, b) => b.fois - a.fois)[0];
 const avec = (...morceaux) => morceaux.filter(Boolean).join(', ');
 const out = [];
 const titre = (t, sous) => out.push('', gras(t) + (sous ? pale('  ' + sous) : ''));
@@ -461,8 +470,7 @@ if (!toujours.some((n) => !n.perso)) out.push(`  ${jaune('aucun CLAUDE.md ni AGE
 
 titre('EN TOUCHANT UN FICHIER', 'lecture ou écriture qui correspond');
 for (const d of dossiers) {
-  // les fichiers d'un dossier se chargent ensemble : le plus vu dit pour tous
-  const c = d.fichiers.map((f) => f.charges).filter(Boolean).sort((a, b) => b.fois - a.fois)[0];
+  const c = plusVu(d.fichiers.map((f) => f.charges));
   out.push(`  ${d.dossier.padEnd(24)} → ${d.fichiers.map((f) => f.chemin).join(', ')}  ${pale(avec(`${d.fichiers.reduce((s, f) => s + f.lignes, 0)} lignes`, vu(c)))}`);
 }
 rendre(
@@ -508,9 +516,15 @@ if (pourFichier) {
   const p = pourFichier;
   titre(`EN TOUCHANT ${p.fichier}`, 'en plus de ce qui est toujours chargé');
   const estPerso = (chemin) => regles.find((r) => r.chemin === chemin)?.perso;
+  // avec un journal : ce qui s'est vraiment chargé pour ce fichier, et ce qui se chargerait
+  const ici = (chemins) => {
+    if (!p.charges) return '';
+    const c = plusVu(chemins.map((x) => p.charges[x]));
+    return '  ' + pale(c ? vu(c, ' pour ce fichier') : 'se chargerait');
+  };
   const tout = [
-    ...p.dossiers.map((d) => `instructions de ${d}`),
-    ...p.regles.map((r) => (estPerso(r) ? `${r}  ${cyan('perso')}` : r)),
+    ...p.dossiers.map((d) => `instructions de ${d}` + ici(dossiers.find((x) => x.dossier === d).fichiers.map((f) => f.chemin))),
+    ...p.regles.map((r) => (estPerso(r) ? `${r}  ${cyan('perso')}` : r) + ici([r])),
     ...p.skills.map((s) => `skill ${s} (disponible)`),
   ];
   out.push(...(tout.length ? tout.map((t) => `  ${vert('+')} ${t}`) : [pale('  rien de plus')]));
