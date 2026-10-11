@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 const ici = dirname(fileURLToPath(import.meta.url));
@@ -61,6 +61,94 @@ test('chaque défaut de la fixture produit un avertissement qui dit quoi faire',
   for (const a of c.avertissements) assert.match(a.quoi, / — \S/, `${a.ou} ne dit pas quoi faire`);
 });
 
+/**
+ * Une copie de la fixture avec un journal fabriqué : `sessions` sessions, la plus vieille il y a `jours` jours,
+ * la dernière il y a 2 h. Règles et skills datent d'il y a 60 jours : la copie, elle, les crée à l'instant.
+ */
+function avecJournal(jours, sessions) {
+  const projet = mkdtempSync(join(tmpdir(), 'carte-journal-'));
+  cpSync(fixture, projet, { recursive: true });
+  const il_y_a_60_jours = new Date(Date.now() - 60 * 24 * 3600 * 1000);
+  for (const f of ['rules/api.md', 'rules/morte.md', 'rules/style.md', 'skills/domaine-commandes/SKILL.md', 'skills/muette/SKILL.md'])
+    utimesSync(join(projet, '.claude', f), il_y_a_60_jours, il_y_a_60_jours);
+  mkdirSync(join(projet, '.claude', 'contextree'));
+  const lignes = [];
+  for (let i = 0; i < sessions; i++) {
+    const heures = i === sessions - 1 ? 2 : (jours - (i * jours) / sessions) * 24;
+    const quand = new Date(Date.now() - heures * 3600 * 1000).toISOString();
+    const session = `s${i}`;
+    lignes.push(
+      { quand, session, fichier: 'CLAUDE.md', genre: 'instruction', raison: 'session_start', declencheur: null },
+      { quand, session, fichier: 'AGENTS.md', genre: 'instruction', raison: 'include', declencheur: 'CLAUDE.md' },
+      { quand, session, fichier: '.claude/rules/style.md', genre: 'instruction', raison: 'session_start', declencheur: null },
+    );
+  }
+  lignes.push({ quand: new Date().toISOString(), session: 'x', fichier: null, genre: 'skill', nom: 'muette', raison: 'commande', declencheur: null });
+  writeFileSync(join(projet, '.claude', 'contextree', 'journal.jsonl'), lignes.map((l) => JSON.stringify(l) + '\n').join('') + 'ligne abîmée\n');
+  return projet;
+}
+
+test('avec un journal, chaque fichier dit combien de fois il a vraiment été chargé, et quand', () => {
+  const projet = avecJournal(20, 5);
+  const c = carte(projet);
+  assert.equal(c.journal.sessions, 6);
+  assert.deepEqual([c.toujours[0].charges.fois, c.toujours[0].imports[0].charges.fois], [5, 5]);
+  assert.deepEqual(c.regles.find((r) => r.chemin === '.claude/rules/api.md').charges, { fois: 0, dernier: null });
+  assert.equal(c.skills.find((s) => s.nom === 'muette').charges.fois, 1);
+  const texte = lancer(projet, []);
+  assert.match(texte, /^ {2}CLAUDE\.md {2}\d+ lignes, chargé 5 fois, dernier il y a 2 h$/m);
+  assert.match(texte, /\.claude\/rules\/api\.md {2}.*, jamais chargé$/m);
+  assert.match(texte, /Chargements réels : journal de 20 jour\(s\), 6 session\(s\)/);
+  // le journal est propre à la machine : --sans-perso ne le lit pas
+  const seul = carte(projet, '--sans-perso');
+  assert.equal(seul.journal, null);
+  assert.ok(!('charges' in seul.regles[0]));
+});
+
+test('une règle à paths ou une skill jamais chargée en deux semaines et cinq sessions est signalée', () => {
+  const c = carte(avecJournal(20, 5));
+  assert.ok(avertissement(c, '.claude/rules/api.md', 'jamais chargée en 20 jours (6 sessions) : les `paths`'));
+  assert.ok(avertissement(c, '.claude/skills/domaine-commandes/SKILL.md', 'jamais chargée en 20 jours (6 sessions) : la description'));
+  // morte.md ne vise rien, muette n'a pas de description : déjà signalées, pas deux fois
+  assert.equal(c.avertissements.length, 7, JSON.stringify(c.avertissements));
+  for (const a of c.avertissements) assert.match(a.quoi, / — \S/, `${a.ou} ne dit pas quoi faire`);
+  // le perso sert peut-être ailleurs : jamais chargé ici n'est pas un défaut
+  assert.ok(!cartePerso(avecJournal(20, 5)).avertissements.some((a) => a.ou.startsWith(fixtureHome) && a.quoi.includes('jamais chargée')));
+});
+
+test('un journal trop court ne juge rien : moins de 14 jours, ou moins de 5 sessions', () => {
+  for (const [jours, sessions] of [[13, 8], [30, 3]]) {
+    const c = carte(avecJournal(jours, sessions));
+    assert.ok(!c.avertissements.some((a) => a.quoi.includes('jamais chargée')), `${jours} jours, ${sessions} sessions`);
+  }
+});
+
+test('une règle modifiée depuis peu n’a rien raté : on ne compte que depuis sa dernière modification', () => {
+  const projet = avecJournal(20, 5);
+  const hier = new Date(Date.now() - 24 * 3600 * 1000);
+  utimesSync(join(projet, '.claude', 'rules', 'api.md'), hier, hier);
+  const c = carte(projet);
+  assert.ok(!c.avertissements.some((a) => a.ou === '.claude/rules/api.md' && a.quoi.includes('jamais chargée')));
+  assert.ok(avertissement(c, '.claude/skills/domaine-commandes/SKILL.md', 'jamais chargée'));
+});
+
+test('ce que le hook ne voit pas ne se dit pas « jamais chargé » : la mémoire automatique, un AGENTS.md lu sans import', () => {
+  const projet = avecJournal(20, 5);
+  const perso = mkdtempSync(join(tmpdir(), 'carte-memoire-'));
+  const memoire = join(perso, 'projects', projet.replace(/[^a-zA-Z0-9]/g, '-'), 'memory');
+  mkdirSync(memoire, { recursive: true });
+  writeFileSync(join(memoire, 'MEMORY.md'), '- un fait\n');
+  const c = JSON.parse(lancer(projet, ['--json'], perso));
+  assert.ok(!('charges' in c.toujours.find((n) => n.memoire)));
+  assert.match(lancer(projet, [], perso), /MEMORY\.md {2}\d+ lignes, mémoire automatique$/m);
+  // sans CLAUDE.md, AGENTS.md est lu directement : InstructionsLoaded ne part pas
+  const seul = mkdtempSync(join(tmpdir(), 'carte-agents-'));
+  writeFileSync(join(seul, 'AGENTS.md'), '# Projet\n');
+  mkdirSync(join(seul, '.claude', 'contextree'), { recursive: true });
+  writeFileSync(join(seul, '.claude', 'contextree', 'journal.jsonl'), JSON.stringify({ quand: new Date().toISOString(), session: 's', fichier: 'x.md', genre: 'instruction' }) + '\n');
+  assert.ok(!('charges' in carte(seul).toujours[0]));
+});
+
 test('le poids toujours chargé compte ce que /context compte : instructions, descriptions de skills et de sous-agents', () => {
   const c = carte(fixture);
   const { instructions, skills, agents, total } = c.poidsToujours;
@@ -87,7 +175,8 @@ test('--fichier dit ce qui se charge en plus pour ce fichier', () => {
 });
 
 test('la carte de ce dépôt est sans avertissement', () => {
-  const c = carte(depot);
+  // le dépôt tel que git le partage : le journal et le calque local de la machine qui lance les tests n'y sont pas
+  const c = carte(depot, '--sans-perso');
   assert.deepEqual(c.avertissements, []);
 });
 

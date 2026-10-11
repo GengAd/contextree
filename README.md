@@ -8,7 +8,7 @@ contextree est un plugin Claude Code, sans dépendance, qui fait ces deux choses
 
 ## Les cinq skills
 
-**`/contextree:carte`** — la carte du contexte : chaque fichier que Claude peut charger, groupé par moment (toujours / en touchant un fichier / quand la tâche en parle / à la main), son poids, et ce qu'il faut vérifier : règle qui ne vise aucun fichier, racine trop longue, skill sans description, lien mort, hook vers un script absent. `/contextree:carte src/api/x.ts` dit ce qui se charge pour ce fichier.
+**`/contextree:carte`** — la carte du contexte : chaque fichier que Claude peut charger, groupé par moment (toujours / en touchant un fichier / quand la tâche en parle / à la main), son poids, et ce qu'il faut vérifier : règle qui ne vise aucun fichier, racine trop longue, skill sans description, lien mort, hook vers un script absent. `/contextree:carte src/api/x.ts` dit ce qui se charge pour ce fichier. Et ce qui a **vraiment** été chargé : un hook du plugin tient un journal (`.claude/contextree/journal.jsonl`, hors git) de chaque `CLAUDE.md`, règle et skill que Claude charge ; la carte dit « chargé 3 fois, dernier il y a 2 h », et signale une règle ou une skill jamais chargée en deux semaines — sa description, ou ses `paths`, visent à côté du travail.
 
 **`/contextree:init-contexte`** — le premier jour d'un projet : tu expliques le projet, Claude lit le dépôt, propose un plan de fichiers (un `CLAUDE.md` court avec sa table « où aller », des règles à `paths`, des skills de domaine, un hook par interdit), écrit après ton accord, et finit par la carte sans avertissement. Ensuite il maintient tout seul avec `retenir`.
 
@@ -18,7 +18,7 @@ contextree est un plugin Claude Code, sans dépendance, qui fait ces deux choses
 
 **`/contextree:retenir`** — où écrire un fait durable. Claude la charge seul quand il découvre une convention, une contrainte, un piège ; une table décide du fichier (voir *La méthode*). Il écrit directement et l'annonce en une phrase.
 
-Et un hook qui, à chaque tour, demande à Claude **avant de terminer sa réponse** ce que la tâche lui a appris que le contexte ne dit pas encore. C'est ce moment précis qui fait que l'entretien arrive : mesuré sur ce projet, « au bon moment, sans insister » donne 4 écritures sur 6, « avant de terminer ta réponse » 6 sur 6.
+Et deux hooks. L'un tient le journal de chargement ci-dessus. L'autre, à chaque tour, demande à Claude **avant de terminer sa réponse** ce que la tâche lui a appris que le contexte ne dit pas encore. C'est ce moment précis qui fait que l'entretien arrive : mesuré sur ce projet, « au bon moment, sans insister » donne 4 écritures sur 6, « avant de terminer ta réponse » 6 sur 6.
 
 ## Installer chez toi
 
@@ -92,7 +92,7 @@ git clone git@github.com:GengAd/contextree.git
 claude plugin marketplace add ./contextree
 claude plugin install contextree@contextree
 
-npm test                                                  # la carte, le hook de forme, la vue et le jardin
+npm test                                                  # la carte, le hook de forme, la vue, le jardin et le journal
 node plugin/skills/carte/scripts/carte.mjs --sans-perso   # la carte de ce dépôt
 claude plugin validate ./plugin && claude plugin validate .
 ```

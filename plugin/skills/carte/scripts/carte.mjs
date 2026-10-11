@@ -8,6 +8,8 @@
 //
 // Sans dépendance. Les règles de chargement suivent la doc de Claude Code
 // (code.claude.com/docs/en/memory, /skills, /sub-agents, /hooks, /settings).
+// Si le hook du plugin a tenu le journal (.claude/contextree/journal.jsonl), la carte dit aussi
+// ce qui a vraiment été chargé, et quand.
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, dirname, relative, resolve, isAbsolute, sep, posix } from 'node:path';
 
@@ -30,6 +32,9 @@ const LIMITE_SKILL = 500; // lignes conseillées pour SKILL.md
 const LIMITE_DESCRIPTION = 1536; // caractères au-delà desquels la description est tronquée
 const LIMITE_MEMOIRE = 200; // lignes de MEMORY.md que Claude Code charge au démarrage ; la suite reste sur disque
 const CARACTERES_PAR_TOKEN = 2.5; // mesuré contre /context sur des fichiers en français ; l'anglais tourne autour de 3
+const JOURNAL_JOURS = 14; // en dessous, une règle ou une skill jamais chargée n'a peut-être juste pas encore servi
+const JOURNAL_SESSIONS = 5; // de même : deux semaines d'une seule session ne disent rien
+const JOUR = 24 * 3600 * 1000;
 const IGNORES = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.next', 'coverage']);
 
 // --- lecture -----------------------------------------------------------------
@@ -323,6 +328,68 @@ if (FICHIER) {
   };
 }
 
+// --- 8. le journal : ce que Claude a vraiment chargé ---------------------------------------------
+// Écrit par le hook du plugin (plugin/hooks/journal.mjs) et propre à cette machine : il est du calque perso.
+
+let journal = null;
+const fichierJournal = join(RACINE, '.claude', 'contextree', 'journal.jsonl');
+if (!SANS_PERSO && existsSync(fichierJournal)) {
+  const entrees = lire(fichierJournal)
+    .split('\n')
+    .flatMap((l) => {
+      try {
+        const e = JSON.parse(l);
+        return typeof e?.quand === 'string' ? [e] : [];
+      } catch {
+        return [];
+      }
+    });
+  // une instruction se reconnaît à son chemin, une skill à son nom : c'est lui que Claude appelle
+  const compte = new Map();
+  const absoluJournal = (f) => (f.startsWith('~/') ? HOME && join(HOME, f.slice(2)) : resolve(RACINE, f));
+  for (const e of entrees) {
+    const cle = e.genre === 'skill' ? e.nom && 'skill:' + e.nom : e.fichier && absoluJournal(e.fichier) && affiche(absoluJournal(e.fichier));
+    if (!cle) continue;
+    const c = compte.get(cle) ?? { fois: 0, dernier: null };
+    c.fois++;
+    if (!c.dernier || e.quand > c.dernier) c.dernier = e.quand;
+    compte.set(cle, c);
+  }
+  const charges = (cle) => compte.get(cle) ?? { fois: 0, dernier: null };
+  // InstructionsLoaded ne voit ni la mémoire automatique ni un AGENTS.md lu sans import : rien plutôt qu'un faux « jamais »
+  const marquer = (n, importe = false) => {
+    if (!n.memoire && (importe || posix.basename(n.chemin) !== 'AGENTS.md')) n.charges = charges(n.chemin);
+    n.imports.forEach((i) => marquer(i, true));
+  };
+  toujours.forEach((n) => marquer(n));
+  dossiers.forEach((d) => d.fichiers.forEach((n) => marquer(n)));
+  for (const r of regles) r.charges = charges(r.chemin);
+  for (const s of skills) s.charges = charges('skill:' + s.nom);
+
+  const depuis = entrees.reduce((m, e) => (!m || e.quand < m ? e.quand : m), null);
+  const sessions = new Set(entrees.map((e) => e.session).filter(Boolean)).size;
+  journal = { depuis, sessions };
+  // seule mesure d'une description ou de paths : ce qui ne se charge jamais vise à côté du travail.
+  // On ne compte que depuis la dernière modification du fichier : une règle d'hier n'a rien raté.
+  // Le perso sert peut-être ailleurs ; une règle sans cible ou une skill sans description est déjà signalée.
+  const jamais = (chemin, question, correction) => {
+    const modifie = new Date(statSync(resolve(RACINE, chemin)).mtimeMs).toISOString();
+    const debut = depuis > modifie ? depuis : modifie;
+    const jours = Math.floor((Date.now() - Date.parse(debut)) / JOUR);
+    const vues = new Set(entrees.filter((e) => e.quand >= debut).map((e) => e.session).filter(Boolean)).size;
+    if (jours >= JOURNAL_JOURS && vues >= JOURNAL_SESSIONS)
+      avertir(chemin, `jamais chargée en ${jours} jours (${vues} sessions) : ${question} — ${correction}`);
+  };
+  if (depuis) {
+    for (const r of regles)
+      if (!r.perso && r.cibles.length && !r.charges.fois)
+        jamais(r.chemin, 'les `paths` visent-ils le travail réel ?', 'les viser sur les fichiers vraiment touchés, ou retirer la règle');
+    for (const s of skills)
+      if (!s.perso && s.description && s.mode !== 'manuel' && !s.charges.fois)
+        jamais(s.chemin, 'la description vise-t-elle le travail réel ?', 'la réécrire avec les mots des demandes, ou retirer la skill');
+  }
+}
+
 // --- sortie ----------------------------------------------------------------------------------
 
 // ce que /context range sous Memory files, Skills et Custom agents, pour ce projet
@@ -337,7 +404,7 @@ const pesee = (garde) => {
 };
 const poidsToujours = { ...pesee(() => true), perso: pesee((x) => x.perso).total };
 
-const carte = { racine: RACINE, racinePerso: PERSO, toujours, regles, dossiers, skills, agents, gardeFous, pourFichier, avertissements, poidsToujours };
+const carte = { racine: RACINE, racinePerso: PERSO, toujours, regles, dossiers, skills, agents, gardeFous, pourFichier, avertissements, poidsToujours, journal };
 if (JSON_SORTIE) {
   console.log(JSON.stringify(carte, null, 2));
   process.exit(0);
@@ -347,6 +414,17 @@ const couleur = process.stdout.isTTY && !process.env.NO_COLOR;
 const ton = (code) => (s) => (couleur ? `\x1b[${code}m${s}\x1b[0m` : s);
 const [gras, pale, jaune, vert, cyan] = [ton('1'), ton('2'), ton('33'), ton('32'), ton('36')];
 const court = (s, n = 90) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+const ilYa = (iso) => {
+  const min = Math.floor((Date.now() - Date.parse(iso)) / 60000);
+  if (min < 1) return "à l'instant";
+  if (min < 60) return `il y a ${min} min`;
+  if (min < 24 * 60) return `il y a ${Math.floor(min / 60)} h`;
+  const jours = Math.floor(min / (24 * 60));
+  return jours === 1 ? 'hier' : `il y a ${jours} jours`;
+};
+/** Ce que dit le journal d'un élément : rien sans journal. */
+const vu = (c) => (!c ? '' : !c.fois ? 'jamais chargé' : `chargé ${c.fois} fois, ${c.fois > 1 ? 'dernier ' : ''}${ilYa(c.dernier)}`);
+const avec = (...morceaux) => morceaux.filter(Boolean).join(', ');
 const out = [];
 const titre = (t, sous) => out.push('', gras(t) + (sous ? pale('  ' + sous) : ''));
 /** Ce qui est partagé par git d'abord, puis le perso, à part et marqué. */
@@ -360,33 +438,40 @@ const rendre = (elements, ligne) => {
 };
 
 out.push(gras(`Carte du contexte — ${posix.basename(RACINE)}`) + pale(`   (1 token ≈ ${String(CARACTERES_PAR_TOKEN).replace('.', ',')} caractères, estimation)`));
+if (journal) {
+  const jours = journal.depuis ? Math.floor((Date.now() - Date.parse(journal.depuis)) / JOUR) : 0;
+  out.push(pale(`Chargements réels : journal ${jours ? `de ${jours} jour(s)` : "d'aujourd'hui"}, ${journal.sessions} session(s)`));
+}
 
 titre(
   'TOUJOURS CHARGÉ',
   `~${poidsToujours.total} tokens à chaque session` + (poidsToujours.perso ? `, dont ~${poidsToujours.perso} perso` : '') + (SANS_PERSO ? ' (sans le perso)' : ''),
 );
 const arbre = (n, niveau = 0) => {
-  const note = n.memoire ? `${n.lignes} lignes, mémoire automatique` : `${n.lignes} lignes`;
+  const note = avec(`${n.lignes} lignes`, n.memoire && 'mémoire automatique', vu(n.charges));
   out.push(`  ${'   '.repeat(niveau)}${niveau ? '└─ @' : ''}${n.chemin}  ${pale(note)}`);
   n.imports.forEach((i) => arbre(i, niveau + 1));
 };
 rendre([...toujours, ...regleToujours.map((r) => ({ ...r, regle: true }))], (x) =>
-  x.regle ? out.push(`  ${x.chemin}  ${pale(`${x.lignes} lignes, règle sans paths`)}`) : arbre(x),
+  x.regle ? out.push(`  ${x.chemin}  ${pale(avec(`${x.lignes} lignes`, 'règle sans paths', vu(x.charges)))}`) : arbre(x),
 );
 if (skillsVisibles.length) out.push(`  ${pale(`+ les descriptions de ${skillsVisibles.length} skill(s), ~${poidsToujours.skills} tokens`)}`);
 if (agents.length) out.push(`  ${pale(`+ les descriptions de ${agents.length} sous-agent(s), ~${poidsToujours.agents} tokens`)}`);
 if (!toujours.some((n) => !n.perso)) out.push(`  ${jaune('aucun CLAUDE.md ni AGENTS.md')}`);
 
 titre('EN TOUCHANT UN FICHIER', 'lecture ou écriture qui correspond');
-for (const d of dossiers)
-  out.push(`  ${d.dossier.padEnd(24)} → ${d.fichiers.map((f) => f.chemin).join(', ')}  ${pale(`${d.fichiers.reduce((s, f) => s + f.lignes, 0)} lignes`)}`);
+for (const d of dossiers) {
+  // les fichiers d'un dossier se chargent ensemble : le plus vu dit pour tous
+  const c = d.fichiers.map((f) => f.charges).filter(Boolean).sort((a, b) => b.fois - a.fois)[0];
+  out.push(`  ${d.dossier.padEnd(24)} → ${d.fichiers.map((f) => f.chemin).join(', ')}  ${pale(avec(`${d.fichiers.reduce((s, f) => s + f.lignes, 0)} lignes`, vu(c)))}`);
+}
 rendre(
   [...regles.filter((r) => r.paths.length), ...skills.filter((s) => s.paths.length).map((s) => ({ ...s, skill: true }))],
   (x) =>
     out.push(
       x.skill
         ? `  ${x.paths.join(', ').padEnd(24)} → skill ${x.nom} devient disponible`
-        : `  ${x.paths.join(', ').padEnd(24)} → ${x.chemin}  ${pale(`${x.lignes} lignes, ${x.cibles.length} fichier(s) visé(s)`)}`,
+        : `  ${x.paths.join(', ').padEnd(24)} → ${x.chemin}  ${pale(avec(`${x.lignes} lignes`, `${x.cibles.length} fichier(s) visé(s)`, vu(x.charges)))}`,
     ),
 );
 if (!dossiers.length && !regles.some((r) => r.paths.length) && !skills.some((s) => s.paths.length)) out.push(pale('  (rien)'));
@@ -395,14 +480,14 @@ titre('QUAND LA TÂCHE EN PARLE', 'Claude lit la description et décide');
 if (!skillsVisibles.length) out.push(pale('  (rien)'));
 rendre(skillsVisibles, (s) => {
   const qui = s.mode === 'claude' ? 'Claude seul' : `Claude ou /${s.nom}`;
-  const extra = [`corps ${s.corpsLignes} lignes`, s.annexes.length && `+ ${s.annexes.join(', ')}`, s.contexte].filter(Boolean).join(', ');
+  const extra = avec(`corps ${s.corpsLignes} lignes`, s.annexes.length && `+ ${s.annexes.join(', ')}`, s.contexte, vu(s.charges));
   out.push(`  ${gras(s.nom)} ${pale(`(${qui} ; ${extra})`)}`, `    « ${court(s.description)} »`);
 });
 
 const manuels = skills.filter((s) => s.mode === 'manuel');
 if (manuels.length) {
   titre('À LA MAIN', 'seulement si tu tapes la commande');
-  rendre(manuels, (s) => out.push(`  /${s.nom}  ${pale(court(s.description, 70))}`));
+  rendre(manuels, (s) => out.push(`  /${s.nom}  ${pale([court(s.description, 70), vu(s.charges)].filter(Boolean).join(' ; '))}`));
 }
 
 if (agents.length) {
