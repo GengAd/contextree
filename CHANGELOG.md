@@ -2,6 +2,12 @@
 
 Une version par changement visible du plugin. Pour la prendre : `claude plugin marketplace update contextree`, puis `claude plugin update contextree@contextree`.
 
+## 2.4.0 — 2026-10-11
+
+- **Le jardin se propose seul** : au début de la session suivante (hook `SessionStart`), si des fichiers de contexte parlent de code modifié depuis le dernier jardin, ou viennent de passer six semaines sans commit, Claude propose `/contextree:jardin` une fois, à la fin de ta première tâche. Rien s'il n'y a rien.
+- **`/contextree:jardin` part du dernier jardin** : il marque son passage (`.claude/contextree/jardin.dernier`, hors git) ; sans marque, 12 heures, et jamais plus de 30 jours. Il relève aussi une règle dont les `paths` visent un fichier changé et le `CLAUDE.md` du dossier d'un fichier changé, plus seulement les fichiers qui citent son chemin. Le travail non commité d'avant le dernier jardin ne revient pas, sauf une suppression, qui n'a plus de date.
+- `/contextree:carte --json` ne coupe plus sa sortie à 64 Ko quand elle passe par un pipe.
+
 ## 2.3.1 — 2026-10-11
 
 - **`/contextree:carte --fichier`** dit, avec le journal, ce qui s'est vraiment chargé pour ce fichier (« chargé 2 fois pour ce fichier, dernier il y a 3 min ») et ce qui « se chargerait » ; en `--json`, `pourFichier.charges`. C'est ce que lit la vue dans Cursor, qui teinte désormais ce que Claude vient de charger.

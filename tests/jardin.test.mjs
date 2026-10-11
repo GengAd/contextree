@@ -1,10 +1,10 @@
 // Le jardin, exercé sur une copie de tests/fixture mise sous git, avec des commits datés à la main.
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { cpSync, mkdtempSync, mkdirSync, appendFileSync, writeFileSync, rmSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, appendFileSync, writeFileSync, rmSync, readFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 const ici = dirname(fileURLToPath(import.meta.url));
@@ -64,7 +64,22 @@ test('la session liste ses commits et ses changements, depuis une durée ou une 
 
 test('un fichier de contexte qui cite un chemin changé dans la session est signalé', () => {
   const j = jardin(projet);
-  assert.deepEqual(j.cites, [{ contexte: '.claude/rules/api.md', cite: 'src/api/commandes.ts', statut: 'M' }]);
+  assert.deepEqual(j.cites, [{ contexte: '.claude/rules/api.md', cite: 'src/api/commandes.ts', par: 'texte', statut: 'M' }]);
+});
+
+test('une règle dont les paths visent un fichier changé, ou le CLAUDE.md de son dossier, est signalé aussi', () => {
+  writeFileSync(join(projet, 'src', 'api', 'remboursement.ts'), '// nouveau\n');
+  writeFileSync(join(projet, 'web', 'Paiement.tsx'), '// nouveau\n');
+  try {
+    const cites = jardin(projet).cites.filter((c) => c.par !== 'texte');
+    assert.deepEqual(cites, [
+      { contexte: '.claude/rules/api.md', cite: 'src/api/remboursement.ts', par: 'paths', statut: 'A' },
+      { contexte: 'web/CLAUDE.md', cite: 'web/Paiement.tsx', par: 'dossier', statut: 'A' },
+    ]);
+  } finally {
+    rmSync(join(projet, 'src', 'api', 'remboursement.ts'));
+    rmSync(join(projet, 'web', 'Paiement.tsx'));
+  }
 });
 
 test('un fichier non commité compte dans la session, pas dans les vieux', () => {
@@ -92,7 +107,7 @@ test('un projet dans un sous-dossier du dépôt voit ses chemins relatifs à lui
   writeFileSync(join(sous, 'été à faire.md'), 'non suivi\n');
   const j = jardin(sous, '--depuis', 'HEAD');
   assert.deepEqual(j.session.changements.map((c) => c.chemin).sort(), ['serveur.js', 'été à faire.md']);
-  assert.deepEqual(j.cites, [{ contexte: 'CLAUDE.md', cite: 'serveur.js', statut: 'M' }]);
+  assert.deepEqual(j.cites, [{ contexte: 'CLAUDE.md', cite: 'serveur.js', par: 'texte', statut: 'M' }]);
 });
 
 test('une référence ou une durée inconnue est dite, avec la correction', () => {
@@ -106,4 +121,98 @@ test('hors d’un dépôt git, le jardin rend la carte sans session', () => {
   const j = jardin(nu);
   assert.deepEqual([j.git, j.session, j.vieux, j.cites], [false, null, [], []]);
   assert.ok(j.avertissements.length > 0);
+});
+
+// --- le jardin se propose seul : --bref, --hook et la marque du dernier jardin ---------------------
+
+const brut = (...args) => execFileSync('node', [script, '--racine', projet, ...args], { encoding: 'utf8' });
+const marque = join(projet, '.claude', 'contextree', 'jardin.dernier');
+const il_y_a = (jours) => new Date(Date.now() - jours * 24 * 3600 * 1000).toISOString();
+/** Une marque posée à la main le temps d'un test, puis retirée : les autres tests partent sans marque. */
+const avecMarque = (iso, f) => {
+  mkdirSync(join(projet, '.claude', 'contextree'), { recursive: true });
+  writeFileSync(marque, iso + '\n');
+  try {
+    return f();
+  } finally {
+    rmSync(join(projet, '.claude', 'contextree'), { recursive: true });
+  }
+};
+
+test('--bref dit en une ligne quels fichiers de contexte parlent de code modifié ; rien s’il n’y a rien', () => {
+  assert.match(brut('--bref'), /^1 fichier\(s\) de contexte parlent de code modifié depuis les 12 dernières heures \(`\.claude\/rules\/api\.md`\)\.\n$/);
+  assert.equal(brut('--bref', '--depuis', 'HEAD'), '\n');
+});
+
+test('après --marquer, la session part du dernier jardin, et il n’y a plus rien à dire', () => {
+  const sortie = brut('--marquer');
+  try {
+    assert.match(sortie, /^jardin marqué : \d{4}-/);
+    assert.equal(readFileSync(join(projet, '.claude', 'contextree', '.gitignore'), 'utf8'), '*\n');
+    assert.equal(brut('--bref'), '\n');
+    assert.deepEqual(jardin(projet).session.commits, []);
+  } finally {
+    rmSync(join(projet, '.claude', 'contextree'), { recursive: true });
+  }
+});
+
+test('une marque de plus de 30 jours ne remonte pas plus loin que 30 jours', () => {
+  avecMarque(il_y_a(80), () => {
+    const j = jardin(projet);
+    assert.equal(j.marque.slice(0, 10), il_y_a(80).slice(0, 10));
+    assert.deepEqual(j.session.commits.map((c) => c.sujet), ['la session'], 'le commit d’il y a dix semaines reste hors de la session');
+    // les fichiers devenus vieux dans ces 30 jours sont à relire ; en bref, eux seuls
+    assert.match(brut('--bref'), /depuis les 30 derniers jours .* ; \d+ fichier\(s\) de contexte n'ont pas bougé depuis 6 semaines/);
+  });
+  avecMarque(il_y_a(1), () => assert.deepEqual(jardin(projet).session.commits.map((c) => c.sujet), ['la session']));
+});
+
+test('--hook rend le JSON de SessionStart, ou rien du tout, et ne sort jamais en erreur', () => {
+  const hook = (env = {}) => spawnSync('node', [script, '--bref', '--hook'], { encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: projet, ...env } });
+  const r = hook();
+  assert.equal(r.status, 0);
+  const { hookSpecificOutput } = JSON.parse(r.stdout);
+  assert.equal(hookSpecificOutput.hookEventName, 'SessionStart');
+  assert.match(hookSpecificOutput.additionalContext, /^contextree : 1 fichier\(s\) .*`\.claude\/rules\/api\.md`.* À la fin de ta réponse qui termine la première tâche de l'utilisateur, propose-lui en une phrase de lancer `\/contextree:jardin` pour les relire ; une seule fois dans la session\.$/);
+  avecMarque(new Date().toISOString(), () => assert.deepEqual([hook().status, hook().stdout], [0, '']));
+  const ailleurs = hook({ CLAUDE_PROJECT_DIR: join(projet, 'nexiste-pas') });
+  assert.deepEqual([ailleurs.status, ailleurs.stdout, ailleurs.stderr], [0, '', '']);
+});
+
+test('du travail non commité d’avant le dernier jardin ne se repropose pas ; celui d’après, si', () => {
+  const code = join(projet, 'src', 'api', 'commandes.ts');
+  appendFileSync(code, '// pas encore commité\n');
+  const avant = new Date(Date.now() - 60_000);
+  utimesSync(code, avant, avant);
+  try {
+    avecMarque(new Date().toISOString(), () => {
+      assert.equal(brut('--bref'), '\n');
+      const apres = new Date(Date.now() + 60_000);
+      utimesSync(code, apres, apres);
+      assert.match(brut('--bref'), /depuis le dernier jardin \(`\.claude\/rules\/api\.md`\)/);
+    });
+  } finally {
+    execFileSync('git', ['checkout', '--', 'src/api/commandes.ts'], { cwd: projet });
+  }
+});
+
+test('la commande SessionStart de hooks.json est celle qui rend le JSON du jardin', () => {
+  const plugin = join(ici, '..', 'plugin');
+  const { hooks } = JSON.parse(readFileSync(join(plugin, 'hooks', 'hooks.json'), 'utf8'));
+  const [groupe] = hooks.SessionStart;
+  assert.equal(groupe.matcher, 'startup|resume');
+  const r = spawnSync('sh', ['-c', groupe.hooks[0].command], { encoding: 'utf8', env: { ...process.env, CLAUDE_PLUGIN_ROOT: plugin, CLAUDE_PROJECT_DIR: projet } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).hookSpecificOutput.hookEventName, 'SessionStart');
+});
+
+test('--marquer garde un .gitignore déjà écrit', () => {
+  mkdirSync(join(projet, '.claude', 'contextree'), { recursive: true });
+  writeFileSync(join(projet, '.claude', 'contextree', '.gitignore'), '*\n# à moi\n');
+  try {
+    brut('--marquer');
+    assert.equal(readFileSync(join(projet, '.claude', 'contextree', '.gitignore'), 'utf8'), '*\n# à moi\n');
+  } finally {
+    rmSync(join(projet, '.claude', 'contextree'), { recursive: true });
+  }
 });

@@ -17,15 +17,15 @@ Lance, depuis la racine du projet :
 node "${CLAUDE_PLUGIN_ROOT}/skills/jardin/scripts/jardin.mjs"
 ```
 
-Si un argument est donné ($ARGUMENTS), ajoute `--depuis "$ARGUMENTS"` : une durée (« 2 days ago ») ou une référence git. Si `session.erreur` est rempli, dis-le et relance avec une durée valide.
+Si un argument est donné ($ARGUMENTS), ajoute `--depuis "$ARGUMENTS"` : une durée (« 2 days ago ») ou une référence git. Sans argument, la session part du dernier jardin (`marque`), 12 heures s'il n'y en a pas, 30 jours au plus. Si `session.erreur` est rempli, dis-le et relance avec une durée valide.
 
-Le JSON donne : `contexte` (les fichiers de contexte partagés par git), `session` (commits et fichiers changés depuis `--depuis`, 12 heures par défaut), `cites` (un fichier de contexte qui cite un chemin changé dans la session), `vieux` (pas de commit depuis six semaines), `avertissements` de la carte.
+Le JSON donne : `contexte` (les fichiers de contexte partagés par git), `session` (commits et fichiers changés depuis le début), `cites` (un fichier de contexte qui parle d'un chemin changé : `par` vaut `texte` s'il le cite, `paths` si ses `paths` le visent, `dossier` s'il est le `CLAUDE.md` de son dossier), `vieux` (pas de commit depuis six semaines), `avertissements` de la carte.
 
 ## 2. Les propositions, en quatre classes
 
 Pour chacune, lis le fichier de contexte en entier avant de proposer quoi que ce soit.
 
-1. **Faux** — un fichier de contexte contredit le code. Pars de `cites` : lis le diff du chemin cité (`git diff <base> -- <chemin>`, ou `git log -p` sur la session) et dis si le texte est encore vrai. Ajoute ce que la conversation t'a montré : une consigne suivie qui a mené à une erreur, une commande qui a changé.
+1. **Faux** — un fichier de contexte contredit le code. Pars de `cites`, `texte` d'abord : lis le diff du chemin cité (`git diff <session.base> -- <chemin>`, ou `git log -p` sur la session) et dis si le texte est encore vrai. Ajoute ce que la conversation t'a montré : une consigne suivie qui a mené à une erreur, une commande qui a changé.
 2. **Manquant** — un fait appris dans cette conversation qui ne figure nulle part : une convention, un piège, une commande, une contrainte. Cherche-le d'abord (`grep -ri` dans les fichiers de `contexte`) ; la destination se décide avec la table de la skill `contextree:retenir`. Pas une question de lecture, pas l'histoire d'une décision.
 3. **À extraire** — une procédure faite au moins deux fois dans la conversation (la même suite de commandes ou d'étapes) → une skill invocable, avec son `argument-hint`.
 4. **À découper** — les `avertissements` de racine trop longue ou de skill trop longue : ce qui se déplace vers une règle à `paths` ou un fichier voisin. Et chaque fichier de `vieux` : relis-le contre le code d'aujourd'hui ; propose une correction, une suppression, ou « encore juste » s'il l'est.
@@ -34,7 +34,13 @@ Pour chacune, lis le fichier de contexte en entier avant de proposer quoi que ce
 
 Une liste numérotée, la meilleure proposition d'abord, **dix au plus**. Pour chacune : la classe, le fichier, la raison en une phrase, et le diff exact (bloc `diff`). Une classe sans proposition s'écrit « rien ». Puis une seule question : « Lesquelles j'applique ? (numéros, « toutes », « aucune ») ».
 
-**N'écris aucun fichier avant la réponse.** Ensuite, applique seulement les numéros choisis, puis lance la carte et corrige ses avertissements :
+**N'écris aucun fichier avant la réponse.** Dès la réponse reçue, même « aucune », marque le jardin : le prochain démarrage de session ne le reproposera que pour ce qui changera ensuite.
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/skills/jardin/scripts/jardin.mjs" --marquer
+```
+
+Ensuite, applique seulement les numéros choisis, puis lance la carte et corrige ses avertissements :
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/skills/carte/scripts/carte.mjs" --sans-perso

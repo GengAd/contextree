@@ -1,6 +1,6 @@
 # contextree
 
-Un plugin Claude Code pour **voir** et **bien remplir** le contexte natif d'un projet (`CLAUDE.md`, règles, skills, sous-agents, hooks). Cinq skills : `/contextree:init-contexte` construit le contexte d'un projet (plan validé avant d'écrire), `/contextree:carte` montre chaque fichier et quand il se charge, `/contextree:retenir` écrit un fait durable au bon endroit, `/contextree:jardin` relit le contexte en fin de session et propose des diffs, `/contextree:migrer-v1` convertit un projet de l'ancien contextree ; un hook rappelle à chaque tour de retenir, un autre tient le journal de ce que Claude a vraiment chargé, que la carte lit. Repo public `GengAd/contextree`, mainteneur solo (Adrien Buot), tout en français.
+Un plugin Claude Code pour **voir** et **bien remplir** le contexte natif d'un projet (`CLAUDE.md`, règles, skills, sous-agents, hooks). Cinq skills : `/contextree:init-contexte` construit le contexte d'un projet (plan validé avant d'écrire), `/contextree:carte` montre chaque fichier et quand il se charge, `/contextree:retenir` écrit un fait durable au bon endroit, `/contextree:jardin` relit le contexte en fin de session et propose des diffs (proposé seul au début de la session suivante), `/contextree:migrer-v1` convertit un projet de l'ancien contextree ; un hook rappelle à chaque tour de retenir, un autre tient le journal de ce que Claude a vraiment chargé, que la carte lit, un dernier propose le jardin au démarrage. Repo public `GengAd/contextree`, mainteneur solo (Adrien Buot), tout en français.
 
 ## Carte du dépôt
 
@@ -9,9 +9,9 @@ plugin/                   ce qui s'installe (.claude-plugin/plugin.json)
 plugin/skills/carte/      la carte : SKILL.md + scripts/carte.mjs, sans dépendance
 plugin/skills/retenir/    la table « où écrire un fait » — c'est la méthode
 plugin/skills/init-contexte/  le premier jour d'un projet : comprendre, proposer un plan, écrire, vérifier
-plugin/skills/jardin/     la revue de fin de session : scripts/jardin.mjs (git + carte) donne les faits, la skill propose
+plugin/skills/jardin/     la revue de fin de session : scripts/jardin.mjs (git + carte) donne les faits, la skill propose ; --hook au démarrage, --marquer après
 plugin/skills/migrer-v1/  l'ancien arbre .contextree vers le natif, scripts/migrer-v1.mjs sans dépendance
-plugin/hooks/             le rappel de fin de tour, et journal.mjs : ce que Claude a vraiment chargé
+plugin/hooks/             hooks.json (le rappel de fin de tour, journal.mjs, le jardin au démarrage)
 extension/                la vue en barre latérale (Cursor, VS Code) : affiche carte --json, JS sans build
 tests/                    node --test ; fixture/ un faux projet, fixture-home/ un faux ~/.claude
 docs/decisions/           les décisions d'architecture, une par fichier

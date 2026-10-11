@@ -14,11 +14,11 @@ contextree est un plugin Claude Code, sans dépendance, qui fait ces deux choses
 
 **`/contextree:migrer-v1`** — pour un projet encore sur l'ancien contextree (voir plus bas).
 
-**`/contextree:jardin`** — la revue de fin de session : Claude relit le contexte contre ce que la session a changé (les fichiers qui citent un chemin modifié, ceux qui n'ont pas bougé depuis six semaines, les avertissements de la carte, ce que la conversation a appris) et propose des diffs classés — faux, manquant, à extraire, à découper. Il n'écrit que ceux que tu choisis.
+**`/contextree:jardin`** — la revue de fin de session : Claude relit le contexte contre ce que la session a changé (les fichiers qui citent un chemin modifié, ceux qui n'ont pas bougé depuis six semaines, les avertissements de la carte, ce que la conversation a appris) et propose des diffs classés — faux, manquant, à extraire, à découper. Il n'écrit que ceux que tu choisis. Tu n'as pas à y penser : au début de la session suivante, si des fichiers de contexte parlent de code modifié depuis le dernier jardin (ils le citent, leurs `paths` le visent, ou c'est leur dossier) ou viennent de passer six semaines sans commit, Claude te le propose une fois, à la fin de ta première tâche.
 
 **`/contextree:retenir`** — où écrire un fait durable. Claude la charge seul quand il découvre une convention, une contrainte, un piège ; une table décide du fichier (voir *La méthode*). Il écrit directement et l'annonce en une phrase.
 
-Et deux hooks. L'un tient le journal de chargement ci-dessus. L'autre, à chaque tour, demande à Claude **avant de terminer sa réponse** ce que la tâche lui a appris que le contexte ne dit pas encore. C'est ce moment précis qui fait que l'entretien arrive : mesuré sur ce projet, « au bon moment, sans insister » donne 4 écritures sur 6, « avant de terminer ta réponse » 6 sur 6.
+Et trois hooks. L'un tient le journal de chargement ci-dessus. Un autre propose le jardin au début de la session suivante. Le dernier, à chaque tour, demande à Claude **avant de terminer sa réponse** ce que la tâche lui a appris que le contexte ne dit pas encore. C'est ce moment précis qui fait que l'entretien arrive : mesuré sur ce projet, « au bon moment, sans insister » donne 4 écritures sur 6, « avant de terminer ta réponse » 6 sur 6.
 
 ## Installer chez toi
 

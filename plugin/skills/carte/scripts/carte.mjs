@@ -412,10 +412,8 @@ const pesee = (garde) => {
 const poidsToujours = { ...pesee(() => true), perso: pesee((x) => x.perso).total };
 
 const carte = { racine: RACINE, racinePerso: PERSO, toujours, regles, dossiers, skills, agents, gardeFous, pourFichier, avertissements, poidsToujours, journal };
-if (JSON_SORTIE) {
-  console.log(JSON.stringify(carte, null, 2));
-  process.exit(0);
-}
+// pas de process.exit après l'écriture : dans un pipe, la sortie serait coupée à 64 Ko
+if (JSON_SORTIE) process.stdout.write(JSON.stringify(carte, null, 2) + '\n');
 
 const couleur = process.stdout.isTTY && !process.env.NO_COLOR;
 const ton = (code) => (s) => (couleur ? `\x1b[${code}m${s}\x1b[0m` : s);
@@ -532,4 +530,4 @@ if (pourFichier) {
 
 titre('À VÉRIFIER');
 out.push(...(avertissements.length ? avertissements.map((a) => `  ${jaune('⚠')} ${a.ou} — ${a.quoi}`) : [`  ${vert('✓')} rien`]));
-console.log(out.join('\n'));
+if (!JSON_SORTIE) console.log(out.join('\n'));
